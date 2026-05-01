@@ -1,0 +1,106 @@
+version: '3.9'
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: prism_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: prism_db
+      POSTGRES_USER: prism_user
+      POSTGRES_PASSWORD: prism_pass
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U prism_user -d prism_db']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: prism_redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── PRISM API ────────────────────────────────────────────────────
+  api:
+    build: .
+    container_name: prism_api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://prism_user:prism_pass@postgres:5432/prism_db
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Sync Worker ──────────────────────────────────────────────────
+  worker-sync:
+    build: .
+    container_name: prism_worker_sync
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://prism_user:prism_pass@postgres:5432/prism_db
+      REDIS_URL: redis://redis:6379
+    command: npm run worker:sync
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Line Item Worker ─────────────────────────────────────────────
+  worker-lineitem:
+    build: .
+    container_name: prism_worker_lineitem
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://prism_user:prism_pass@postgres:5432/prism_db
+      REDIS_URL: redis://redis:6379
+    command: npm run worker:lineitem
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Scheduler Worker ─────────────────────────────────────────────
+  worker-scheduler:
+    build: .
+    container_name: prism_worker_scheduler
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://prism_user:prism_pass@postgres:5432/prism_db
+      REDIS_URL: redis://redis:6379
+    command: npm run worker:scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

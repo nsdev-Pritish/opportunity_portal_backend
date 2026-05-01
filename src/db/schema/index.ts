@@ -1,0 +1,581 @@
+import {
+  pgTable, serial, varchar, boolean, timestamp, integer,
+  numeric, text, jsonb, date, index, uniqueIndex, pgEnum,
+} from 'drizzle-orm/pg-core';
+import { relations, sql } from 'drizzle-orm';
+
+// ─── Enums ─────────────────────────────────────────────────────────────────
+
+export const syncStatusEnum = pgEnum('sync_status', [
+  'pending', 'synced', 'dirty', 'failed', 'skipped',
+]);
+
+export const sourceEnum = pgEnum('source', ['portal', 'netsuite']);
+
+export const directionEnum = pgEnum('direction', ['to_netsuite', 'from_netsuite']);
+
+export const operationEnum = pgEnum('operation', ['create', 'update', 'deactivate']);
+
+export const estimateStatusEnum = pgEnum('estimate_status', [
+  'draft', 'submitted', 'approved', 'otb', 'closed_won', 'closed_lost',
+]);
+
+export const countryOfDestEnum = pgEnum('country_of_dest', ['US', 'EU']);
+
+// ─── Helper: standard sync columns ────────────────────────────────────────
+
+const syncCols = {
+  netsuiteInternalId: varchar('netsuite_internal_id', { length: 50 }),
+  isActive: boolean('is_active').default(true).notNull(),
+  source: sourceEnum('source').default('portal').notNull(),
+  syncStatus: syncStatusEnum('sync_status').default('pending').notNull(),
+  syncError: text('sync_error'),
+  syncedAt: timestamp('synced_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+};
+
+// ══════════════════════════════════════════════════════════════════
+//  USERS
+// ══════════════════════════════════════════════════════════════════
+
+export const users = pgTable('users', {
+  id: serial('id').primaryKey(),
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  passwordHash: varchar('password_hash', { length: 255 }).notNull(),
+  firstName: varchar('first_name', { length: 100 }),
+  lastName: varchar('last_name', { length: 100 }),
+  role: varchar('role', { length: 50 }).default('user').notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  emailIdx: uniqueIndex('users_email_idx').on(t.email),
+}));
+
+// ══════════════════════════════════════════════════════════════════
+//  API KEYS  — NetSuite uses these to authenticate
+//  One key per environment (dev / staging / prod)
+// ══════════════════════════════════════════════════════════════════
+
+export const apiKeys = pgTable('api_keys', {
+  id         : serial('id').primaryKey(),
+  name       : varchar('name', { length: 100 }).notNull(),   // e.g. "NetSuite Production"
+  keyHash    : varchar('key_hash', { length: 255 }).notNull(), // bcrypt hash
+  keyPrefix  : varchar('key_prefix', { length: 8 }).notNull(), // first 8 chars for display
+  isActive   : boolean('is_active').default(true).notNull(),
+  lastUsedAt : timestamp('last_used_at', { withTimezone: true }),
+  createdAt  : timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  MASTER DATA — DROPDOWN TABLES
+// ══════════════════════════════════════════════════════════════════
+
+export const subsidiaries = pgTable('subsidiaries', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  code: varchar('code', { length: 50 }),
+  country: varchar('country', { length: 100 }),
+  currency: varchar('currency', { length: 3 }),
+  isDefault: boolean('is_default').default(false),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('subsidiaries_ns_id_idx').on(t.netsuiteInternalId),
+  codeIdx: uniqueIndex('subsidiaries_code_idx').on(t.code),
+}));
+
+export const customers = pgTable('customers', {
+  id: serial('id').primaryKey(),
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id).notNull(),
+  name: varchar('name', { length: 255 }).notNull(),
+  email: varchar('email', { length: 255 }),
+  phone: varchar('phone', { length: 50 }),
+  currencyId: integer('currency_id'),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('customers_ns_id_idx').on(t.netsuiteInternalId),
+  syncIdx: index('customers_sync_idx').on(t.syncStatus),
+  nameIdx: index('customers_name_idx').on(t.name),
+  subsidiaryIdx: index('customers_subsidiary_idx').on(t.subsidiaryId),
+}));
+
+export const contacts = pgTable('contacts', {
+  id: serial('id').primaryKey(),
+  customerId: integer('customer_id').references(() => customers.id).notNull(),
+  firstName: varchar('first_name', { length: 100 }),
+  lastName: varchar('last_name', { length: 100 }),
+  email: varchar('email', { length: 255 }),
+  phone: varchar('phone', { length: 50 }),
+  title: varchar('title', { length: 100 }),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('contacts_ns_id_idx').on(t.netsuiteInternalId),
+  customerIdx: index('contacts_customer_idx').on(t.customerId),
+}));
+
+export const addresses = pgTable('addresses', {
+  id: serial('id').primaryKey(),
+  customerId: integer('customer_id').references(() => customers.id),
+  type: varchar('type', { length: 20 }).default('shipping'), // 'shipping' | 'billing'
+  label: varchar('label', { length: 100 }),
+  addrLine1: varchar('addr_line1', { length: 255 }),
+  addrLine2: varchar('addr_line2', { length: 255 }),
+  city: varchar('city', { length: 100 }),
+  state: varchar('state', { length: 100 }),
+  country: varchar('country', { length: 100 }),
+  postalCode: varchar('postal_code', { length: 20 }),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('addresses_ns_id_idx').on(t.netsuiteInternalId),
+  customerIdx: index('addresses_customer_idx').on(t.customerId),
+}));
+
+export const currencies = pgTable('currencies', {
+  id: serial('id').primaryKey(),
+  code: varchar('code', { length: 3 }).notNull().unique(),
+  name: varchar('name', { length: 100 }).notNull(),
+  symbol: varchar('symbol', { length: 10 }),
+  exchangeRate: numeric('exchange_rate', { precision: 12, scale: 6 }).default('1'),
+  ...syncCols,
+});
+
+export const projectNames = pgTable('project_names', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('project_names_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const projectTypes = pgTable('project_types', {
+  id: serial('id').primaryKey(),
+  projectNameId: integer('project_name_id').references(() => projectNames.id),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('project_types_ns_id_idx').on(t.netsuiteInternalId),
+  projectNameIdx: index('project_types_project_name_idx').on(t.projectNameId),
+}));
+
+export const likelyToClose = pgTable('likely_to_close', {
+  id: serial('id').primaryKey(),
+  label: varchar('label', { length: 100 }).notNull(),
+  probabilityPct: integer('probability_pct').notNull(),
+  ...syncCols,
+});
+
+export const departments = pgTable('departments', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  code: varchar('code', { length: 50 }),
+  parentId: integer('parent_id'),
+  ...syncCols,
+});
+
+export const salesChannels = pgTable('sales_channels', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  ...syncCols,
+});
+
+export const businessVerticals = pgTable('business_verticals', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  ...syncCols,
+});
+
+export const businessTypes = pgTable('business_types', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  ...syncCols,
+});
+
+export const employees = pgTable('employees', {
+  id: serial('id').primaryKey(),
+  firstName: varchar('first_name', { length: 100 }).notNull(),
+  lastName: varchar('last_name', { length: 100 }).notNull(),
+  email: varchar('email', { length: 255 }),
+  roles: jsonb('roles').$type<string[]>().default([]),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('employees_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const hkPartners = pgTable('hk_partners', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  contactName: varchar('contact_name', { length: 255 }),
+  email: varchar('email', { length: 255 }),
+  ...syncCols,
+});
+
+export const opsPartners = pgTable('ops_partners', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  contactName: varchar('contact_name', { length: 255 }),
+  region: varchar('region', { length: 100 }),
+  ...syncCols,
+});
+
+export const compliancePartners = pgTable('compliance_partners', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  contactName: varchar('contact_name', { length: 255 }),
+  certTypes: jsonb('cert_types').$type<string[]>().default([]),
+  ...syncCols,
+});
+
+export const incoterms = pgTable('incoterms', {
+  id: serial('id').primaryKey(),
+  code: varchar('code', { length: 10 }).notNull().unique(),
+  fullName: varchar('full_name', { length: 255 }).notNull(),
+  rulesVersion: varchar('rules_version', { length: 10 }).default('2020'),
+  ...syncCols,
+});
+
+export const shippingMethods = pgTable('shipping_methods', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  carrier: varchar('carrier', { length: 100 }),
+  transitDays: integer('transit_days'),
+  ...syncCols,
+});
+
+export const vendors = pgTable('vendors', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  email: varchar('email', { length: 255 }),
+  paymentTerms: varchar('payment_terms', { length: 100 }),
+  defaultCurrencyId: integer('default_currency_id').references(() => currencies.id),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('vendors_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const vendorAddresses = pgTable('vendor_addresses', {
+  id: serial('id').primaryKey(),
+  vendorId: integer('vendor_id').references(() => vendors.id).notNull(),
+  label: varchar('label', { length: 100 }),
+  addrLine1: varchar('addr_line1', { length: 255 }),
+  city: varchar('city', { length: 100 }),
+  country: varchar('country', { length: 100 }),
+  ...syncCols,
+});
+
+export const factories = pgTable('factories', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  vendorId: integer('vendor_id').references(() => vendors.id),
+  country: varchar('country', { length: 100 }),
+  leadTimeDays: integer('lead_time_days'),
+  ...syncCols,
+}, (t) => ({
+  vendorIdx: index('factories_vendor_idx').on(t.vendorId),
+}));
+
+export const itemTypes = pgTable('item_types', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  requiresHts: boolean('requires_hts').default(false),
+  ...syncCols,
+});
+
+export const productClasses = pgTable('product_classes', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  tariffDefaultPct: numeric('tariff_default_pct', { precision: 6, scale: 3 }).default('10'),
+  ...syncCols,
+});
+
+export const sustainabilityOptions = pgTable('sustainability_options', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  certBody: varchar('cert_body', { length: 100 }),
+  ...syncCols,
+});
+
+export const shippingGroups = pgTable('shipping_groups', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  volumetricDivisor: numeric('volumetric_divisor', { precision: 10, scale: 2 }).default('5000'),
+  ...syncCols,
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  ESTIMATES (OPPORTUNITY HEADER)
+// ══════════════════════════════════════════════════════════════════
+
+export const estimates = pgTable('estimates', {
+  id: serial('id').primaryKey(),
+  netsuiteInternalId: varchar('netsuite_internal_id', { length: 50 }).unique(),
+
+  // Primary Information
+  customerId: integer('customer_id').references(() => customers.id).notNull(),
+  customerContactId: integer('customer_contact_id').references(() => contacts.id),
+  customerPo: varchar('customer_po', { length: 100 }),
+  projectName: varchar('project_name', { length: 255 }).notNull(),
+  projectTypeId: integer('project_type_id').references(() => projectTypes.id),
+  expectedCloseDate: date('expected_close_date'),
+  promiseDate: date('promise_date'),
+  likelyToCloseId: integer('likely_to_close_id').references(() => likelyToClose.id),
+  sellCurrencyId: integer('sell_currency_id').references(() => currencies.id),
+  projectedTotalAmt: numeric('projected_total_amt', { precision: 15, scale: 2 }),
+  estimatedQty: integer('estimated_qty'),
+
+  // Classification
+  departmentId: integer('department_id').references(() => departments.id),
+  salesChannelId: integer('sales_channel_id').references(() => salesChannels.id),
+  businessVerticalId: integer('business_vertical_id').references(() => businessVerticals.id),
+  businessTypeId: integer('business_type_id').references(() => businessTypes.id),
+  compliancePartnerId: integer('compliance_partner_id').references(() => compliancePartners.id),
+  acctManagerId: integer('acct_manager_id').references(() => employees.id),
+  productDeveloperId: integer('product_developer_id').references(() => employees.id),
+  hkPartnerId: integer('hk_partner_id').references(() => hkPartners.id),
+  opsPartner1Id: integer('ops_partner_1_id').references(() => opsPartners.id),
+  opsPartner2Id: integer('ops_partner_2_id').references(() => opsPartners.id),
+  deckRequest: boolean('deck_request').default(false),
+  artSetupRequest: boolean('art_setup_request').default(false),
+  pkgDeckRequest: boolean('pkg_deck_request').default(false),
+  pkgArtSetupRequest: boolean('pkg_art_setup_request').default(false),
+
+  // Client Shipping & Billing
+  clientIncotermsId: integer('client_incoterms_id').references(() => incoterms.id),
+  clientShipMethodId: integer('client_ship_method_id').references(() => shippingMethods.id),
+  shippingAddressId: integer('shipping_address_id').references(() => addresses.id),
+  billingAddressId: integer('billing_address_id').references(() => addresses.id),
+
+  // Additional
+  sampleOnlyOrder: boolean('sample_only_order').default(false),
+  reOrder: boolean('re_order').default(false),
+  bibleLink: varchar('bible_link', { length: 1000 }),
+  memo: text('memo'),
+  attachments: jsonb('attachments').$type<Array<{ name: string; url: string; size: number; type: string }>>().default([]),
+
+  // Status & Sync
+  status: estimateStatusEnum('status').default('draft').notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  source: sourceEnum('source').default('portal').notNull(),
+  syncStatus: syncStatusEnum('sync_status').default('pending').notNull(),
+  syncError: text('sync_error'),
+  syncedAt: timestamp('synced_at', { withTimezone: true }),
+  createdBy: integer('created_by').references(() => users.id),
+  updatedBy: integer('updated_by').references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  nsIdIdx: uniqueIndex('estimates_ns_id_idx').on(t.netsuiteInternalId),
+  customerIdx: index('estimates_customer_idx').on(t.customerId),
+  syncIdx: index('estimates_sync_idx').on(t.syncStatus),
+  updatedIdx: index('estimates_updated_idx').on(t.updatedAt),
+  statusIdx: index('estimates_status_idx').on(t.status),
+}));
+
+// ══════════════════════════════════════════════════════════════════
+//  ESTIMATE LINE ITEMS (COST SHEET)
+// ══════════════════════════════════════════════════════════════════
+
+export const estimateLineItems = pgTable('estimate_line_items', {
+  id: serial('id').primaryKey(),
+  netsuiteInternalId: varchar('netsuite_internal_id', { length: 50 }).unique(),
+  estimateId: integer('estimate_id').references(() => estimates.id, { onDelete: 'cascade' }).notNull(),
+  lineNumber: integer('line_number').notNull(),
+
+  // Line Header
+  itemTypeId: integer('item_type_id').references(() => itemTypes.id),
+  shortDescription: varchar('short_description', { length: 500 }),
+  vendorId: integer('vendor_id').references(() => vendors.id),
+  quantity: numeric('quantity', { precision: 12, scale: 4 }).default('0'),
+  sellPricePerUnit: numeric('sell_price_per_unit', { precision: 15, scale: 4 }).default('0'),
+  skuMarginPct: numeric('sku_margin_pct', { precision: 6, scale: 3 }).default('0'),
+  salesAmount: numeric('sales_amount', { precision: 15, scale: 2 }),
+  pickupExwFob: numeric('pickup_exw_fob', { precision: 15, scale: 2 }),
+  oceanDdp: numeric('ocean_ddp', { precision: 15, scale: 2 }),
+  airDdp: numeric('air_ddp', { precision: 15, scale: 2 }),
+  exclude: boolean('exclude').default(false),
+
+  // Purchase Information
+  description: text('description'),
+  factoryId: integer('factory_id').references(() => factories.id),
+  vendorCurrencyId: integer('vendor_currency_id').references(() => currencies.id),
+  factoryCostPerUnit: numeric('factory_cost_per_unit', { precision: 15, scale: 4 }).default('0'),
+  packingCostPerUnit: numeric('packing_cost_per_unit', { precision: 15, scale: 4 }).default('0'),
+  sampleFees: numeric('sample_fees', { precision: 15, scale: 2 }).default('0'),
+  otherPerUnit: numeric('other_per_unit', { precision: 15, scale: 4 }).default('0'),
+
+  // Landed Cost
+  freightPerUnit: numeric('freight_per_unit', { precision: 15, scale: 4 }).default('0'),
+  dutyPct: numeric('duty_pct', { precision: 6, scale: 3 }).default('0'),
+  tariffPct: numeric('tariff_pct', { precision: 6, scale: 3 }).default('10'),
+  tariffMuPct: numeric('tariff_mu_pct', { precision: 6, scale: 3 }).default('0'),
+  otherCostPct: numeric('other_cost_pct', { precision: 6, scale: 3 }).default('0'),
+  paddingPct: numeric('padding_pct', { precision: 6, scale: 3 }).default('0'),
+  usdFactoryCost: numeric('usd_factory_cost', { precision: 15, scale: 4 }),
+  landedCostPerUnit: numeric('landed_cost_per_unit', { precision: 15, scale: 4 }),
+  extendedLandedCost: numeric('extended_landed_cost', { precision: 15, scale: 2 }),
+
+  // Classification
+  productClassId: integer('product_class_id').references(() => productClasses.id),
+  sustainabilityId: integer('sustainability_id').references(() => sustainabilityOptions.id),
+  htsCode: varchar('hts_code', { length: 20 }),
+  countryOfOrigin: varchar('country_of_origin', { length: 100 }),
+  countryOfDest: countryOfDestEnum('country_of_dest').default('US'),
+
+  // Packing Details
+  unitsPerCarton: integer('units_per_carton'),
+  dimLCm: numeric('dim_l_cm', { precision: 8, scale: 2 }),
+  dimWCm: numeric('dim_w_cm', { precision: 8, scale: 2 }),
+  dimHCm: numeric('dim_h_cm', { precision: 8, scale: 2 }),
+  weightKgPerCarton: numeric('weight_kg_per_carton', { precision: 8, scale: 3 }),
+  cbmPerCarton: numeric('cbm_per_carton', { precision: 10, scale: 5 }),
+  totalCartons: integer('total_cartons').default(0),
+  totalCbm: numeric('total_cbm', { precision: 10, scale: 3 }),
+  chargeableWeightKg: numeric('chargeable_weight_kg', { precision: 10, scale: 3 }),
+  shippingGroupId: integer('shipping_group_id').references(() => shippingGroups.id),
+
+  // Other Details (Vendor)
+  exFactoryDate: date('ex_factory_date'),
+  vendorIncotermsId: integer('vendor_incoterms_id').references(() => incoterms.id),
+  shipToVendorId: integer('ship_to_vendor_id').references(() => vendors.id),
+  shipToVendorAddrId: integer('ship_to_vendor_addr_id').references(() => vendorAddresses.id),
+  notes: text('notes'),
+
+  // Sync
+  syncStatus: syncStatusEnum('sync_status').default('pending').notNull(),
+  syncError: text('sync_error'),
+  syncedAt: timestamp('synced_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  estimateIdx: index('eli_estimate_idx').on(t.estimateId),
+  syncIdx: index('eli_sync_idx').on(t.syncStatus),
+  vendorIdx: index('eli_vendor_idx').on(t.vendorId),
+  lineNumberIdx: uniqueIndex('eli_line_number_idx').on(t.estimateId, t.lineNumber),
+}));
+
+// ══════════════════════════════════════════════════════════════════
+//  SYNC LOGS & CONFLICTS
+// ══════════════════════════════════════════════════════════════════
+
+export const syncLogs = pgTable('sync_logs', {
+  id: serial('id').primaryKey(),
+  entityType: varchar('entity_type', { length: 50 }).notNull(),
+  entityId: integer('entity_id'),
+  netsuiteInternalId: varchar('netsuite_internal_id', { length: 50 }),
+  operation: operationEnum('operation').notNull(),
+  direction: directionEnum('direction').notNull(),
+  status: varchar('status', { length: 20 }).notNull(),
+  attemptCount: integer('attempt_count').default(1),
+  portalPayload: jsonb('portal_payload'),
+  netsuiteResponse: jsonb('netsuite_response'),
+  errorMessage: text('error_message'),
+  durationMs: integer('duration_ms'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  entityIdx: index('sync_logs_entity_idx').on(t.entityType, t.entityId),
+  statusIdx: index('sync_logs_status_idx').on(t.status),
+  createdIdx: index('sync_logs_created_idx').on(t.createdAt),
+}));
+
+export const syncConflicts = pgTable('sync_conflicts', {
+  id: serial('id').primaryKey(),
+  entityType: varchar('entity_type', { length: 50 }).notNull(),
+  entityId: integer('entity_id'),
+  netsuiteInternalId: varchar('netsuite_internal_id', { length: 50 }),
+  portalData: jsonb('portal_data').notNull(),
+  netsuiteData: jsonb('netsuite_data').notNull(),
+  detectedAt: timestamp('detected_at', { withTimezone: true }).defaultNow().notNull(),
+  resolution: varchar('resolution', { length: 20 }),
+  resolvedBy: integer('resolved_by').references(() => users.id),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  RELATIONS
+// ══════════════════════════════════════════════════════════════════
+
+export const subsidiariesRelations = relations(subsidiaries, ({ many }) => ({
+  customers: many(customers),
+}));
+
+export const customersRelations = relations(customers, ({ one, many }) => ({
+  subsidiary: one(subsidiaries, { fields: [customers.subsidiaryId], references: [subsidiaries.id] }),
+  contacts: many(contacts),
+  addresses: many(addresses),
+  estimates: many(estimates),
+}));
+
+export const contactsRelations = relations(contacts, ({ one }) => ({
+  customer: one(customers, { fields: [contacts.customerId], references: [customers.id] }),
+}));
+
+export const addressesRelations = relations(addresses, ({ one }) => ({
+  customer: one(customers, { fields: [addresses.customerId], references: [customers.id] }),
+}));
+
+export const vendorsRelations = relations(vendors, ({ many }) => ({
+  vendorAddresses: many(vendorAddresses),
+  factories: many(factories),
+}));
+
+export const factoriesRelations = relations(factories, ({ one }) => ({
+  vendor: one(vendors, { fields: [factories.vendorId], references: [vendors.id] }),
+}));
+
+export const estimatesRelations = relations(estimates, ({ one, many }) => ({
+  customer: one(customers, { fields: [estimates.customerId], references: [customers.id] }),
+  contact: one(contacts, { fields: [estimates.customerContactId], references: [contacts.id] }),
+  sellCurrency: one(currencies, { fields: [estimates.sellCurrencyId], references: [currencies.id] }),
+  acctManager: one(employees, { fields: [estimates.acctManagerId], references: [employees.id] }),
+  lineItems: many(estimateLineItems),
+  createdByUser: one(users, { fields: [estimates.createdBy], references: [users.id] }),
+}));
+
+export const estimateLineItemsRelations = relations(estimateLineItems, ({ one }) => ({
+  estimate: one(estimates, { fields: [estimateLineItems.estimateId], references: [estimates.id] }),
+  vendor: one(vendors, { fields: [estimateLineItems.vendorId], references: [vendors.id] }),
+  factory: one(factories, { fields: [estimateLineItems.factoryId], references: [factories.id] }),
+  vendorCurrency: one(currencies, { fields: [estimateLineItems.vendorCurrencyId], references: [currencies.id] }),
+  productClass: one(productClasses, { fields: [estimateLineItems.productClassId], references: [productClasses.id] }),
+}));
+
+// ─── Export all tables as a map for generic service ───────────────
+
+export const MASTER_TABLES = {
+  subsidiaries,
+  customers,
+  contacts,
+  addresses,
+  currencies,
+  project_types: projectTypes,
+  likely_to_close: likelyToClose,
+  departments,
+  sales_channels: salesChannels,
+  business_verticals: businessVerticals,
+  business_types: businessTypes,
+  employees,
+  hk_partners: hkPartners,
+  ops_partners: opsPartners,
+  compliance_partners: compliancePartners,
+  incoterms,
+  shipping_methods: shippingMethods,
+  vendors,
+  vendor_addresses: vendorAddresses,
+  factories,
+  item_types: itemTypes,
+  product_classes: productClasses,
+  sustainability_options: sustainabilityOptions,
+  shipping_groups: shippingGroups,
+} as const;
+
+export type MasterEntityKey = keyof typeof MASTER_TABLES;

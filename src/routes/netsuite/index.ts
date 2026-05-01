@@ -1,0 +1,91 @@
+/**
+ * NetSuite Routes — Main Index
+ * Base prefix: /api/v1/netsuite
+ * Auth: X-API-Key header on every request.
+ *
+ * Every record type has its OWN file and its OWN URL.
+ *
+ * FILE                    → URL
+ * subsidiaries.ts         → /subsidiaries
+ * customers.ts            → /customers
+ * contacts.ts             → /contacts
+ * vendors.ts              → /vendors
+ * employees.ts            → /employees
+ * currencies.ts           → /currencies
+ * departments.ts          → /departments
+ * salesChannels.ts        → /sales-channels
+ * businessVerticals.ts    → /business-verticals
+ * businessTypes.ts        → /business-types
+ * projectTypes.ts         → /project-types
+ * likelyToClose.ts        → /likely-to-close
+ * hkPartners.ts           → /hk-partners
+ * opsPartners.ts          → /ops-partners
+ * compliancePartners.ts   → /compliance-partners
+ * incoterms.ts            → /incoterms
+ * shippingMethods.ts      → /shipping-methods
+ * itemTypes.ts            → /item-types
+ * productClasses.ts       → /product-classes
+ * sustainabilityOptions.ts → /sustainability-options
+ * shippingGroups.ts       → /shipping-groups
+ * estimates.ts            → /estimates
+ * lineItems.ts            → /estimates/:nsId/line-items
+ */
+
+import { FastifyInstance } from 'fastify';
+import { apiKeyAuth } from '../../middleware/apiKeyAuth.js';
+
+import subsidiaryRoutes         from './subsidiaries.js';
+import customerRoutes           from './customers.js';
+import contactRoutes            from './contacts.js';
+import vendorRoutes             from './vendors.js';
+import employeeRoutes           from './employees.js';
+import currencyRoutes           from './currencies.js';
+import departmentRoutes         from './departments.js';
+import salesChannelRoutes       from './salesChannels.js';
+import businessVerticalRoutes   from './businessVerticals.js';
+import businessTypeRoutes       from './businessTypes.js';
+import projectNameRoutes        from './projectNames.js';
+import projectTypeRoutes        from './projectTypes.js';
+import likelyToCloseRoutes      from './likelyToClose.js';
+import hkPartnerRoutes          from './hkPartners.js';
+import opsPartnerRoutes         from './opsPartners.js';
+import compliancePartnerRoutes  from './compliancePartners.js';
+import incotermRoutes           from './incoterms.js';
+import shippingMethodRoutes     from './shippingMethods.js';
+import itemTypeRoutes           from './itemTypes.js';
+import productClassRoutes       from './productClasses.js';
+import sustainabilityRoutes     from './sustainabilityOptions.js';
+import shippingGroupRoutes      from './shippingGroups.js';
+import estimateNsRoutes         from './estimates.js';
+import lineItemNsRoutes         from './lineItems.js';
+
+export default async function netsuiteRoutes(app: FastifyInstance) {
+  app.addHook('preHandler', apiKeyAuth);
+
+  app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+
+  await app.register(subsidiaryRoutes,        { prefix: '/subsidiaries' });
+  await app.register(customerRoutes,          { prefix: '/customers' });
+  await app.register(contactRoutes,           { prefix: '/contacts' });
+  await app.register(vendorRoutes,            { prefix: '/vendors' });
+  await app.register(employeeRoutes,          { prefix: '/employees' });
+  await app.register(currencyRoutes,          { prefix: '/currencies' });
+  await app.register(departmentRoutes,        { prefix: '/departments' });
+  await app.register(salesChannelRoutes,      { prefix: '/sales-channels' });
+  await app.register(businessVerticalRoutes,  { prefix: '/business-verticals' });
+  await app.register(businessTypeRoutes,      { prefix: '/business-types' });
+  await app.register(projectNameRoutes,       { prefix: '/project-names' });
+  await app.register(projectTypeRoutes,       { prefix: '/project-types' });
+  await app.register(likelyToCloseRoutes,     { prefix: '/likely-to-close' });
+  await app.register(hkPartnerRoutes,         { prefix: '/hk-partners' });
+  await app.register(opsPartnerRoutes,        { prefix: '/ops-partners' });
+  await app.register(compliancePartnerRoutes, { prefix: '/compliance-partners' });
+  await app.register(incotermRoutes,          { prefix: '/incoterms' });
+  await app.register(shippingMethodRoutes,    { prefix: '/shipping-methods' });
+  await app.register(itemTypeRoutes,          { prefix: '/item-types' });
+  await app.register(productClassRoutes,      { prefix: '/product-classes' });
+  await app.register(sustainabilityRoutes,    { prefix: '/sustainability-options' });
+  await app.register(shippingGroupRoutes,     { prefix: '/shipping-groups' });
+  await app.register(estimateNsRoutes,        { prefix: '/estimates' });
+  await app.register(lineItemNsRoutes,        { prefix: '/estimates/:nsId/line-items' });
+}
