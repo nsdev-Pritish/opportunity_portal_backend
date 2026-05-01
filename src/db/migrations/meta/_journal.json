@@ -15,6 +15,13 @@
       "when": 1777371649204,
       "tag": "0001_exotic_bushwacker",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777631510634,
+      "tag": "0002_wild_lord_hawal",
+      "breakpoints": true
     }
   ]
 }

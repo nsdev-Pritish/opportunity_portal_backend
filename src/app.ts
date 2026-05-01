@@ -1,4 +1,4 @@
-import Fastify, { FastifyInstance } from 'fastify';
+import Fastify, { FastifyInstance, FastifyError } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -7,7 +7,7 @@ import swaggerUi from '@fastify/swagger-ui';
 
 import authPlugin from './plugins/auth.plugin.js';
 import { getRedis } from './config/redis.js';
-import { loggerConfig } from './utils/logger.js';
+import { loggerConfig, logger } from './utils/logger.js';
 import { AppError } from './utils/errors.js';
 import { ZodError } from 'zod';
 
@@ -57,7 +57,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString(),
   }));
 
-  app.setErrorHandler((err, req, reply) => {
+  app.setErrorHandler((err: FastifyError, req, reply) => {
     if (err instanceof ZodError)
       return reply.status(400).send({ error: 'Validation Error', code: 'VALIDATION_ERROR', details: err.flatten().fieldErrors });
     if (err instanceof AppError)
