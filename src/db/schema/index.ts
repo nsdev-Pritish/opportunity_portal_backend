@@ -78,7 +78,7 @@ export const subsidiaries = pgTable('subsidiaries', {
   name: varchar('name', { length: 255 }).notNull(),
   code: varchar('code', { length: 50 }),
   country: varchar('country', { length: 100 }),
-  currency: varchar('currency', { length: 3 }),
+  currencyId: integer('currency_id').references(() => currencies.id),
   isDefault: boolean('is_default').default(false),
   ...syncCols,
 }, (t) => ({
@@ -88,10 +88,13 @@ export const subsidiaries = pgTable('subsidiaries', {
 
 export const customers = pgTable('customers', {
   id: serial('id').primaryKey(),
-  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id).notNull(),
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
   name: varchar('name', { length: 255 }).notNull(),
+  contactName: varchar('contact_name', { length: 255 }),
   email: varchar('email', { length: 255 }),
   phone: varchar('phone', { length: 50 }),
+  terms: varchar('terms', { length: 100 }),
+  chargebackRoyalties: boolean('chargeback_royalties').default(false),
   currencyId: integer('currency_id'),
   ...syncCols,
 }, (t) => ({
@@ -103,16 +106,21 @@ export const customers = pgTable('customers', {
 
 export const contacts = pgTable('contacts', {
   id: serial('id').primaryKey(),
-  customerId: integer('customer_id').references(() => customers.id).notNull(),
+  customerId: integer('customer_id').references(() => customers.id),
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
   firstName: varchar('first_name', { length: 100 }),
   lastName: varchar('last_name', { length: 100 }),
   email: varchar('email', { length: 255 }),
   phone: varchar('phone', { length: 50 }),
   title: varchar('title', { length: 100 }),
+  state: varchar('state', { length: 100 }),
+  country: varchar('country', { length: 100 }),
+  currencyId: integer('currency_id').references(() => currencies.id),
   ...syncCols,
 }, (t) => ({
   nsIdIdx: uniqueIndex('contacts_ns_id_idx').on(t.netsuiteInternalId),
   customerIdx: index('contacts_customer_idx').on(t.customerId),
+  subsidiaryIdx: index('contacts_subsidiary_idx').on(t.subsidiaryId),
 }));
 
 export const addresses = pgTable('addresses', {
@@ -144,16 +152,20 @@ export const currencies = pgTable('currencies', {
 export const projectNames = pgTable('project_names', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
+  customerId: integer('customer_id').references(() => customers.id),
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
   description: text('description'),
   ...syncCols,
 }, (t) => ({
   nsIdIdx: uniqueIndex('project_names_ns_id_idx').on(t.netsuiteInternalId),
+  customerIdx: index('project_names_customer_idx').on(t.customerId),
+  subsidiaryIdx: index('project_names_subsidiary_idx').on(t.subsidiaryId),
 }));
 
 export const projectTypes = pgTable('project_types', {
   id: serial('id').primaryKey(),
-  projectNameId: integer('project_name_id').references(() => projectNames.id),
   name: varchar('name', { length: 255 }).notNull(),
+  projectNameId: integer('project_name_id').references(() => projectNames.id),
   description: text('description'),
   ...syncCols,
 }, (t) => ({
@@ -504,23 +516,40 @@ export const syncConflicts = pgTable('sync_conflicts', {
 //  RELATIONS
 // ══════════════════════════════════════════════════════════════════
 
-export const subsidiariesRelations = relations(subsidiaries, ({ many }) => ({
+export const subsidiariesRelations = relations(subsidiaries, ({ one, many }) => ({
+  currency: one(currencies, { fields: [subsidiaries.currencyId], references: [currencies.id] }),
   customers: many(customers),
+  projectNames: many(projectNames),
+  contacts: many(contacts),
 }));
 
 export const customersRelations = relations(customers, ({ one, many }) => ({
   subsidiary: one(subsidiaries, { fields: [customers.subsidiaryId], references: [subsidiaries.id] }),
+  currency: one(currencies, { fields: [customers.currencyId], references: [currencies.id] }),
   contacts: many(contacts),
   addresses: many(addresses),
   estimates: many(estimates),
+  projectNames: many(projectNames),
 }));
 
 export const contactsRelations = relations(contacts, ({ one }) => ({
+  subsidiary: one(subsidiaries, { fields: [contacts.subsidiaryId], references: [subsidiaries.id] }),
+  currency: one(currencies, { fields: [contacts.currencyId], references: [currencies.id] }),
   customer: one(customers, { fields: [contacts.customerId], references: [customers.id] }),
 }));
 
 export const addressesRelations = relations(addresses, ({ one }) => ({
   customer: one(customers, { fields: [addresses.customerId], references: [customers.id] }),
+}));
+
+export const projectNamesRelations = relations(projectNames, ({ one, many }) => ({
+  customer: one(customers, { fields: [projectNames.customerId], references: [customers.id] }),
+  subsidiary: one(subsidiaries, { fields: [projectNames.subsidiaryId], references: [subsidiaries.id] }),
+  projectTypes: many(projectTypes),
+}));
+
+export const projectTypesRelations = relations(projectTypes, ({ one }) => ({
+  projectName: one(projectNames, { fields: [projectTypes.projectNameId], references: [projectNames.id] }),
 }));
 
 export const vendorsRelations = relations(vendors, ({ many }) => ({
@@ -557,6 +586,7 @@ export const MASTER_TABLES = {
   contacts,
   addresses,
   currencies,
+  project_names: projectNames,
   project_types: projectTypes,
   likely_to_close: likelyToClose,
   departments,

@@ -12,10 +12,10 @@
 import { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { getDb } from '../../config/database.js';
-import { customers, subsidiaries } from '../../db/schema/index.js';
-import { NotFoundError, ValidationError } from '../../utils/errors.js';
-import { invalidateDropdown } from '../../utils/cache.js';
+import { getDb } from '../../../config/database.js';
+import { customers, subsidiaries } from '../../../db/schema/index.js';
+import { NotFoundError, ValidationError } from '../../../utils/errors.js';
+import { invalidateDropdown } from '../../../utils/cache.js';
 
 // ─── Validation schemas ───────────────────────────────────────────
 
@@ -23,15 +23,21 @@ const CreateCustomerSchema = z.object({
   netsuiteInternalId     : z.string().min(1),   // NS internalId — required
   subsidiaryNetsuiteId   : z.string().min(1),   // NS internalId of the subsidiary
   name                   : z.string().min(1).max(255),
+  contactName            : z.string().max(255).optional().nullable(),
   email                  : z.string().email().optional().nullable(),
   phone                  : z.string().max(50).optional().nullable(),
+  terms                  : z.string().max(100).optional().nullable(),
+  chargebackRoyalties    : z.boolean().optional(),
 });
 
 const UpdateCustomerSchema = z.object({
   subsidiaryNetsuiteId   : z.string().min(1).optional(), // NS internalId of the subsidiary
   name                   : z.string().min(1).max(255).optional(),
+  contactName            : z.string().max(255).optional().nullable(),
   email                  : z.string().email().optional().nullable(),
   phone                  : z.string().max(50).optional().nullable(),
+  terms                  : z.string().max(100).optional().nullable(),
+  chargebackRoyalties    : z.boolean().optional(),
 });
 
 const StatusSchema = z.object({

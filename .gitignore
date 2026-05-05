@@ -6,6 +6,8 @@
 .env.production
 .env.test
 *.env
+#  add read me file here
+README.md
 
 # Dependencies
 node_modules/

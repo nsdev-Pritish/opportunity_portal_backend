@@ -5,19 +5,22 @@
  *
  * Every record type has its OWN file and its OWN URL.
  *
- * FILE                    → URL
+ * PRIMARY INFORMATION (primary/)
+ * primary/customers.ts    → /customers
+ * primary/projectNames.ts → /project-names
+ * primary/projectTypes.ts → /project-types
+ * primary/likelyToClose.ts → /likely-to-close
+ * primary/contacts.ts     → /contacts
+ * primary/currencies.ts   → /currencies
+ *
+ * OTHER FILES
  * subsidiaries.ts         → /subsidiaries
- * customers.ts            → /customers
- * contacts.ts             → /contacts
  * vendors.ts              → /vendors
  * employees.ts            → /employees
- * currencies.ts           → /currencies
  * departments.ts          → /departments
  * salesChannels.ts        → /sales-channels
  * businessVerticals.ts    → /business-verticals
  * businessTypes.ts        → /business-types
- * projectTypes.ts         → /project-types
- * likelyToClose.ts        → /likely-to-close
  * hkPartners.ts           → /hk-partners
  * opsPartners.ts          → /ops-partners
  * compliancePartners.ts   → /compliance-partners
@@ -35,18 +38,12 @@ import { FastifyInstance } from 'fastify';
 import { apiKeyAuth } from '../../middleware/apiKeyAuth.js';
 
 import subsidiaryRoutes         from './subsidiaries.js';
-import customerRoutes           from './customers.js';
-import contactRoutes            from './contacts.js';
 import vendorRoutes             from './vendors.js';
 import employeeRoutes           from './employees.js';
-import currencyRoutes           from './currencies.js';
 import departmentRoutes         from './departments.js';
 import salesChannelRoutes       from './salesChannels.js';
 import businessVerticalRoutes   from './businessVerticals.js';
 import businessTypeRoutes       from './businessTypes.js';
-import projectNameRoutes        from './projectNames.js';
-import projectTypeRoutes        from './projectTypes.js';
-import likelyToCloseRoutes      from './likelyToClose.js';
 import hkPartnerRoutes          from './hkPartners.js';
 import opsPartnerRoutes         from './opsPartners.js';
 import compliancePartnerRoutes  from './compliancePartners.js';
@@ -58,6 +55,14 @@ import sustainabilityRoutes     from './sustainabilityOptions.js';
 import shippingGroupRoutes      from './shippingGroups.js';
 import estimateNsRoutes         from './estimates.js';
 import lineItemNsRoutes         from './lineItems.js';
+
+// Primary Information imports
+import customerRoutes           from './primary/customers.js';
+import projectNameRoutes        from './primary/projectNames.js';
+import projectTypeRoutes        from './primary/projectTypes.js';
+import likelyToCloseRoutes      from './primary/likelyToClose.js';
+import contactRoutes            from './primary/contacts.js';
+import currencyRoutes           from './primary/currencies.js';
 
 export default async function netsuiteRoutes(app: FastifyInstance) {
   app.addHook('preHandler', apiKeyAuth);

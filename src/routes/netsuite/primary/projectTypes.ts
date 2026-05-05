@@ -21,10 +21,10 @@
 import { FastifyInstance } from 'fastify';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
-import { getDb } from '../../config/database.js';
-import { projectTypes, projectNames } from '../../db/schema/index.js';
-import { NotFoundError, ValidationError } from '../../utils/errors.js';
-import { invalidateDropdown } from '../../utils/cache.js';
+import { getDb } from '../../../config/database.js';
+import { projectTypes, projectNames } from '../../../db/schema/index.js';
+import { NotFoundError, ValidationError } from '../../../utils/errors.js';
+import { invalidateDropdown } from '../../../utils/cache.js';
 
 const CreateSchema = z.object({
   netsuiteInternalId : z.string().min(1),

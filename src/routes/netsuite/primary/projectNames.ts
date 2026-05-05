@@ -1,6 +1,7 @@
 /**
  * PROJECT NAME APIs
  * Project Names from NetSuite (customrecord_cseg_project)
+ * Project Types now depend on Project Names (not vice versa)
  *
  *  POST  /api/v1/netsuite/project-names          → create project name
  *  PUT   /api/v1/netsuite/project-names/:nsId    → update project name
@@ -12,21 +13,25 @@
 import { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { getDb } from '../../config/database.js';
-import { projectNames } from '../../db/schema/index.js';
-import { NotFoundError } from '../../utils/errors.js';
-import { invalidateDropdown } from '../../utils/cache.js';
+import { getDb } from '../../../config/database.js';
+import { projectNames, customers, subsidiaries } from '../../../db/schema/index.js';
+import { NotFoundError, ValidationError } from '../../../utils/errors.js';
+import { invalidateDropdown } from '../../../utils/cache.js';
 
 // ─── Validation schemas ───────────────────────────────────────────
 
 const CreateProjectNameSchema = z.object({
   netsuiteInternalId : z.string().min(1),   // NS internalId — required
   name               : z.string().min(1).max(255),
+  customerNsId       : z.string().optional().nullable(),  // NS internalId of customer
+  subsidiaryNsId     : z.string().optional().nullable(),  // NS internalId of subsidiary
   description        : z.string().optional().nullable(),
 });
 
 const UpdateProjectNameSchema = z.object({
   name               : z.string().min(1).max(255).optional(),
+  customerNsId       : z.string().optional().nullable(),
+  subsidiaryNsId     : z.string().optional().nullable(),
   description        : z.string().optional().nullable(),
 });
 

@@ -14,10 +14,10 @@
 import { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { getDb } from '../../config/database.js';
-import { currencies } from '../../db/schema/index.js';
-import { NotFoundError } from '../../utils/errors.js';
-import { invalidateDropdown } from '../../utils/cache.js';
+import { getDb } from '../../../config/database.js';
+import { currencies } from '../../../db/schema/index.js';
+import { NotFoundError } from '../../../utils/errors.js';
+import { invalidateDropdown } from '../../../utils/cache.js';
 
 const CreateSchema = z.object({
   netsuiteInternalId : z.string().min(1),

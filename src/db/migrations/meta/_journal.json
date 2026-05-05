@@ -22,6 +22,27 @@
       "when": 1777631510634,
       "tag": "0002_wild_lord_hawal",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1777958692075,
+      "tag": "0003_hot_beast",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777962250617,
+      "tag": "0004_perfect_mysterio",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1777965037925,
+      "tag": "0005_amazing_hawkeye",
+      "breakpoints": true
     }
   ]
 }

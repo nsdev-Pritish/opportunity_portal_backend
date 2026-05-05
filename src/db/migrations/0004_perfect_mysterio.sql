@@ -1,0 +1,1 @@
+ALTER TABLE "customers" ALTER COLUMN "subsidiary_id" DROP NOT NULL;
