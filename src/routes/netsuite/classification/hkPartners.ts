@@ -14,10 +14,10 @@
 import { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { getDb } from '../../config/database.js';
-import { hkPartners } from '../../db/schema/index.js';
-import { NotFoundError } from '../../utils/errors.js';
-import { invalidateDropdown } from '../../utils/cache.js';
+import { getDb } from '../../../config/database.js';
+import { hkPartners } from '../../../db/schema/index.js';
+import { NotFoundError } from '../../../utils/errors.js';
+import { invalidateDropdown } from '../../../utils/cache.js';
 
 const CreateSchema = z.object({
   netsuiteInternalId : z.string().min(1),
@@ -49,7 +49,7 @@ export default async function hkPartnerRoutes(app: FastifyInstance) {
       .where(eq(hkPartners.netsuiteInternalId, body.netsuiteInternalId)).limit(1);
     if (existing) {
       const [upd] = await db.update(hkPartners)
-        .set({ name: body.name, contactName: body.contactName, email: body.email, updatedAt: new Date() })
+        .set({ name: body.name, updatedAt: new Date() })
         .where(eq(hkPartners.id, existing.id)).returning();
       await invalidateDropdown('hk_partners');
       return reply.status(200).send({ ...upd, _action: 'updated' });

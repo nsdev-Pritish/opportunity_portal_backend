@@ -11,7 +11,7 @@ export function getDb() {
     _client = postgres(env.DATABASE_URL, {
       max: 20,
       idle_timeout: 30,
-      connect_timeout: 10,
+      connect_timeout: 30, // Increased for Render.com (database may need to spin up)
       prepare: false, // Required for transaction support with Drizzle
     });
     _db = drizzle(_client, { schema, logger: env.NODE_ENV === 'development' });

@@ -43,6 +43,20 @@
       "when": 1777965037925,
       "tag": "0005_amazing_hawkeye",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777976970737,
+      "tag": "0006_empty_swordsman",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778040815694,
+      "tag": "0007_certain_thanos",
+      "breakpoints": true
     }
   ]
 }

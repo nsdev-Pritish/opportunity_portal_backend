@@ -11,7 +11,7 @@
  *  { "netsuiteInternalId": "10", "name": "Direct", "description": "Direct sales channel" }
  */
 
-import { salesChannels } from '../../db/schema/index.js';
-import { buildDropdownRoutes } from './_routeBuilder.js';
+import { salesChannels } from '../../../db/schema/index.js';
+import { buildDropdownRoutes } from '../_routeBuilder.js';
 
 export default buildDropdownRoutes(salesChannels, 'sales_channels');

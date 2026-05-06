@@ -11,7 +11,7 @@
  *  { "netsuiteInternalId": "91", "name": "Sales", "description": "Sales dept" }
  */
 
-import { departments } from '../../db/schema/index.js';
-import { buildDropdownRoutes } from './_routeBuilder.js';
+import { departments } from '../../../db/schema/index.js';
+import { buildDropdownRoutes } from '../_routeBuilder.js';
 
 export default buildDropdownRoutes(departments, 'departments');

@@ -24,6 +24,8 @@
  * hkPartners.ts           → /hk-partners
  * opsPartners.ts          → /ops-partners
  * compliancePartners.ts   → /compliance-partners
+ * accountManager.ts       → /account-managers
+ * productDeveloper.ts     → /product-developers
  * incoterms.ts            → /incoterms
  * shippingMethods.ts      → /shipping-methods
  * itemTypes.ts            → /item-types
@@ -40,13 +42,15 @@ import { apiKeyAuth } from '../../middleware/apiKeyAuth.js';
 import subsidiaryRoutes         from './subsidiaries.js';
 import vendorRoutes             from './vendors.js';
 import employeeRoutes           from './employees.js';
-import departmentRoutes         from './departments.js';
-import salesChannelRoutes       from './salesChannels.js';
-import businessVerticalRoutes   from './businessVerticals.js';
-import businessTypeRoutes       from './businessTypes.js';
-import hkPartnerRoutes          from './hkPartners.js';
-import opsPartnerRoutes         from './opsPartners.js';
-import compliancePartnerRoutes  from './compliancePartners.js';
+import departmentRoutes         from './classification/departments.js';
+import salesChannelRoutes       from './classification/salesChannels.js';
+import businessVerticalRoutes   from './classification/businessVerticals.js';
+import businessTypeRoutes       from './classification/businessTypes.js';
+import hkPartnerRoutes          from './classification/hkPartners.js';
+import opsPartnerRoutes         from './classification/opsPartners.js';
+import compliancePartnerRoutes  from './classification/compliancePartners.js';
+import accountManagerRoutes     from './classification/accountManager.js';
+import productDeveloperRoutes   from './classification/productDeveloper.js';
 import incotermRoutes           from './incoterms.js';
 import shippingMethodRoutes     from './shippingMethods.js';
 import itemTypeRoutes           from './itemTypes.js';
@@ -85,6 +89,8 @@ export default async function netsuiteRoutes(app: FastifyInstance) {
   await app.register(hkPartnerRoutes,         { prefix: '/hk-partners' });
   await app.register(opsPartnerRoutes,        { prefix: '/ops-partners' });
   await app.register(compliancePartnerRoutes, { prefix: '/compliance-partners' });
+  await app.register(accountManagerRoutes,    { prefix: '/account-managers' });
+  await app.register(productDeveloperRoutes,  { prefix: '/product-developers' });
   await app.register(incotermRoutes,          { prefix: '/incoterms' });
   await app.register(shippingMethodRoutes,    { prefix: '/shipping-methods' });
   await app.register(itemTypeRoutes,          { prefix: '/item-types' });

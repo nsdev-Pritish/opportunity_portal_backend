@@ -183,29 +183,24 @@ export const likelyToClose = pgTable('likely_to_close', {
 export const departments = pgTable('departments', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  code: varchar('code', { length: 50 }),
-  parentId: integer('parent_id'),
   ...syncCols,
 });
 
 export const salesChannels = pgTable('sales_channels', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  description: text('description'),
   ...syncCols,
 });
 
 export const businessVerticals = pgTable('business_verticals', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  description: text('description'),
   ...syncCols,
 });
 
 export const businessTypes = pgTable('business_types', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  description: text('description'),
   ...syncCols,
 });
 
@@ -223,24 +218,30 @@ export const employees = pgTable('employees', {
 export const hkPartners = pgTable('hk_partners', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  contactName: varchar('contact_name', { length: 255 }),
-  email: varchar('email', { length: 255 }),
   ...syncCols,
 });
 
 export const opsPartners = pgTable('ops_partners', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  contactName: varchar('contact_name', { length: 255 }),
-  region: varchar('region', { length: 100 }),
   ...syncCols,
 });
 
 export const compliancePartners = pgTable('compliance_partners', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  contactName: varchar('contact_name', { length: 255 }),
-  certTypes: jsonb('cert_types').$type<string[]>().default([]),
+  ...syncCols,
+});
+
+export const accountManagers = pgTable('account_managers', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+});
+
+export const productDevelopers = pgTable('product_developers', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
   ...syncCols,
 });
 
@@ -597,6 +598,8 @@ export const MASTER_TABLES = {
   hk_partners: hkPartners,
   ops_partners: opsPartners,
   compliance_partners: compliancePartners,
+  account_managers: accountManagers,
+  product_developers: productDevelopers,
   incoterms,
   shipping_methods: shippingMethods,
   vendors,

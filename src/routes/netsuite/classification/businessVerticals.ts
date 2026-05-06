@@ -11,7 +11,7 @@
  *  { "netsuiteInternalId": "20", "name": "Retail", "description": "Retail vertical" }
  */
 
-import { businessVerticals } from '../../db/schema/index.js';
-import { buildDropdownRoutes } from './_routeBuilder.js';
+import { businessVerticals } from '../../../db/schema/index.js';
+import { buildDropdownRoutes } from '../_routeBuilder.js';
 
 export default buildDropdownRoutes(businessVerticals, 'business_verticals');

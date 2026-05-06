@@ -11,7 +11,7 @@
  *  { "netsuiteInternalId": "30", "name": "B2B", "description": "Business to business" }
  */
 
-import { businessTypes } from '../../db/schema/index.js';
-import { buildDropdownRoutes } from './_routeBuilder.js';
+import { businessTypes } from '../../../db/schema/index.js';
+import { buildDropdownRoutes } from '../_routeBuilder.js';
 
 export default buildDropdownRoutes(businessTypes, 'business_types');
