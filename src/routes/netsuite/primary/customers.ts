@@ -106,7 +106,16 @@ export default async function customerRoutes(app: FastifyInstance) {
     if (existing) {
       const [updated] = await db
         .update(customers)
-        .set({ subsidiaryId: subsidiary.id, name: body.name, email: body.email, phone: body.phone, updatedAt: new Date() })
+        .set({ 
+          subsidiaryId: subsidiary.id, 
+          name: body.name, 
+          contactName: body.contactName,
+          email: body.email, 
+          phone: body.phone,
+          terms: body.terms,
+          chargebackRoyalties: body.chargebackRoyalties,
+          updatedAt: new Date() 
+        })
         .where(eq(customers.id, existing.id))
         .returning();
       await invalidateDropdown('customers');
@@ -119,8 +128,11 @@ export default async function customerRoutes(app: FastifyInstance) {
         netsuiteInternalId : body.netsuiteInternalId,
         subsidiaryId       : subsidiary.id, // Use the local database ID
         name               : body.name,
+        contactName        : body.contactName,
         email              : body.email,
         phone              : body.phone,
+        terms              : body.terms,
+        chargebackRoyalties: body.chargebackRoyalties,
         source             : 'netsuite',
         syncStatus         : 'synced',
         syncedAt           : new Date(),
@@ -170,8 +182,11 @@ export default async function customerRoutes(app: FastifyInstance) {
     };
     if (subsidiaryId !== undefined) updateData.subsidiaryId = subsidiaryId;
     if (body.name !== undefined) updateData.name = body.name;
+    if (body.contactName !== undefined) updateData.contactName = body.contactName;
     if (body.email !== undefined) updateData.email = body.email;
     if (body.phone !== undefined) updateData.phone = body.phone;
+    if (body.terms !== undefined) updateData.terms = body.terms;
+    if (body.chargebackRoyalties !== undefined) updateData.chargebackRoyalties = body.chargebackRoyalties;
 
     const [updated] = await db
       .update(customers)
