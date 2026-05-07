@@ -16,10 +16,31 @@ function assertValidEntity(entity: string): MasterEntityKey {
 }
 
 export default async function masterRoutes(app: FastifyInstance) {
-  // All master routes require auth
-  app.addHook('preHandler', app.authenticate);
+  // All master ro  // ⚠️ TEMPORARY: Authentication disabled for development
+  // TODO: Re-enable authentication when frontend implements login
+  // app.addHook('preHandler', app.authenticate);
 
-  // GET /api/v1/master/all-dropdowns — single request for initial page load
+  // 🐛 DEBUG ENDPOINTS (Remove in production)
+  app.get('/debug/clear-cache', async () => {
+    const { getRedis } = await import('../../config/redis.js');
+    const redis = getRedis();
+    await redis.flushdb();
+    return { message: 'Cache cleared successfully' };
+  });
+
+  app.get('/debug/:entity/raw', async (req: any) => {
+    const entity = assertValidEntity(req.params.entity);
+    const { getDb } = await import('../../config/database.js');
+    const db = getDb();
+    const table = MASTER_TABLES[entity] as any;
+    const records = await db.select().from(table).limit(100);
+    return {
+      entity,
+      count: records.length,
+      records,
+      note: 'This shows ALL records regardless of isActive status'
+    };
+  });
   app.get('/all-dropdowns', async () => getAllDropdowns());
 
   // GET /api/v1/master/:entity — list active (dropdown)
