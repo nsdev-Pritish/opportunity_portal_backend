@@ -18,7 +18,13 @@ import lineItemRoutes from './routes/estimates/lineItems.js';
 import nsRoutes       from './routes/netsuite/index.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: loggerConfig, trustProxy: true, ajv: { customOptions: { strict: false } } });
+  const app = Fastify({ 
+    logger: loggerConfig, 
+    trustProxy: true, 
+    ajv: { customOptions: { strict: false } },
+    requestTimeout: 60000, // 60 second timeout for large bulk operations
+    bodyLimit: 5 * 1024 * 1024, // 5MB max payload size for bulk line items
+  });
 
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(cors, { origin: process.env.CORS_ORIGIN ?? true, credentials: true });

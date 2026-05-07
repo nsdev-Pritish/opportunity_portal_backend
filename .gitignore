@@ -8,6 +8,10 @@
 *.env
 #  add read me file here
 README.md
+BULK_LINE_ITEMS.md
+Classification_APIs_README.md
+Classification_APIs.postman_collection.json
+docs
 
 # Dependencies
 node_modules/

@@ -2,6 +2,7 @@ import { eq, and, asc, desc } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import { estimateLineItems } from '../db/schema/index.js';
 import { NotFoundError } from '../utils/errors.js';
+import { logger } from '../utils/logger.js';
 
 export async function listLineItems(estimateId: number) {
   return getDb().select().from(estimateLineItems)
@@ -27,18 +28,52 @@ export async function addLineItem(estimateId: number, data: Record<string, unkno
 
 export async function bulkInsertLineItems(estimateId: number, items: Record<string, unknown>[]) {
   const db = getDb();
-  let lineNumber = await getNextLineNumber(estimateId);
-  const inserted: number[] = [];
-  const CHUNK = 100;
-  for (let i = 0; i < items.length; i += CHUNK) {
-    const chunk = items.slice(i, i + CHUNK).map((item, offset) => ({
-      ...item, estimateId, lineNumber: lineNumber + offset,
-    }));
-    lineNumber += chunk.length;
-    const rows = await db.insert(estimateLineItems).values(chunk as any).returning({ id: estimateLineItems.id });
-    inserted.push(...rows.map((r) => r.id));
+  const startTime = Date.now();
+  
+  logger.info({ estimateId, itemCount: items.length }, 'Starting bulk line item insert');
+  
+  try {
+    // Use transaction to ensure all-or-nothing behavior
+    const result = await db.transaction(async (tx) => {
+      // Get starting line number inside transaction to avoid race conditions
+      const [last] = await tx.select({ lineNumber: estimateLineItems.lineNumber })
+        .from(estimateLineItems).where(eq(estimateLineItems.estimateId, estimateId))
+        .orderBy(desc(estimateLineItems.lineNumber)).limit(1);
+      let lineNumber = last ? last.lineNumber + 1 : 1;
+      
+      const inserted: number[] = [];
+      const CHUNK = 100; // Insert 100 items at a time for performance
+      const totalChunks = Math.ceil(items.length / CHUNK);
+      
+      for (let i = 0; i < items.length; i += CHUNK) {
+        const chunkIndex = Math.floor(i / CHUNK) + 1;
+        const chunk = items.slice(i, i + CHUNK).map((item, offset) => ({
+          ...item, estimateId, lineNumber: lineNumber + offset,
+        }));
+        lineNumber += chunk.length;
+        
+        logger.debug({ estimateId, chunk: chunkIndex, total: totalChunks }, 
+          `Inserting chunk ${chunkIndex}/${totalChunks}`);
+        
+        const rows = await tx.insert(estimateLineItems).values(chunk as any).returning({ id: estimateLineItems.id });
+        inserted.push(...rows.map((r) => r.id));
+      }
+      
+      return { inserted: inserted.length, ids: inserted };
+    });
+    
+    const duration = Date.now() - startTime;
+    logger.info({ estimateId, inserted: result.inserted, durationMs: duration }, 
+      'Bulk line item insert completed successfully');
+    
+    return result;
+    
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.error({ estimateId, itemCount: items.length, durationMs: duration, error }, 
+      'Bulk line item insert failed - transaction rolled back');
+    throw error;
   }
-  return { inserted: inserted.length };
 }
 
 export async function updateLineItem(id: number, estimateId: number, data: Record<string, unknown>) {

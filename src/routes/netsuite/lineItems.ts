@@ -122,30 +122,42 @@ export default async function lineItemNsRoutes(app: FastifyInstance) {
 
   // ── POST /api/v1/netsuite/estimates/:nsId/line-items/bulk ──────
   // Add MANY rows at once (up to 400).
+  // Uses database transaction to ensure all-or-nothing behavior.
+  // If any chunk fails, ALL inserts are rolled back.
   //
   // Body: { "items": [ { row1 }, { row2 }, ... ] }
   app.post<{ Params: { nsId: string }; Body: { items: unknown[] } }>('/bulk', async (req, reply) => {
     const { items } = z.object({ items: z.array(LineItemSchema).max(400) }).parse(req.body);
     const db = getDb();
     const est = await getEstimateByNsId(req.params.nsId);
-    let lineNumber = await getNextLineNumber(est.id);
 
-    const insertedIds: number[] = [];
-    const CHUNK = 100; // insert 100 at a time
+    // Transaction ensures atomicity - either all items inserted or none
+    const result = await db.transaction(async (tx) => {
+      // Get starting line number inside transaction to avoid race conditions
+      const [last] = await tx.select({ lineNumber: estimateLineItems.lineNumber })
+        .from(estimateLineItems).where(eq(estimateLineItems.estimateId, est.id))
+        .orderBy(desc(estimateLineItems.lineNumber)).limit(1);
+      let lineNumber = last ? last.lineNumber + 1 : 1;
 
-    for (let i = 0; i < items.length; i += CHUNK) {
-      const chunk = items.slice(i, i + CHUNK).map((item, offset) => ({
-        ...item,
-        estimateId : est.id,
-        lineNumber : lineNumber + offset,
-      }));
-      lineNumber += chunk.length;
-      const rows = await db.insert(estimateLineItems).values(chunk)
-        .returning({ id: estimateLineItems.id });
-      insertedIds.push(...rows.map((r) => r.id));
-    }
+      const insertedIds: number[] = [];
+      const CHUNK = 100; // insert 100 at a time for performance
 
-    return reply.status(201).send({ inserted: insertedIds.length, estimatePortalId: est.id });
+      for (let i = 0; i < items.length; i += CHUNK) {
+        const chunk = items.slice(i, i + CHUNK).map((item, offset) => ({
+          ...item,
+          estimateId : est.id,
+          lineNumber : lineNumber + offset,
+        }));
+        lineNumber += chunk.length;
+        const rows = await tx.insert(estimateLineItems).values(chunk)
+          .returning({ id: estimateLineItems.id });
+        insertedIds.push(...rows.map((r) => r.id));
+      }
+
+      return { inserted: insertedIds.length, ids: insertedIds };
+    });
+
+    return reply.status(201).send({ ...result, estimatePortalId: est.id });
   });
 
   // ── PUT /api/v1/netsuite/estimates/:nsId/line-items/:itemNsId ─

@@ -2,11 +2,12 @@
  * ESTIMATE APIs
  * Called by NetSuite SuiteScript when an estimate is created or changed.
  *
- *  POST   /api/v1/netsuite/estimates           → create estimate
- *  PUT    /api/v1/netsuite/estimates/:nsId     → update estimate
- *  DELETE /api/v1/netsuite/estimates/:nsId     → deactivate estimate
- *  GET    /api/v1/netsuite/estimates           → list estimates
- *  GET    /api/v1/netsuite/estimates/:nsId     → get single estimate + line items
+ *  POST   /api/v1/netsuite/estimates                → create estimate (without line items)
+ *  POST   /api/v1/netsuite/estimates/with-items     → create estimate WITH line items (atomic)
+ *  PUT    /api/v1/netsuite/estimates/:nsId          → update estimate
+ *  DELETE /api/v1/netsuite/estimates/:nsId          → deactivate estimate
+ *  GET    /api/v1/netsuite/estimates                → list estimates
+ *  GET    /api/v1/netsuite/estimates/:nsId          → get single estimate + line items
  *
  * IMPORTANT ORDER: Push customers/departments/employees BEFORE estimates.
  * Estimates reference those records by NS internalId.
@@ -24,6 +25,7 @@ import {
   incoterms, shippingMethods, addresses,
 } from '../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
+import { logger } from '../../utils/logger.js';
 
 // ─── Helper: resolve portal FK from NS internalId ─────────────────
 // NS sends its own internalIds. We look them up to get our portal ids.
@@ -88,6 +90,54 @@ const CreateEstimateSchema = z.object({
 const UpdateEstimateSchema = CreateEstimateSchema
   .omit({ netsuiteInternalId: true })
   .partial();
+
+// Line Item Schema (for combined endpoint)
+const LineItemSchema = z.object({
+  netsuiteInternalId  : z.string().optional().nullable(),
+  itemTypeId          : z.number().int().optional().nullable(),
+  shortDescription    : z.string().max(500).optional().nullable(),
+  vendorId            : z.number().int().optional().nullable(),
+  quantity            : z.string().optional().nullable(),
+  sellPricePerUnit    : z.string().optional().nullable(),
+  description         : z.string().optional().nullable(),
+  factoryId           : z.number().int().optional().nullable(),
+  vendorCurrencyId    : z.number().int().optional().nullable(),
+  factoryCostPerUnit  : z.string().optional().nullable(),
+  packingCostPerUnit  : z.string().optional().nullable(),
+  sampleFees          : z.string().optional().nullable(),
+  otherPerUnit        : z.string().optional().nullable(),
+  freightPerUnit      : z.string().optional().nullable(),
+  dutyPct             : z.string().optional().nullable(),
+  tariffPct           : z.string().optional().nullable(),
+  tariffMuPct         : z.string().optional().nullable(),
+  otherCostPct        : z.string().optional().nullable(),
+  paddingPct          : z.string().optional().nullable(),
+  productClassId      : z.number().int().optional().nullable(),
+  sustainabilityId    : z.number().int().optional().nullable(),
+  htsCode             : z.string().max(20).optional().nullable(),
+  countryOfOrigin     : z.string().max(100).optional().nullable(),
+  countryOfDest       : z.enum(['US','EU']).optional(),
+  unitsPerCarton      : z.number().int().optional().nullable(),
+  dimLCm              : z.string().optional().nullable(),
+  dimWCm              : z.string().optional().nullable(),
+  dimHCm              : z.string().optional().nullable(),
+  weightKgPerCarton   : z.string().optional().nullable(),
+  shippingGroupId     : z.number().int().optional().nullable(),
+  exFactoryDate       : z.string().optional().nullable(),
+  vendorIncotermsId   : z.number().int().optional().nullable(),
+  shipToVendorId      : z.number().int().optional().nullable(),
+  notes               : z.string().optional().nullable(),
+  exclude             : z.boolean().optional(),
+  pickupExwFob        : z.string().optional().nullable(),
+  oceanDdp            : z.string().optional().nullable(),
+  airDdp              : z.string().optional().nullable(),
+});
+
+// Combined Schema: Create estimate WITH line items in single transaction
+const CreateEstimateWithItemsSchema = z.object({
+  estimate  : CreateEstimateSchema,
+  lineItems : z.array(LineItemSchema).max(400).optional(), // up to 400 line items
+});
 
 // ─── Route handlers ───────────────────────────────────────────────
 
@@ -170,6 +220,118 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
     const values = await buildEstimateValues(body, customerId);
     const [created] = await db.insert(estimates).values(values).returning();
     return reply.status(201).send({ ...created, _action: 'created' });
+  });
+
+  // ── POST /api/v1/netsuite/estimates/with-items ─────────────────
+  // Create estimate WITH line items in a SINGLE ATOMIC TRANSACTION
+  // Either both succeed or both are rolled back.
+  //
+  // Example body:
+  // {
+  //   "estimate": {
+  //     "netsuiteInternalId": "EST-001",
+  //     "projectName": "Q3 Promo",
+  //     "customerNsId": "1234",
+  //     "departmentNsId": "91",
+  //     ...
+  //   },
+  //   "lineItems": [
+  //     { "itemTypeId": 1, "quantity": "100", "sellPricePerUnit": "10.50", ... },
+  //     { "itemTypeId": 2, "quantity": "200", "sellPricePerUnit": "8.25", ... },
+  //     ... up to 400 items
+  //   ]
+  // }
+  app.post<{ Body: unknown }>('/with-items', async (req, reply) => {
+    const { estimate: estimateData, lineItems } = CreateEstimateWithItemsSchema.parse(req.body);
+    const db = getDb();
+    const startTime = Date.now();
+
+    logger.info({ 
+      netsuiteId: estimateData.netsuiteInternalId, 
+      lineItemCount: lineItems?.length || 0 
+    }, 'Creating estimate with line items in transaction');
+
+    try {
+      // Use transaction to ensure atomicity
+      const result = await db.transaction(async (tx) => {
+        // 1. Check if estimate already exists (idempotency)
+        const [existing] = await tx.select({ id: estimates.id }).from(estimates)
+          .where(eq(estimates.netsuiteInternalId, estimateData.netsuiteInternalId)).limit(1);
+        
+        if (existing) {
+          throw new ValidationError(
+            `Estimate with NetSuite ID '${estimateData.netsuiteInternalId}' already exists. ` +
+            `Use PUT to update or delete first.`
+          );
+        }
+
+        // 2. Resolve customer (required)
+        const customerId = await resolveNsId(customers, estimateData.customerNsId);
+        if (!customerId) {
+          throw new ValidationError(
+            `Customer with NS internalId '${estimateData.customerNsId}' not found. ` +
+            `Push the customer first via POST /api/v1/netsuite/customers`
+          );
+        }
+
+        // 3. Build and insert estimate
+        const estimateValues = await buildEstimateValues(estimateData, customerId);
+        const [createdEstimate] = await tx.insert(estimates).values(estimateValues).returning();
+
+        logger.debug({ estimateId: createdEstimate.id }, 'Estimate created, inserting line items');
+
+        // 4. Insert line items if provided
+        let insertedLineItems = 0;
+        if (lineItems && lineItems.length > 0) {
+          const CHUNK = 100;
+          let lineNumber = 1;
+          
+          for (let i = 0; i < lineItems.length; i += CHUNK) {
+            const chunk = lineItems.slice(i, i + CHUNK).map((item, offset) => ({
+              ...item,
+              estimateId : createdEstimate.id,
+              lineNumber : lineNumber + offset,
+            }));
+            lineNumber += chunk.length;
+            
+            await tx.insert(estimateLineItems).values(chunk as any);
+            insertedLineItems += chunk.length;
+            
+            logger.debug({ 
+              estimateId: createdEstimate.id, 
+              inserted: insertedLineItems, 
+              total: lineItems.length 
+            }, `Inserted chunk (${insertedLineItems}/${lineItems.length})`);
+          }
+        }
+
+        return { estimate: createdEstimate, lineItemsInserted: insertedLineItems };
+      });
+
+      const duration = Date.now() - startTime;
+      logger.info({ 
+        estimateId: result.estimate.id,
+        netsuiteId: result.estimate.netsuiteInternalId,
+        lineItemsInserted: result.lineItemsInserted,
+        durationMs: duration 
+      }, 'Estimate with line items created successfully');
+
+      return reply.status(201).send({ 
+        ...result.estimate, 
+        _action: 'created',
+        _lineItemsInserted: result.lineItemsInserted
+      });
+
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      logger.error({ 
+        netsuiteId: estimateData.netsuiteInternalId,
+        lineItemCount: lineItems?.length || 0,
+        durationMs: duration,
+        error 
+      }, 'Failed to create estimate with line items - transaction rolled back');
+      throw error;
+    }
   });
 
   // ── PUT /api/v1/netsuite/estimates/:nsId ───────────────────────
