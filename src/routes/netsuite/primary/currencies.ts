@@ -5,7 +5,7 @@
  *  GET   /api/v1/netsuite/currencies/:nsId
  *  POST  /api/v1/netsuite/currencies
  *  PUT   /api/v1/netsuite/currencies/:nsId
- *  PATCH /api/v1/netsuite/currencies/:nsId/status
+ *  PUT   /api/v1/netsuite/currencies/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "3", "code": "USD", "name": "US Dollar", "symbol": "$", "exchangeRate": "1" }
@@ -74,7 +74,7 @@ export default async function currencyRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: currencies.id }).from(currencies)

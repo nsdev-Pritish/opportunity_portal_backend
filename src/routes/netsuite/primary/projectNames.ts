@@ -5,7 +5,7 @@
  *
  *  POST  /api/v1/netsuite/project-names          → create project name
  *  PUT   /api/v1/netsuite/project-names/:nsId    → update project name
- *  PATCH /api/v1/netsuite/project-names/:nsId/status → activate / deactivate
+ *  PUT   /api/v1/netsuite/project-names/:nsId/status → activate / deactivate
  *  GET   /api/v1/netsuite/project-names          → list all active project names
  *  GET   /api/v1/netsuite/project-names/:nsId    → get single project name
  */
@@ -146,7 +146,7 @@ export default async function projectNameRoutes(app: FastifyInstance) {
   //
   // When isActive=false: project name disappears from dropdowns.
   // Existing project types referencing this project name are NOT affected.
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
 

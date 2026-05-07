@@ -4,7 +4,7 @@
  *
  *  POST  /api/v1/netsuite/contacts                       → create contact
  *  PUT   /api/v1/netsuite/contacts/:nsId                 → update contact
- *  PATCH /api/v1/netsuite/contacts/:nsId/status          → activate / deactivate
+ *  PUT   /api/v1/netsuite/contacts/:nsId/status          → activate / deactivate
  *  GET   /api/v1/netsuite/contacts?customerNsId=1234     → list contacts for a customer
  */
 
@@ -182,8 +182,8 @@ export default async function contactRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  // PATCH /api/v1/netsuite/contacts/:nsId/status
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  // PUT /api/v1/netsuite/contacts/:nsId/status
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: contacts.id }).from(contacts)

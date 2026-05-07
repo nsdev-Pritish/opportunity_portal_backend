@@ -4,7 +4,7 @@
  *
  *  POST  /api/v1/netsuite/customers          → create customer
  *  PUT   /api/v1/netsuite/customers/:nsId    → update customer
- *  PATCH /api/v1/netsuite/customers/:nsId/status → activate / deactivate
+ *  PUT   /api/v1/netsuite/customers/:nsId/status → activate / deactivate
  *  GET   /api/v1/netsuite/customers          → list all active customers
  *  GET   /api/v1/netsuite/customers/:nsId    → get single customer
  */
@@ -204,7 +204,7 @@ export default async function customerRoutes(app: FastifyInstance) {
   //
   // When isActive=false: customer disappears from dropdowns.
   // Existing estimates referencing this customer are NOT affected.
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
 

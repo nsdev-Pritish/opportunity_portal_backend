@@ -6,7 +6,7 @@
  *  GET   /api/v1/netsuite/likely-to-close/:nsId
  *  POST  /api/v1/netsuite/likely-to-close
  *  PUT   /api/v1/netsuite/likely-to-close/:nsId
- *  PATCH /api/v1/netsuite/likely-to-close/:nsId/status
+ *  PUT   /api/v1/netsuite/likely-to-close/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "50", "label": "Hot", "probabilityPct": 80 }
@@ -73,7 +73,7 @@ export default async function likelyToCloseRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: likelyToClose.id }).from(likelyToClose)

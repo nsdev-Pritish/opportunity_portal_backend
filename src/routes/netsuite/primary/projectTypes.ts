@@ -7,7 +7,7 @@
  *  GET   /api/v1/netsuite/project-types/:nsId               → single project type
  *  POST  /api/v1/netsuite/project-types                     → create project type
  *  PUT   /api/v1/netsuite/project-types/:nsId               → update project type
- *  PATCH /api/v1/netsuite/project-types/:nsId/status        → activate / deactivate
+ *  PUT   /api/v1/netsuite/project-types/:nsId/status        → activate / deactivate
  *
  * Body for POST/PUT:
  *  { 
@@ -150,8 +150,8 @@ export default async function projectTypeRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  // PATCH /api/v1/netsuite/project-types/:nsId/status
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  // PUT /api/v1/netsuite/project-types/:nsId/status
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: projectTypes.id }).from(projectTypes)
