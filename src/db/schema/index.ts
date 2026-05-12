@@ -152,6 +152,7 @@ export const currencies = pgTable('currencies', {
 export const projectNames = pgTable('project_names', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
+  projectTypeId: integer('project_type_id').references(() => projectTypes.id),
   customerId: integer('customer_id').references(() => customers.id),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
   description: text('description'),
@@ -160,17 +161,16 @@ export const projectNames = pgTable('project_names', {
   nsIdIdx: uniqueIndex('project_names_ns_id_idx').on(t.netsuiteInternalId),
   customerIdx: index('project_names_customer_idx').on(t.customerId),
   subsidiaryIdx: index('project_names_subsidiary_idx').on(t.subsidiaryId),
+  projectTypeIdx: index('project_names_project_type_idx').on(t.projectTypeId),
 }));
 
 export const projectTypes = pgTable('project_types', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  projectNameId: integer('project_name_id').references(() => projectNames.id),
   description: text('description'),
   ...syncCols,
 }, (t) => ({
   nsIdIdx: uniqueIndex('project_types_ns_id_idx').on(t.netsuiteInternalId),
-  projectNameIdx: index('project_types_project_name_idx').on(t.projectNameId),
 }));
 
 export const likelyToClose = pgTable('likely_to_close', {
@@ -543,14 +543,14 @@ export const addressesRelations = relations(addresses, ({ one }) => ({
   customer: one(customers, { fields: [addresses.customerId], references: [customers.id] }),
 }));
 
-export const projectNamesRelations = relations(projectNames, ({ one, many }) => ({
+export const projectNamesRelations = relations(projectNames, ({ one }) => ({
   customer: one(customers, { fields: [projectNames.customerId], references: [customers.id] }),
   subsidiary: one(subsidiaries, { fields: [projectNames.subsidiaryId], references: [subsidiaries.id] }),
-  projectTypes: many(projectTypes),
+  projectType: one(projectTypes, { fields: [projectNames.projectTypeId], references: [projectTypes.id] }),
 }));
 
-export const projectTypesRelations = relations(projectTypes, ({ one }) => ({
-  projectName: one(projectNames, { fields: [projectTypes.projectNameId], references: [projectNames.id] }),
+export const projectTypesRelations = relations(projectTypes, ({ many }) => ({
+  projectNames: many(projectNames),
 }));
 
 export const vendorsRelations = relations(vendors, ({ many }) => ({
