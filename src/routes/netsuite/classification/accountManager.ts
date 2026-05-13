@@ -5,7 +5,7 @@
  *  GET   /api/v1/netsuite/account-managers/:nsId
  *  POST  /api/v1/netsuite/account-managers
  *  PUT   /api/v1/netsuite/account-managers/:nsId
- *  PATCH /api/v1/netsuite/account-managers/:nsId/status
+ *  PUT   /api/v1/netsuite/account-managers/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "123", "name": "John Doe" }
@@ -71,7 +71,7 @@ export default async function accountManagerRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: accountManagers.id }).from(accountManagers)

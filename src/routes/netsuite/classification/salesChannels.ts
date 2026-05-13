@@ -5,7 +5,7 @@
  *  GET   /api/v1/netsuite/sales-channels/:nsId
  *  POST  /api/v1/netsuite/sales-channels
  *  PUT   /api/v1/netsuite/sales-channels/:nsId
- *  PATCH /api/v1/netsuite/sales-channels/:nsId/status
+ *  PUT   /api/v1/netsuite/sales-channels/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "10", "name": "Direct" }
@@ -71,7 +71,7 @@ export default async function salesChannelRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: salesChannels.id }).from(salesChannels)

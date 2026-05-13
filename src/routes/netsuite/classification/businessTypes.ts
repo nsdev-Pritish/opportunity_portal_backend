@@ -5,7 +5,7 @@
  *  GET   /api/v1/netsuite/business-types/:nsId
  *  POST  /api/v1/netsuite/business-types
  *  PUT   /api/v1/netsuite/business-types/:nsId
- *  PATCH /api/v1/netsuite/business-types/:nsId/status
+ *  PUT   /api/v1/netsuite/business-types/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "30", "name": "B2B" }
@@ -71,7 +71,7 @@ export default async function businessTypeRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: businessTypes.id }).from(businessTypes)

@@ -5,7 +5,7 @@
  *  GET   /api/v1/netsuite/compliance-partners/:nsId
  *  POST  /api/v1/netsuite/compliance-partners
  *  PUT   /api/v1/netsuite/compliance-partners/:nsId
- *  PATCH /api/v1/netsuite/compliance-partners/:nsId/status
+ *  PUT   /api/v1/netsuite/compliance-partners/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "80", "name": "SGS Global" }

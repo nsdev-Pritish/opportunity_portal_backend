@@ -5,7 +5,7 @@
  *  GET   /api/v1/netsuite/product-developers/:nsId
  *  POST  /api/v1/netsuite/product-developers
  *  PUT   /api/v1/netsuite/product-developers/:nsId
- *  PATCH /api/v1/netsuite/product-developers/:nsId/status
+ *  PUT   /api/v1/netsuite/product-developers/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "456", "name": "Jane Smith" }
@@ -71,7 +71,7 @@ export default async function productDeveloperRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: productDevelopers.id }).from(productDevelopers)

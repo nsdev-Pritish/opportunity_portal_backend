@@ -5,7 +5,7 @@
  *  GET   /api/v1/netsuite/business-verticals/:nsId
  *  POST  /api/v1/netsuite/business-verticals
  *  PUT   /api/v1/netsuite/business-verticals/:nsId
- *  PATCH /api/v1/netsuite/business-verticals/:nsId/status
+ *  PUT   /api/v1/netsuite/business-verticals/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "20", "name": "Retail" }
@@ -71,7 +71,7 @@ export default async function businessVerticalRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: businessVerticals.id }).from(businessVerticals)

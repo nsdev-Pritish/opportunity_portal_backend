@@ -84,8 +84,8 @@ export function buildDropdownRoutes(table: any, cacheLabel: string) {
       return updated;
     });
 
-    // PATCH /:nsId/status — activate or deactivate
-    app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+    // PUT /:nsId/status — activate or deactivate
+    app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
       const { isActive } = StatusSchema.parse(req.body);
       const db = getDb();
       const [existing] = await db.select({ id: table.id }).from(table)

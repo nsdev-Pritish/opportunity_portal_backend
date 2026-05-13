@@ -5,7 +5,7 @@
  *  GET   /api/v1/netsuite/hk-partners/:nsId
  *  POST  /api/v1/netsuite/hk-partners
  *  PUT   /api/v1/netsuite/hk-partners/:nsId
- *  PATCH /api/v1/netsuite/hk-partners/:nsId/status
+ *  PUT   /api/v1/netsuite/hk-partners/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "60", "name": "HK Trading Co" }

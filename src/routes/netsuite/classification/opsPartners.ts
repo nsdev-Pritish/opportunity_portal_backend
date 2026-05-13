@@ -5,7 +5,7 @@
  *  GET   /api/v1/netsuite/ops-partners/:nsId
  *  POST  /api/v1/netsuite/ops-partners
  *  PUT   /api/v1/netsuite/ops-partners/:nsId
- *  PATCH /api/v1/netsuite/ops-partners/:nsId/status
+ *  PUT   /api/v1/netsuite/ops-partners/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "70", "name": "OPS Asia" }

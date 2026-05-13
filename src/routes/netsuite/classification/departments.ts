@@ -5,7 +5,7 @@
  *  GET   /api/v1/netsuite/departments/:nsId
  *  POST  /api/v1/netsuite/departments
  *  PUT   /api/v1/netsuite/departments/:nsId
- *  PATCH /api/v1/netsuite/departments/:nsId/status
+ *  PUT   /api/v1/netsuite/departments/:nsId/status
  *
  * Body for POST/PUT:
  *  { "netsuiteInternalId": "91", "name": "Sales" }
@@ -71,7 +71,7 @@ export default async function departmentRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.patch<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
+  app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: departments.id }).from(departments)
