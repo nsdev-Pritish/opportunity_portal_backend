@@ -13,19 +13,27 @@
  * primary/contacts.ts     → /contacts
  * primary/currencies.ts   → /currencies
  *
+ * CLASSIFICATION (classification/)
+ * classification/departments.ts          → /departments
+ * classification/salesChannels.ts        → /sales-channels
+ * classification/businessVerticals.ts    → /business-verticals
+ * classification/businessTypes.ts        → /business-types
+ * classification/hkPartners.ts           → /hk-partners
+ * classification/opsPartners.ts          → /ops-partners
+ * classification/compliancePartners.ts   → /compliance-partners
+ * classification/accountManager.ts       → /account-managers
+ * classification/productDeveloper.ts     → /product-developers
+ *
+ * CLIENT SHIPPING & BILLING (client-shipping-billing/)
+ * client-shipping-billing/billingAddresses.ts    → /client-billing-addresses
+ * client-shipping-billing/shippingAddresses.ts   → /client-shipping-addresses
+ * client-shipping-billing/clientIncoterms.ts     → /client-incoterms
+ * client-shipping-billing/clientShippingMethods.ts → /client-shipping-methods
+ *
  * OTHER FILES
  * subsidiaries.ts         → /subsidiaries
  * vendors.ts              → /vendors
  * employees.ts            → /employees
- * departments.ts          → /departments
- * salesChannels.ts        → /sales-channels
- * businessVerticals.ts    → /business-verticals
- * businessTypes.ts        → /business-types
- * hkPartners.ts           → /hk-partners
- * opsPartners.ts          → /ops-partners
- * compliancePartners.ts   → /compliance-partners
- * accountManager.ts       → /account-managers
- * productDeveloper.ts     → /product-developers
  * incoterms.ts            → /incoterms
  * shippingMethods.ts      → /shipping-methods
  * itemTypes.ts            → /item-types
@@ -51,8 +59,6 @@ import opsPartnerRoutes         from './classification/opsPartners.js';
 import compliancePartnerRoutes  from './classification/compliancePartners.js';
 import accountManagerRoutes     from './classification/accountManager.js';
 import productDeveloperRoutes   from './classification/productDeveloper.js';
-import incotermRoutes           from './incoterms.js';
-import shippingMethodRoutes     from './shippingMethods.js';
 import itemTypeRoutes           from './itemTypes.js';
 import productClassRoutes       from './productClasses.js';
 import sustainabilityRoutes     from './sustainabilityOptions.js';
@@ -67,6 +73,12 @@ import projectTypeRoutes        from './primary/projectTypes.js';
 import likelyToCloseRoutes      from './primary/likelyToClose.js';
 import contactRoutes            from './primary/contacts.js';
 import currencyRoutes           from './primary/currencies.js';
+
+// Client Shipping & Billing imports
+import billingAddressRoutes         from './client-shipping-billing/billingAddresses.js';
+import shippingAddressRoutes        from './client-shipping-billing/shippingAddresses.js';
+import clientIncotermRoutes         from './client-shipping-billing/clientIncoterms.js';
+import clientShippingMethodRoutes   from './client-shipping-billing/clientShippingMethods.js';
 
 export default async function netsuiteRoutes(app: FastifyInstance) {
   app.addHook('preHandler', apiKeyAuth);
@@ -91,12 +103,16 @@ export default async function netsuiteRoutes(app: FastifyInstance) {
   await app.register(compliancePartnerRoutes, { prefix: '/compliance-partners' });
   await app.register(accountManagerRoutes,    { prefix: '/account-managers' });
   await app.register(productDeveloperRoutes,  { prefix: '/product-developers' });
-  await app.register(incotermRoutes,          { prefix: '/incoterms' });
-  await app.register(shippingMethodRoutes,    { prefix: '/shipping-methods' });
   await app.register(itemTypeRoutes,          { prefix: '/item-types' });
   await app.register(productClassRoutes,      { prefix: '/product-classes' });
   await app.register(sustainabilityRoutes,    { prefix: '/sustainability-options' });
   await app.register(shippingGroupRoutes,     { prefix: '/shipping-groups' });
   await app.register(estimateNsRoutes,        { prefix: '/estimates' });
   await app.register(lineItemNsRoutes,        { prefix: '/estimates/:nsId/line-items' });
+
+  // Client Shipping & Billing
+  await app.register(billingAddressRoutes,        { prefix: '/client-billing-addresses' });
+  await app.register(shippingAddressRoutes,        { prefix: '/client-shipping-addresses' });
+  await app.register(clientIncotermRoutes,          { prefix: '/client-incoterms' });
+  await app.register(clientShippingMethodRoutes,    { prefix: '/client-shipping-methods' });
 }

@@ -22,7 +22,7 @@ import {
   customers, contacts, currencies, projectTypes, likelyToClose,
   departments, salesChannels, businessVerticals, businessTypes,
   employees, hkPartners, opsPartners, compliancePartners,
-  incoterms, shippingMethods, addresses,
+  clientIncoterms, clientShippingMethods, addresses,
 } from '../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
@@ -394,8 +394,8 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     artSetupRequest      : body.artSetupRequest    ?? false,
     pkgDeckRequest       : body.pkgDeckRequest     ?? false,
     pkgArtSetupRequest   : body.pkgArtSetupRequest ?? false,
-    clientIncotermsId    : await resolveNsId(incoterms,          body.clientIncotermsNsId),
-    clientShipMethodId   : await resolveNsId(shippingMethods,    body.clientShipMethodNsId),
+    clientIncotermsId    : await resolveNsId(clientIncoterms,       body.clientIncotermsNsId),
+    clientShipMethodId   : await resolveNsId(clientShippingMethods, body.clientShipMethodNsId),
     shippingAddressId    : await resolveNsId(addresses,          body.shippingAddressNsId),
     billingAddressId     : await resolveNsId(addresses,          body.billingAddressNsId),
     sampleOnlyOrder      : body.sampleOnlyOrder ?? false,
@@ -428,8 +428,8 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
     [employees,          'acctManagerNsId',        'acctManagerId'],
     [employees,          'productDeveloperNsId',   'productDeveloperId'],
     [currencies,         'sellCurrencyNsId',       'sellCurrencyId'],
-    [incoterms,          'clientIncotermsNsId',    'clientIncotermsId'],
-    [shippingMethods,    'clientShipMethodNsId',   'clientShipMethodId'],
+    [clientIncoterms,       'clientIncotermsNsId',    'clientIncotermsId'],
+    [clientShippingMethods, 'clientShipMethodNsId',   'clientShipMethodId'],
     [likelyToClose,      'likelyToCloseNsId',      'likelyToCloseId'],
     [hkPartners,         'hkPartnerNsId',          'hkPartnerId'],
     [opsPartners,        'opsPartner1NsId',        'opsPartner1Id'],

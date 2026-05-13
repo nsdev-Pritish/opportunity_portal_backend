@@ -128,6 +128,10 @@ export const addresses = pgTable('addresses', {
   customerId: integer('customer_id').references(() => customers.id),
   type: varchar('type', { length: 20 }).default('shipping'), // 'shipping' | 'billing'
   label: varchar('label', { length: 100 }),
+  companyName: varchar('company_name', { length: 255 }),   // Company / Customer Account
+  attention: varchar('attention', { length: 255 }),
+  addressee: varchar('addressee', { length: 255 }),
+  phone: varchar('phone', { length: 50 }),
   addrLine1: varchar('addr_line1', { length: 255 }),
   addrLine2: varchar('addr_line2', { length: 255 }),
   city: varchar('city', { length: 100 }),
@@ -138,6 +142,7 @@ export const addresses = pgTable('addresses', {
 }, (t) => ({
   nsIdIdx: uniqueIndex('addresses_ns_id_idx').on(t.netsuiteInternalId),
   customerIdx: index('addresses_customer_idx').on(t.customerId),
+  typeIdx: index('addresses_type_idx').on(t.type),
 }));
 
 export const currencies = pgTable('currencies', {
@@ -245,19 +250,15 @@ export const productDevelopers = pgTable('product_developers', {
   ...syncCols,
 });
 
-export const incoterms = pgTable('incoterms', {
+export const clientIncoterms = pgTable('client_incoterms', {
   id: serial('id').primaryKey(),
-  code: varchar('code', { length: 10 }).notNull().unique(),
-  fullName: varchar('full_name', { length: 255 }).notNull(),
-  rulesVersion: varchar('rules_version', { length: 10 }).default('2020'),
+  name: varchar('name', { length: 255 }).notNull(),
   ...syncCols,
 });
 
-export const shippingMethods = pgTable('shipping_methods', {
+export const clientShippingMethods = pgTable('client_shipping_methods', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  carrier: varchar('carrier', { length: 100 }),
-  transitDays: integer('transit_days'),
   ...syncCols,
 });
 
@@ -363,10 +364,10 @@ export const estimates = pgTable('estimates', {
   pkgArtSetupRequest: boolean('pkg_art_setup_request').default(false),
 
   // Client Shipping & Billing
-  clientIncotermsId: integer('client_incoterms_id').references(() => incoterms.id),
-  clientShipMethodId: integer('client_ship_method_id').references(() => shippingMethods.id),
   shippingAddressId: integer('shipping_address_id').references(() => addresses.id),
   billingAddressId: integer('billing_address_id').references(() => addresses.id),
+  clientIncotermsId: integer('client_incoterms_id').references(() => clientIncoterms.id),
+  clientShipMethodId: integer('client_ship_method_id').references(() => clientShippingMethods.id),
 
   // Additional
   sampleOnlyOrder: boolean('sample_only_order').default(false),
@@ -458,7 +459,6 @@ export const estimateLineItems = pgTable('estimate_line_items', {
 
   // Other Details (Vendor)
   exFactoryDate: date('ex_factory_date'),
-  vendorIncotermsId: integer('vendor_incoterms_id').references(() => incoterms.id),
   shipToVendorId: integer('ship_to_vendor_id').references(() => vendors.id),
   shipToVendorAddrId: integer('ship_to_vendor_addr_id').references(() => vendorAddresses.id),
   notes: text('notes'),
@@ -600,8 +600,8 @@ export const MASTER_TABLES = {
   compliance_partners: compliancePartners,
   account_managers: accountManagers,
   product_developers: productDevelopers,
-  incoterms,
-  shipping_methods: shippingMethods,
+  client_incoterms: clientIncoterms,
+  client_shipping_methods: clientShippingMethods,
   vendors,
   vendor_addresses: vendorAddresses,
   factories,
