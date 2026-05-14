@@ -3,7 +3,7 @@ WORKDIR /app
 
 FROM base AS deps
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --only=development
 
 FROM base AS builder
 COPY package*.json ./
@@ -12,7 +12,7 @@ COPY . .
 RUN npm run build
 
 FROM base AS runner
-ENV NODE_ENV=production
+ENV NODE_ENV=development
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package.json ./package.json

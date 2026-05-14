@@ -1,0 +1,43 @@
+# Dependencies (reinstalled inside Docker)
+node_modules/
+
+# Build output (rebuilt inside Docker)
+dist/
+build/
+*.tsbuildinfo
+
+# Environment files (injected at runtime via Render)
+.env
+.env.*
+*.env
+
+# Logs
+logs/
+*.log
+dump.rdb
+
+# Dev / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# CI
+.github/
+
+# Docs / Postman
+docs/
+*.md
+*.postman_collection.json
+
+# Temp
+tmp/
+temp/
+*.tmp
+coverage/
