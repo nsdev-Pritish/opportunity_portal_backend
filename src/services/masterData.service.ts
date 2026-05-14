@@ -28,7 +28,7 @@ export async function getAllDropdowns() {
     const entities: MasterEntityKey[] = [
       'currencies','project_types','likely_to_close','departments','sales_channels',
       'business_verticals','business_types','hk_partners','ops_partners','compliance_partners',
-      'incoterms','shipping_methods','item_types','product_classes','sustainability_options','shipping_groups',
+      'client_incoterms','client_shipping_methods','item_types','product_classes','sustainability_options','shipping_groups',
     ];
     const result: Record<string, unknown[]> = {};
     await Promise.all(entities.map(async (e) => { result[e] = await listActiveRecords(e); }));

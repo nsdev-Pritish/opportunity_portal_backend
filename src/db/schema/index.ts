@@ -262,6 +262,10 @@ export const clientShippingMethods = pgTable('client_shipping_methods', {
   ...syncCols,
 });
 
+// Aliases used by the netsuite sync routes — point to the same underlying tables
+export const incoterms = clientIncoterms;
+export const shippingMethods = clientShippingMethods;
+
 export const vendors = pgTable('vendors', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
@@ -600,6 +604,8 @@ export const MASTER_TABLES = {
   compliance_partners: compliancePartners,
   account_managers: accountManagers,
   product_developers: productDevelopers,
+  incoterms: clientIncoterms,
+  shipping_methods: clientShippingMethods,
   client_incoterms: clientIncoterms,
   client_shipping_methods: clientShippingMethods,
   vendors,
