@@ -18,8 +18,6 @@ import { invalidateDropdown } from '../../utils/cache.js';
 const CreateVendorSchema = z.object({
   netsuiteInternalId : z.string().min(1),
   name               : z.string().min(1).max(255),
-  email              : z.string().email().optional().nullable(),
-  paymentTerms       : z.string().max(100).optional().nullable(),
 });
 
 const UpdateVendorSchema = CreateVendorSchema.omit({ netsuiteInternalId: true }).partial();
@@ -42,7 +40,7 @@ export default async function vendorRoutes(app: FastifyInstance) {
 
     if (existing) {
       const [updated] = await db.update(vendors)
-        .set({ name: body.name, email: body.email, paymentTerms: body.paymentTerms, updatedAt: new Date() })
+        .set({ name: body.name, updatedAt: new Date() })
         .where(eq(vendors.id, existing.id)).returning();
       await invalidateDropdown('vendors');
       return reply.status(200).send({ ...updated, _action: 'updated' });

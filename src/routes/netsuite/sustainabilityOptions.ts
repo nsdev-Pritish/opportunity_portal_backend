@@ -22,8 +22,6 @@ import { invalidateDropdown } from '../../utils/cache.js';
 const CreateSchema = z.object({
   netsuiteInternalId : z.string().min(1),
   name               : z.string().min(1).max(255),
-  description        : z.string().optional().nullable(),
-  certBody           : z.string().max(100).optional().nullable(),
 });
 
 const UpdateSchema = CreateSchema.omit({ netsuiteInternalId: true }).partial();
@@ -49,7 +47,7 @@ export default async function sustainabilityRoutes(app: FastifyInstance) {
       .where(eq(sustainabilityOptions.netsuiteInternalId, body.netsuiteInternalId)).limit(1);
     if (existing) {
       const [upd] = await db.update(sustainabilityOptions)
-        .set({ name: body.name, description: body.description, certBody: body.certBody, updatedAt: new Date() })
+        .set({ name: body.name, updatedAt: new Date() })
         .where(eq(sustainabilityOptions.id, existing.id)).returning();
       await invalidateDropdown('sustainability_options');
       return reply.status(200).send({ ...upd, _action: 'updated' });
