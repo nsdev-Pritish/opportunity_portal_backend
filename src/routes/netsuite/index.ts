@@ -80,6 +80,9 @@ import shippingAddressRoutes        from './client-shipping-billing/shippingAddr
 import clientIncotermRoutes         from './client-shipping-billing/clientIncoterms.js';
 import clientShippingMethodRoutes   from './client-shipping-billing/clientShippingMethods.js';
 
+// Cost Sheet imports
+import costSheetRoutes from './cost-sheet/index.js';
+
 export default async function netsuiteRoutes(app: FastifyInstance) {
   app.addHook('preHandler', apiKeyAuth);
 
@@ -115,4 +118,7 @@ export default async function netsuiteRoutes(app: FastifyInstance) {
   await app.register(shippingAddressRoutes,        { prefix: '/client-shipping-addresses' });
   await app.register(clientIncotermRoutes,          { prefix: '/client-incoterms' });
   await app.register(clientShippingMethodRoutes,    { prefix: '/client-shipping-methods' });
+
+  // Cost Sheet
+  await app.register(costSheetRoutes, { prefix: '/cost-sheet' });
 }

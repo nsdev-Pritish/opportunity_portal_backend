@@ -269,12 +269,13 @@ export const shippingMethods = clientShippingMethods;
 export const vendors = pgTable('vendors', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  email: varchar('email', { length: 255 }),
-  paymentTerms: varchar('payment_terms', { length: 100 }),
+  companyName: varchar('company_name', { length: 255 }),
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
   defaultCurrencyId: integer('default_currency_id').references(() => currencies.id),
   ...syncCols,
 }, (t) => ({
   nsIdIdx: uniqueIndex('vendors_ns_id_idx').on(t.netsuiteInternalId),
+  subsidiaryIdx: index('vendors_subsidiary_idx').on(t.subsidiaryId),
 }));
 
 export const vendorAddresses = pgTable('vendor_addresses', {
@@ -290,13 +291,9 @@ export const vendorAddresses = pgTable('vendor_addresses', {
 export const factories = pgTable('factories', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  vendorId: integer('vendor_id').references(() => vendors.id),
   country: varchar('country', { length: 100 }),
-  leadTimeDays: integer('lead_time_days'),
   ...syncCols,
-}, (t) => ({
-  vendorIdx: index('factories_vendor_idx').on(t.vendorId),
-}));
+});
 
 export const itemTypes = pgTable('item_types', {
   id: serial('id').primaryKey(),
@@ -309,16 +306,26 @@ export const itemTypes = pgTable('item_types', {
 export const productClasses = pgTable('product_classes', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  description: text('description'),
-  tariffDefaultPct: numeric('tariff_default_pct', { precision: 6, scale: 3 }).default('10'),
+  parentClass: varchar('parent_class', { length: 255 }),
+  classCode: varchar('class_code', { length: 255 }),
+  usHtsCode: varchar('us_hts_code', { length: 50 }),
+  chinaDutyRate: numeric('china_duty_rate', { precision: 10, scale: 3 }),
+  cambodiaDutyRate: numeric('cambodia_duty_rate', { precision: 10, scale: 3 }),
+  taiwanDutyRate: numeric('taiwan_duty_rate', { precision: 10, scale: 3 }),
+  thailandDutyRate: numeric('thailand_duty_rate', { precision: 10, scale: 3 }),
+  vietnamDutyRate: numeric('vietnam_duty_rate', { precision: 10, scale: 3 }),
+  chinaTariffRate: numeric('china_tariff_rate', { precision: 10, scale: 3 }),
+  hkTariffRate: numeric('hk_tariff_rate', { precision: 10, scale: 3 }),
+  taiwanTariffRate: numeric('taiwan_tariff_rate', { precision: 10, scale: 3 }),
+  vietnamTariffRate: numeric('vietnam_tariff_rate', { precision: 10, scale: 3 }),
+  cambodiaTariffRate: numeric('cambodia_tariff_rate', { precision: 10, scale: 3 }),
+  thailandTariffRate: numeric('thailand_tariff_rate', { precision: 10, scale: 3 }),
   ...syncCols,
 });
 
 export const sustainabilityOptions = pgTable('sustainability_options', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  description: text('description'),
-  certBody: varchar('cert_body', { length: 100 }),
   ...syncCols,
 });
 
@@ -415,7 +422,7 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   vendorId: integer('vendor_id').references(() => vendors.id),
   quantity: numeric('quantity', { precision: 12, scale: 4 }).default('0'),
   sellPricePerUnit: numeric('sell_price_per_unit', { precision: 15, scale: 4 }).default('0'),
-  skuMarginPct: numeric('sku_margin_pct', { precision: 6, scale: 3 }).default('0'),
+  skuMarginPct: numeric('sku_margin_pct', { precision: 10, scale: 3 }).default('0'),
   salesAmount: numeric('sales_amount', { precision: 15, scale: 2 }),
   pickupExwFob: numeric('pickup_exw_fob', { precision: 15, scale: 2 }),
   oceanDdp: numeric('ocean_ddp', { precision: 15, scale: 2 }),
@@ -433,11 +440,11 @@ export const estimateLineItems = pgTable('estimate_line_items', {
 
   // Landed Cost
   freightPerUnit: numeric('freight_per_unit', { precision: 15, scale: 4 }).default('0'),
-  dutyPct: numeric('duty_pct', { precision: 6, scale: 3 }).default('0'),
-  tariffPct: numeric('tariff_pct', { precision: 6, scale: 3 }).default('10'),
-  tariffMuPct: numeric('tariff_mu_pct', { precision: 6, scale: 3 }).default('0'),
-  otherCostPct: numeric('other_cost_pct', { precision: 6, scale: 3 }).default('0'),
-  paddingPct: numeric('padding_pct', { precision: 6, scale: 3 }).default('0'),
+  dutyPct: numeric('duty_pct', { precision: 10, scale: 3 }).default('0'),
+  tariffPct: numeric('tariff_pct', { precision: 10, scale: 3 }).default('10'),
+  tariffMuPct: numeric('tariff_mu_pct', { precision: 10, scale: 3 }).default('0'),
+  otherCostPct: numeric('other_cost_pct', { precision: 10, scale: 3 }).default('0'),
+  paddingPct: numeric('padding_pct', { precision: 10, scale: 3 }).default('0'),
   usdFactoryCost: numeric('usd_factory_cost', { precision: 15, scale: 4 }),
   landedCostPerUnit: numeric('landed_cost_per_unit', { precision: 15, scale: 4 }),
   extendedLandedCost: numeric('extended_landed_cost', { precision: 15, scale: 2 }),
@@ -451,10 +458,10 @@ export const estimateLineItems = pgTable('estimate_line_items', {
 
   // Packing Details
   unitsPerCarton: integer('units_per_carton'),
-  dimLCm: numeric('dim_l_cm', { precision: 8, scale: 2 }),
-  dimWCm: numeric('dim_w_cm', { precision: 8, scale: 2 }),
-  dimHCm: numeric('dim_h_cm', { precision: 8, scale: 2 }),
-  weightKgPerCarton: numeric('weight_kg_per_carton', { precision: 8, scale: 3 }),
+  dimLCm: numeric('dim_l_cm', { precision: 10, scale: 2 }),
+  dimWCm: numeric('dim_w_cm', { precision: 10, scale: 2 }),
+  dimHCm: numeric('dim_h_cm', { precision: 10, scale: 2 }),
+  weightKgPerCarton: numeric('weight_kg_per_carton', { precision: 10, scale: 3 }),
   cbmPerCarton: numeric('cbm_per_carton', { precision: 10, scale: 5 }),
   totalCartons: integer('total_cartons').default(0),
   totalCbm: numeric('total_cbm', { precision: 10, scale: 3 }),
@@ -559,12 +566,9 @@ export const projectTypesRelations = relations(projectTypes, ({ many }) => ({
 
 export const vendorsRelations = relations(vendors, ({ many }) => ({
   vendorAddresses: many(vendorAddresses),
-  factories: many(factories),
 }));
 
-export const factoriesRelations = relations(factories, ({ one }) => ({
-  vendor: one(vendors, { fields: [factories.vendorId], references: [vendors.id] }),
-}));
+export const factoriesRelations = relations(factories, () => ({}));
 
 export const estimatesRelations = relations(estimates, ({ one, many }) => ({
   customer: one(customers, { fields: [estimates.customerId], references: [customers.id] }),

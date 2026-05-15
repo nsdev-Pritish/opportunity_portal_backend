@@ -10,13 +10,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const MIGRATIONS_DIR = join(__dirname, 'migrations');
 
-// PostgreSQL codes meaning "object already exists" — safe to skip
+// PostgreSQL codes meaning "object already exists or is not applicable" — safe to skip
 const ALREADY_EXISTS = new Set([
   '42P07', // relation already exists
   '42701', // column already exists
   '42710', // constraint already exists
   '42P06', // schema already exists
   '42P16', // index already exists
+  '42703', // undefined_column — FK references a column that no longer exists in the schema
+  '42P01', // undefined_table — referenced table was dropped/renamed
 ]);
 
 async function runMigrations() {
