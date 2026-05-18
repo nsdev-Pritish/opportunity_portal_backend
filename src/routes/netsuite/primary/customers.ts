@@ -24,7 +24,7 @@ const CreateCustomerSchema = z.object({
   subsidiaryNetsuiteId   : z.string().min(1),   // NS internalId of the subsidiary
   name                   : z.string().min(1).max(255),
   contactName            : z.string().max(255).optional().nullable(),
-  email                  : z.string().email().optional().nullable(),
+  email                  : z.string().max(255).optional().nullable(),
   phone                  : z.string().max(50).optional().nullable(),
   terms                  : z.string().max(100).optional().nullable(),
   chargebackRoyalties    : z.number().optional().nullable(),
@@ -34,7 +34,7 @@ const UpdateCustomerSchema = z.object({
   subsidiaryNetsuiteId   : z.string().min(1).optional(), // NS internalId of the subsidiary
   name                   : z.string().min(1).max(255).optional(),
   contactName            : z.string().max(255).optional().nullable(),
-  email                  : z.string().email().optional().nullable(),
+  email                  : z.string().max(255).optional().nullable(),
   phone                  : z.string().max(50).optional().nullable(),
   terms                  : z.string().max(100).optional().nullable(),
   chargebackRoyalties    : z.number().optional().nullable(),
