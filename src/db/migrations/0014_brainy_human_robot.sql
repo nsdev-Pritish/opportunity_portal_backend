@@ -1,0 +1,1 @@
+ALTER TABLE "likely_to_close" DROP COLUMN "probability_pct";

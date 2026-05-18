@@ -181,7 +181,6 @@ export const projectTypes = pgTable('project_types', {
 export const likelyToClose = pgTable('likely_to_close', {
   id: serial('id').primaryKey(),
   label: varchar('label', { length: 100 }).notNull(),
-  probabilityPct: integer('probability_pct').notNull(),
   ...syncCols,
 });
 

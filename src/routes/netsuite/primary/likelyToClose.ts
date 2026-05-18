@@ -1,6 +1,5 @@
 /**
  * LIKELY TO CLOSE APIs
- * Has an extra field: probabilityPct (0–100)
  *
  *  GET   /api/v1/netsuite/likely-to-close
  *  GET   /api/v1/netsuite/likely-to-close/:nsId
@@ -9,7 +8,7 @@
  *  PUT   /api/v1/netsuite/likely-to-close/:nsId/status
  *
  * Body for POST/PUT:
- *  { "netsuiteInternalId": "50", "label": "Hot", "probabilityPct": 80 }
+ *  { "netsuiteInternalId": "50", "label": "Hot" }
  */
 
 import { FastifyInstance } from 'fastify';
@@ -23,7 +22,6 @@ import { invalidateDropdown } from '../../../utils/cache.js';
 const CreateSchema = z.object({
   netsuiteInternalId : z.string().min(1),
   label              : z.string().min(1).max(100),
-  probabilityPct     : z.number().int().min(0).max(100),
 });
 
 const UpdateSchema = CreateSchema.omit({ netsuiteInternalId: true }).partial();
@@ -32,7 +30,7 @@ const StatusSchema = z.object({ isActive: z.boolean() });
 export default async function likelyToCloseRoutes(app: FastifyInstance) {
 
   app.get('/', async () =>
-    getDb().select().from(likelyToClose).where(eq(likelyToClose.isActive, true)).orderBy(likelyToClose.probabilityPct),
+    getDb().select().from(likelyToClose).where(eq(likelyToClose.isActive, true)),
   );
 
   app.get<{ Params: { nsId: string } }>('/:nsId', async (req) => {
@@ -49,7 +47,7 @@ export default async function likelyToCloseRoutes(app: FastifyInstance) {
       .where(eq(likelyToClose.netsuiteInternalId, body.netsuiteInternalId)).limit(1);
     if (existing) {
       const [upd] = await db.update(likelyToClose)
-        .set({ label: body.label, probabilityPct: body.probabilityPct, updatedAt: new Date() })
+        .set({ label: body.label, updatedAt: new Date() })
         .where(eq(likelyToClose.id, existing.id)).returning();
       await invalidateDropdown('likely_to_close');
       return reply.status(200).send({ ...upd, _action: 'updated' });
