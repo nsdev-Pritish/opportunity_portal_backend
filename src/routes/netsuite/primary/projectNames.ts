@@ -1,7 +1,6 @@
 /**
  * PROJECT NAME APIs
  * Project Names from NetSuite (customrecord_cseg_project)
- * Project Types now depend on Project Names (not vice versa)
  *
  *  POST  /api/v1/netsuite/project-names          → create project name
  *  PUT   /api/v1/netsuite/project-names/:nsId    → update project name
@@ -14,18 +13,17 @@ import { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../../config/database.js';
-import { projectNames, projectTypes, customers, subsidiaries } from '../../../db/schema/index.js';
+import { projectNames, projectTypes, customers } from '../../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../../utils/errors.js';
 import { invalidateDropdown } from '../../../utils/cache.js';
 
 // ─── Validation schemas ───────────────────────────────────────────
 
 const CreateProjectNameSchema = z.object({
-  netsuiteInternalId : z.string().min(1),   // NS internalId — required
-  projectTypeNsId    : z.string().min(1),   // NS internalId of required project type
+  netsuiteInternalId : z.string().min(1),
+  projectTypeNsId    : z.string().min(1),
   name               : z.string().min(1).max(255),
-  customerNsId       : z.string().optional().nullable(),  // NS internalId of customer
-  subsidiaryNsId     : z.string().optional().nullable(),  // NS internalId of subsidiary
+  customerNsId       : z.string().optional().nullable(),
   description        : z.string().optional().nullable(),
 });
 
@@ -33,7 +31,6 @@ const UpdateProjectNameSchema = z.object({
   projectTypeNsId    : z.string().min(1).optional().nullable(),
   name               : z.string().min(1).max(255).optional(),
   customerNsId       : z.string().optional().nullable(),
-  subsidiaryNsId     : z.string().optional().nullable(),
   description        : z.string().optional().nullable(),
 });
 
@@ -46,8 +43,6 @@ const StatusSchema = z.object({
 export default async function projectNameRoutes(app: FastifyInstance) {
 
   // ── GET /api/v1/netsuite/project-names ──────────────────────────────
-  // Returns all active project names.
-  // NS uses this to populate the Project Name dropdown.
   app.get('/', async () => {
     const db = getDb();
     return db
@@ -58,7 +53,6 @@ export default async function projectNameRoutes(app: FastifyInstance) {
   });
 
   // ── GET /api/v1/netsuite/project-names/:nsId ────────────────────────
-  // Returns a single project name by NS internalId.
   app.get<{ Params: { nsId: string } }>('/:nsId', async (req) => {
     const db = getDb();
     const [row] = await db
@@ -71,21 +65,7 @@ export default async function projectNameRoutes(app: FastifyInstance) {
   });
 
   // ── POST /api/v1/netsuite/project-names ─────────────────────────────
-  // NetSuite creates a new project name.
-  // Project type is required when creating a project name.
-  // If the same netsuiteInternalId already exists → updates it (idempotent).
-  //
-  // Body:
-  //   {
-  //     "netsuiteInternalId": "100",
-  //     "projectTypeNsId": "200",
-  //     "name": "CSEG Project Alpha",
-  //     "customerNsId": "300",
-  //     "subsidiaryNsId": "400",
-  //     "description": "Q1 2026"
-  //   }
-  //
-  // Response: the created/updated project name row
+  // Body: { "netsuiteInternalId": "100", "projectTypeNsId": "200", "name": "...", "customerNsId": "300", "description": "..." }
   app.post<{ Body: unknown }>('/', async (req, reply) => {
     const body = CreateProjectNameSchema.parse(req.body);
     const db = getDb();
@@ -118,24 +98,6 @@ export default async function projectNameRoutes(app: FastifyInstance) {
       }
     }
 
-    let subsidiaryId: number | null | undefined = undefined;
-    if (body.subsidiaryNsId !== undefined) {
-      if (body.subsidiaryNsId) {
-        const [subsidiary] = await db
-          .select({ id: subsidiaries.id })
-          .from(subsidiaries)
-          .where(eq(subsidiaries.netsuiteInternalId, body.subsidiaryNsId))
-          .limit(1);
-
-        if (!subsidiary) {
-          throw new ValidationError(`Subsidiary with NS id '${body.subsidiaryNsId}' not found.`);
-        }
-        subsidiaryId = subsidiary.id;
-      } else {
-        subsidiaryId = null;
-      }
-    }
-
     const [existing] = await db
       .select({ id: projectNames.id })
       .from(projectNames)
@@ -153,7 +115,6 @@ export default async function projectNameRoutes(app: FastifyInstance) {
       };
 
       if (body.customerNsId !== undefined) updateData.customerId = customerId;
-      if (body.subsidiaryNsId !== undefined) updateData.subsidiaryId = subsidiaryId;
 
       const [updated] = await db
         .update(projectNames)
@@ -176,7 +137,6 @@ export default async function projectNameRoutes(app: FastifyInstance) {
     };
 
     if (body.customerNsId !== undefined) insertData.customerId = customerId;
-    if (body.subsidiaryNsId !== undefined) insertData.subsidiaryId = subsidiaryId;
 
     const [created] = await db
       .insert(projectNames)
@@ -188,10 +148,7 @@ export default async function projectNameRoutes(app: FastifyInstance) {
   });
 
   // ── PUT /api/v1/netsuite/project-names/:nsId ────────────────────────
-  // NetSuite updates an existing project name.
-  // :nsId = the NS internalId (e.g. "100")
-  //
-  // Body: any subset of { projectTypeNsId, name, customerNsId, subsidiaryNsId, description }
+  // Body: any subset of { projectTypeNsId, name, customerNsId, description }
   app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId', async (req) => {
     const body = UpdateProjectNameSchema.parse(req.body);
     const db = getDb();
@@ -222,24 +179,6 @@ export default async function projectNameRoutes(app: FastifyInstance) {
       }
     }
 
-    let subsidiaryId: number | null | undefined = undefined;
-    if (body.subsidiaryNsId !== undefined) {
-      if (body.subsidiaryNsId) {
-        const [subsidiary] = await db
-          .select({ id: subsidiaries.id })
-          .from(subsidiaries)
-          .where(eq(subsidiaries.netsuiteInternalId, body.subsidiaryNsId))
-          .limit(1);
-
-        if (!subsidiary) {
-          throw new ValidationError(`Subsidiary with NS id '${body.subsidiaryNsId}' not found.`);
-        }
-        subsidiaryId = subsidiary.id;
-      } else {
-        subsidiaryId = null;
-      }
-    }
-
     let projectTypeId: number | null | undefined = undefined;
     if (body.projectTypeNsId !== undefined) {
       if (body.projectTypeNsId) {
@@ -267,10 +206,8 @@ export default async function projectNameRoutes(app: FastifyInstance) {
     };
     if (body.projectTypeNsId !== undefined) updateData.projectTypeId = projectTypeId;
     if (body.customerNsId !== undefined) updateData.customerId = customerId;
-    if (body.subsidiaryNsId !== undefined) updateData.subsidiaryId = subsidiaryId;
     delete updateData.projectTypeNsId;
     delete updateData.customerNsId;
-    delete updateData.subsidiaryNsId;
 
     const [updated] = await db
       .update(projectNames)
@@ -282,12 +219,7 @@ export default async function projectNameRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  // ── PATCH /api/v1/netsuite/project-names/:nsId/status ───────────────
-  // Activate or deactivate a project name.
-  // Body: { "isActive": false }
-  //
-  // When isActive=false: project name disappears from dropdowns.
-  // Existing project types referencing this project name are NOT affected.
+  // ── PUT /api/v1/netsuite/project-names/:nsId/status ─────────────────
   app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
     const { isActive } = StatusSchema.parse(req.body);
     const db = getDb();

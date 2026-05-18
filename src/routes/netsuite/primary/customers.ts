@@ -27,7 +27,7 @@ const CreateCustomerSchema = z.object({
   email                  : z.string().email().optional().nullable(),
   phone                  : z.string().max(50).optional().nullable(),
   terms                  : z.string().max(100).optional().nullable(),
-  chargebackRoyalties    : z.boolean().optional(),
+  chargebackRoyalties    : z.number().optional().nullable(),
 });
 
 const UpdateCustomerSchema = z.object({
@@ -37,7 +37,7 @@ const UpdateCustomerSchema = z.object({
   email                  : z.string().email().optional().nullable(),
   phone                  : z.string().max(50).optional().nullable(),
   terms                  : z.string().max(100).optional().nullable(),
-  chargebackRoyalties    : z.boolean().optional(),
+  chargebackRoyalties    : z.number().optional().nullable(),
 });
 
 const StatusSchema = z.object({
@@ -113,8 +113,8 @@ export default async function customerRoutes(app: FastifyInstance) {
           email: body.email, 
           phone: body.phone,
           terms: body.terms,
-          chargebackRoyalties: body.chargebackRoyalties,
-          updatedAt: new Date() 
+          chargebackRoyalties: body.chargebackRoyalties != null ? String(body.chargebackRoyalties) : body.chargebackRoyalties,
+          updatedAt: new Date()
         })
         .where(eq(customers.id, existing.id))
         .returning();
@@ -132,7 +132,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         email              : body.email,
         phone              : body.phone,
         terms              : body.terms,
-        chargebackRoyalties: body.chargebackRoyalties,
+        chargebackRoyalties: body.chargebackRoyalties != null ? String(body.chargebackRoyalties) : body.chargebackRoyalties,
         source             : 'netsuite',
         syncStatus         : 'synced',
         syncedAt           : new Date(),
@@ -186,7 +186,7 @@ export default async function customerRoutes(app: FastifyInstance) {
     if (body.email !== undefined) updateData.email = body.email;
     if (body.phone !== undefined) updateData.phone = body.phone;
     if (body.terms !== undefined) updateData.terms = body.terms;
-    if (body.chargebackRoyalties !== undefined) updateData.chargebackRoyalties = body.chargebackRoyalties;
+    if (body.chargebackRoyalties !== undefined) updateData.chargebackRoyalties = body.chargebackRoyalties != null ? String(body.chargebackRoyalties) : null;
 
     const [updated] = await db
       .update(customers)

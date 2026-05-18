@@ -94,7 +94,7 @@ export const customers = pgTable('customers', {
   email: varchar('email', { length: 255 }),
   phone: varchar('phone', { length: 50 }),
   terms: varchar('terms', { length: 100 }),
-  chargebackRoyalties: boolean('chargeback_royalties').default(false),
+  chargebackRoyalties: numeric('chargeback_royalties'),
   currencyId: integer('currency_id'),
   ...syncCols,
 }, (t) => ({
@@ -159,13 +159,11 @@ export const projectNames = pgTable('project_names', {
   name: varchar('name', { length: 255 }).notNull(),
   projectTypeId: integer('project_type_id').references(() => projectTypes.id),
   customerId: integer('customer_id').references(() => customers.id),
-  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
   description: text('description'),
   ...syncCols,
 }, (t) => ({
   nsIdIdx: uniqueIndex('project_names_ns_id_idx').on(t.netsuiteInternalId),
   customerIdx: index('project_names_customer_idx').on(t.customerId),
-  subsidiaryIdx: index('project_names_subsidiary_idx').on(t.subsidiaryId),
   projectTypeIdx: index('project_names_project_type_idx').on(t.projectTypeId),
 }));
 
@@ -530,7 +528,6 @@ export const syncConflicts = pgTable('sync_conflicts', {
 export const subsidiariesRelations = relations(subsidiaries, ({ one, many }) => ({
   currency: one(currencies, { fields: [subsidiaries.currencyId], references: [currencies.id] }),
   customers: many(customers),
-  projectNames: many(projectNames),
   contacts: many(contacts),
 }));
 
@@ -555,7 +552,6 @@ export const addressesRelations = relations(addresses, ({ one }) => ({
 
 export const projectNamesRelations = relations(projectNames, ({ one }) => ({
   customer: one(customers, { fields: [projectNames.customerId], references: [customers.id] }),
-  subsidiary: one(subsidiaries, { fields: [projectNames.subsidiaryId], references: [subsidiaries.id] }),
   projectType: one(projectTypes, { fields: [projectNames.projectTypeId], references: [projectTypes.id] }),
 }));
 
