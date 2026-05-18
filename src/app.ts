@@ -32,6 +32,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     global: true, max: 200, timeWindow: 60_000,
     redis: getRedis(),
     keyGenerator: (req) => (req.headers['x-forwarded-for'] as string) ?? req.ip,
+    allowList: (req) => req.url.startsWith('/api/v1/netsuite'),
   });
 
   await app.register(swagger, {
