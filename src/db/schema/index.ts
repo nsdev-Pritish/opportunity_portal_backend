@@ -180,7 +180,7 @@ export const projectTypes = pgTable('project_types', {
 
 export const likelyToClose = pgTable('likely_to_close', {
   id: serial('id').primaryKey(),
-  label: varchar('label', { length: 100 }).notNull(),
+  name: varchar('name', { length: 100 }).notNull(),
   ...syncCols,
 });
 

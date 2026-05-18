@@ -8,7 +8,7 @@
  *  PUT   /api/v1/netsuite/likely-to-close/:nsId/status
  *
  * Body for POST/PUT:
- *  { "netsuiteInternalId": "50", "label": "Hot" }
+ *  { "netsuiteInternalId": "50", "name": "Hot" }
  */
 
 import { FastifyInstance } from 'fastify';
@@ -21,7 +21,7 @@ import { invalidateDropdown } from '../../../utils/cache.js';
 
 const CreateSchema = z.object({
   netsuiteInternalId : z.string().min(1),
-  label              : z.string().min(1).max(100),
+  name              : z.string().min(1).max(100),
 });
 
 const UpdateSchema = CreateSchema.omit({ netsuiteInternalId: true }).partial();
@@ -47,7 +47,7 @@ export default async function likelyToCloseRoutes(app: FastifyInstance) {
       .where(eq(likelyToClose.netsuiteInternalId, body.netsuiteInternalId)).limit(1);
     if (existing) {
       const [upd] = await db.update(likelyToClose)
-        .set({ label: body.label, updatedAt: new Date() })
+        .set({ name: body.name, updatedAt: new Date() })
         .where(eq(likelyToClose.id, existing.id)).returning();
       await invalidateDropdown('likely_to_close');
       return reply.status(200).send({ ...upd, _action: 'updated' });
