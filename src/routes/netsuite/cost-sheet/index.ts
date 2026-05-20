@@ -8,6 +8,7 @@
  *  /vendors          → vendors.ts
  *  /vendor-addresses  → vendorAddresses.ts
  *  /vendor-incoterms  → vendorIncoterms.ts
+ *  /items             → csItems.ts
  */
 
 import { FastifyInstance } from 'fastify';
@@ -17,6 +18,7 @@ import sustainabilityRoutes from './sustainability.js';
 import vendorRoutes         from './vendors.js';
 import vendorAddressRoutes  from './vendorAddresses.js';
 import vendorIncotermRoutes from './vendorIncoterms.js';
+import csItemRoutes         from './csItems.js';
 
 export default async function costSheetRoutes(app: FastifyInstance) {
   await app.register(factoryNameRoutes,    { prefix: '/factory-names' });
@@ -25,4 +27,5 @@ export default async function costSheetRoutes(app: FastifyInstance) {
   await app.register(vendorRoutes,         { prefix: '/vendors' });
   await app.register(vendorAddressRoutes,  { prefix: '/vendor-addresses' });
   await app.register(vendorIncotermRoutes, { prefix: '/vendor-incoterms' });
+  await app.register(csItemRoutes,         { prefix: '/items' });
 }

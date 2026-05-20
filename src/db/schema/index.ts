@@ -302,6 +302,18 @@ export const vendorIncoterms = pgTable('vendor_incoterms', {
   nsIdIdx: uniqueIndex('vendor_incoterms_ns_id_idx').on(t.netsuiteInternalId),
 }));
 
+export const csItems = pgTable('cs_items', {
+  id: serial('id').primaryKey(),
+  itemName: varchar('item_name', { length: 255 }).notNull(),
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
+  isFeeItem: boolean('is_fee_item').default(false).notNull(),
+  currencyId: integer('currency_id').references(() => currencies.id),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('cs_items_ns_id_idx').on(t.netsuiteInternalId),
+  subsidiaryIdx: index('cs_items_subsidiary_idx').on(t.subsidiaryId),
+}));
+
 export const factories = pgTable('factories', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
