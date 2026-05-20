@@ -18,7 +18,10 @@ export async function listActiveRecords(entity: MasterEntityKey, scopeId?: numbe
     let sortColumn = table.name ?? table.label ?? table.code;
     if (entity === 'contacts') sortColumn = table.lastName;
     if (entity === 'addresses') sortColumn = table.label;
-    
+    if (entity === 'cs_items') sortColumn = table.itemName;
+    if (entity === 'vendor_addresses') sortColumn = table.addressee ?? table.city ?? table.id;
+    sortColumn = sortColumn ?? table.id; // safe fallback for any table without name/label/code
+
     return db.select().from(table).where(and(...conditions)).orderBy(asc(sortColumn));
   });
 }
@@ -29,6 +32,7 @@ export async function getAllDropdowns() {
       'currencies','project_types','likely_to_close','departments','sales_channels',
       'business_verticals','business_types','hk_partners','ops_partners','compliance_partners',
       'client_incoterms','client_shipping_methods','item_types','product_classes','sustainability_options','shipping_groups',
+      'factories','vendor_incoterms','cs_items',
     ];
     const result: Record<string, unknown[]> = {};
     await Promise.all(entities.map(async (e) => { result[e] = await listActiveRecords(e); }));

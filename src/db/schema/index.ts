@@ -638,11 +638,13 @@ export const MASTER_TABLES = {
   client_shipping_methods: clientShippingMethods,
   vendors,
   vendor_addresses: vendorAddresses,
+  vendor_incoterms: vendorIncoterms,
   factories,
   item_types: itemTypes,
   product_classes: productClasses,
   sustainability_options: sustainabilityOptions,
   shipping_groups: shippingGroups,
+  cs_items: csItems,
 } as const;
 
 export type MasterEntityKey = keyof typeof MASTER_TABLES;
