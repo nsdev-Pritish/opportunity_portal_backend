@@ -278,12 +278,29 @@ export const vendors = pgTable('vendors', {
 export const vendorAddresses = pgTable('vendor_addresses', {
   id: serial('id').primaryKey(),
   vendorId: integer('vendor_id').references(() => vendors.id).notNull(),
-  label: varchar('label', { length: 100 }),
+  attention: varchar('attention', { length: 255 }),
+  addressee: varchar('addressee', { length: 255 }),
+  phone: varchar('phone', { length: 50 }),
   addrLine1: varchar('addr_line1', { length: 255 }),
+  addrLine2: varchar('addr_line2', { length: 255 }),
   city: varchar('city', { length: 100 }),
+  state: varchar('state', { length: 100 }),
+  zip: varchar('zip', { length: 20 }),
   country: varchar('country', { length: 100 }),
   ...syncCols,
-});
+}, (t) => ({
+  nsIdIdx: uniqueIndex('vendor_addresses_ns_id_idx').on(t.netsuiteInternalId),
+  vendorIdx: index('vendor_addresses_vendor_idx').on(t.vendorId),
+}));
+
+export const vendorIncoterms = pgTable('vendor_incoterms', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('vendor_incoterms_ns_id_idx').on(t.netsuiteInternalId),
+}));
 
 export const factories = pgTable('factories', {
   id: serial('id').primaryKey(),
