@@ -364,6 +364,66 @@ export const shippingGroups = pgTable('shipping_groups', {
 });
 
 // ══════════════════════════════════════════════════════════════════
+//  FREIGHT COST RATES
+// ══════════════════════════════════════════════════════════════════
+
+export const lclRates = pgTable('lcl_rates', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  pol: varchar('pol', { length: 255 }),
+  pod: varchar('pod', { length: 255 }),
+  pricePerCbm: numeric('price_per_cbm', { precision: 15, scale: 4 }),
+  minFlatRate: numeric('min_flat_rate', { precision: 15, scale: 4 }),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('lcl_rates_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const fclRates = pgTable('fcl_rates', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  pol: varchar('pol', { length: 255 }),
+  pod: varchar('pod', { length: 255 }),
+  container20: numeric('container20', { precision: 15, scale: 4 }),
+  container40: numeric('container40', { precision: 15, scale: 4 }),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('fcl_rates_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const airRates = pgTable('air_rates', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  pol: varchar('pol', { length: 255 }),
+  pod: varchar('pod', { length: 255 }),
+  pricePerKg: numeric('price_per_kg', { precision: 15, scale: 4 }),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('air_rates_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const additionalFees = pgTable('additional_fees', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  freightType: varchar('freight_type', { length: 100 }),
+  docFee: numeric('doc_fee', { precision: 15, scale: 4 }),
+  amsFee: numeric('ams_fee', { precision: 15, scale: 4 }),
+  deConsolFee: numeric('de_consol_fee', { precision: 15, scale: 4 }),
+  ddsisFee: numeric('ddsis_fee', { precision: 15, scale: 4 }),
+  fceFee: numeric('fce_fee', { precision: 15, scale: 4 }),
+  pierPass: numeric('pier_pass', { precision: 15, scale: 4 }),
+  handlingFee: numeric('handling_fee', { precision: 15, scale: 4 }),
+  isfFiling: numeric('isf_filing', { precision: 15, scale: 4 }),
+  entryFee: numeric('entry_fee', { precision: 15, scale: 4 }),
+  palletSurcharge: numeric('pallet_surcharge', { precision: 15, scale: 4 }),
+  carrierImportFee: numeric('carrier_import_fee', { precision: 15, scale: 4 }),
+  addFeeTotal: numeric('add_fee_total', { precision: 15, scale: 4 }),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('additional_fees_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+// ══════════════════════════════════════════════════════════════════
 //  ESTIMATES (OPPORTUNITY HEADER)
 // ══════════════════════════════════════════════════════════════════
 
@@ -651,6 +711,10 @@ export const MASTER_TABLES = {
   sustainability_options: sustainabilityOptions,
   shipping_groups: shippingGroups,
   cs_items: csItems,
+  lcl_rates: lclRates,
+  fcl_rates: fclRates,
+  air_rates: airRates,
+  additional_fees: additionalFees,
 } as const;
 
 export type MasterEntityKey = keyof typeof MASTER_TABLES;

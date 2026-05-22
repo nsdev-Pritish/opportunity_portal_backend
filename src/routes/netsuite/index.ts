@@ -30,6 +30,12 @@
  * client-shipping-billing/clientIncoterms.ts     → /client-incoterms
  * client-shipping-billing/clientShippingMethods.ts → /client-shipping-methods
  *
+ * FREIGHT COST (freight-cost/)
+ * freight-cost/lclRates.ts        → /freight-cost/lcl-rates
+ * freight-cost/fclRates.ts        → /freight-cost/fcl-rates
+ * freight-cost/airRates.ts        → /freight-cost/air-rates
+ * freight-cost/additionalFees.ts  → /freight-cost/additional-fees
+ *
  * OTHER FILES
  * subsidiaries.ts         → /subsidiaries
  * vendors.ts              → /vendors
@@ -83,6 +89,9 @@ import clientShippingMethodRoutes   from './client-shipping-billing/clientShippi
 // Cost Sheet imports
 import costSheetRoutes from './cost-sheet/index.js';
 
+// Freight Cost imports
+import freightCostRoutes from './freight-cost/index.js';
+
 export default async function netsuiteRoutes(app: FastifyInstance) {
   app.addHook('preHandler', apiKeyAuth);
 
@@ -121,4 +130,7 @@ export default async function netsuiteRoutes(app: FastifyInstance) {
 
   // Cost Sheet
   await app.register(costSheetRoutes, { prefix: '/cost-sheet' });
+
+  // Freight Cost
+  await app.register(freightCostRoutes, { prefix: '/freight-cost' });
 }
