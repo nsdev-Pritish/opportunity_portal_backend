@@ -375,7 +375,8 @@ export const estimates = pgTable('estimates', {
   customerId: integer('customer_id').references(() => customers.id).notNull(),
   customerContactId: integer('customer_contact_id').references(() => contacts.id),
   customerPo: varchar('customer_po', { length: 100 }),
-  projectName: varchar('project_name', { length: 255 }).notNull(),
+  projectNameId: integer('project_name_id').references(() => projectNames.id),
+  projectName: varchar('project_name', { length: 255 }),
   projectTypeId: integer('project_type_id').references(() => projectTypes.id),
   expectedCloseDate: date('expected_close_date'),
   promiseDate: date('promise_date'),
@@ -390,8 +391,8 @@ export const estimates = pgTable('estimates', {
   businessVerticalId: integer('business_vertical_id').references(() => businessVerticals.id),
   businessTypeId: integer('business_type_id').references(() => businessTypes.id),
   compliancePartnerId: integer('compliance_partner_id').references(() => compliancePartners.id),
-  acctManagerId: integer('acct_manager_id').references(() => employees.id),
-  productDeveloperId: integer('product_developer_id').references(() => employees.id),
+  acctManagerId: integer('acct_manager_id').references(() => accountManagers.id),
+  productDeveloperId: integer('product_developer_id').references(() => productDevelopers.id),
   hkPartnerId: integer('hk_partner_id').references(() => hkPartners.id),
   opsPartner1Id: integer('ops_partner_1_id').references(() => opsPartners.id),
   opsPartner2Id: integer('ops_partner_2_id').references(() => opsPartners.id),
@@ -402,7 +403,9 @@ export const estimates = pgTable('estimates', {
 
   // Client Shipping & Billing
   shippingAddressId: integer('shipping_address_id').references(() => addresses.id),
+  shipTo: text('ship_to'),
   billingAddressId: integer('billing_address_id').references(() => addresses.id),
+  billTo: text('bill_to'),
   clientIncotermsId: integer('client_incoterms_id').references(() => clientIncoterms.id),
   clientShipMethodId: integer('client_ship_method_id').references(() => clientShippingMethods.id),
 
@@ -496,6 +499,7 @@ export const estimateLineItems = pgTable('estimate_line_items', {
 
   // Other Details (Vendor)
   exFactoryDate: date('ex_factory_date'),
+  vendorIncotermsId: integer('vendor_incoterms_id').references(() => vendorIncoterms.id),
   shipToVendorId: integer('ship_to_vendor_id').references(() => vendors.id),
   shipToVendorAddrId: integer('ship_to_vendor_addr_id').references(() => vendorAddresses.id),
   notes: text('notes'),
@@ -597,8 +601,10 @@ export const factoriesRelations = relations(factories, () => ({}));
 export const estimatesRelations = relations(estimates, ({ one, many }) => ({
   customer: one(customers, { fields: [estimates.customerId], references: [customers.id] }),
   contact: one(contacts, { fields: [estimates.customerContactId], references: [contacts.id] }),
+  projectNameRel: one(projectNames, { fields: [estimates.projectNameId], references: [projectNames.id] }),
   sellCurrency: one(currencies, { fields: [estimates.sellCurrencyId], references: [currencies.id] }),
-  acctManager: one(employees, { fields: [estimates.acctManagerId], references: [employees.id] }),
+  acctManager: one(accountManagers, { fields: [estimates.acctManagerId], references: [accountManagers.id] }),
+  productDeveloper: one(productDevelopers, { fields: [estimates.productDeveloperId], references: [productDevelopers.id] }),
   lineItems: many(estimateLineItems),
   createdByUser: one(users, { fields: [estimates.createdBy], references: [users.id] }),
 }));

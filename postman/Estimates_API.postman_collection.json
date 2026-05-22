@@ -1,0 +1,366 @@
+{
+  "info": {
+    "name": "PRISM — Estimates API",
+    "description": "Complete Estimates module: create, read, update, delete estimate with cost sheet line items.\n\n**Setup:**\n1. Set `baseUrl` variable to your server (e.g. http://localhost:3000)\n2. Run the Login request first — it auto-saves the JWT token\n3. All estimate requests use that token automatically",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "token",   "value": "", "type": "string" },
+    { "key": "estimateId", "value": "", "type": "string" }
+  ],
+  "item": [
+
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login (get JWT token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.token) {",
+                  "  pm.collectionVariables.set('token', res.token);",
+                  "  console.log('Token saved:', res.token.substring(0, 30) + '...');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@prism.com\",\n  \"password\": \"yourpassword\"\n}"
+            }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "Estimates",
+      "item": [
+
+        {
+          "name": "1. GET — List Estimates",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates"],
+              "query": [
+                { "key": "page",       "value": "1" },
+                { "key": "limit",      "value": "20" },
+                { "key": "status",     "value": "draft", "disabled": true },
+                { "key": "customerId", "value": "12",   "disabled": true },
+                { "key": "search",     "value": "PO-2026", "disabled": true }
+              ]
+            }
+          }
+        },
+
+        {
+          "name": "2. POST — Create Estimate + Cost Sheet (Full Form Save)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.estimate && res.estimate.id) {",
+                  "  pm.collectionVariables.set('estimateId', res.estimate.id);",
+                  "  console.log('Estimate ID saved:', res.estimate.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/v1/estimates", "host": ["{{baseUrl}}"], "path": ["api","v1","estimates"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n\n  \"_comment_primary\": \"--- PRIMARY INFORMATION ---\",\n\n  \"customerId\": 1,\n  \"customerContactId\": 1,\n  \"customerPo\": \"PO-2026-00145\",\n  \"projectNameId\": 1,\n  \"projectTypeId\": 1,\n  \"expectedCloseDate\": \"2026-07-31\",\n  \"promiseDate\": \"2026-08-15\",\n  \"likelyToCloseId\": 1,\n  \"sellCurrencyId\": 1,\n  \"projectedTotalAmt\": \"125000.00\",\n  \"estimatedQty\": 2500,\n\n  \"_comment_classification\": \"--- CLASSIFICATION ---\",\n\n  \"departmentId\": 1,\n  \"salesChannelId\": 1,\n  \"businessVerticalId\": 1,\n  \"businessTypeId\": 1,\n  \"acctManagerId\": 1,\n  \"productDeveloperId\": 1,\n  \"hkPartnerId\": 1,\n  \"opsPartner1Id\": 1,\n  \"opsPartner2Id\": 1,\n  \"compliancePartnerId\": 1,\n  \"deckRequest\": true,\n  \"artSetupRequest\": false,\n  \"pkgDeckRequest\": false,\n  \"pkgArtSetupRequest\": true,\n\n  \"_comment_shipping\": \"--- CLIENT SHIPPING & BILLING ---\",\n\n  \"clientIncotermsId\": 1,\n  \"clientShipMethodId\": 1,\n  \"shippingAddressId\": 1,\n  \"shipTo\": \"Acme Corp\\n123 Warehouse Blvd, Suite 4\\nLos Angeles, CA 90001\\nUSA\",\n  \"billingAddressId\": 2,\n  \"billTo\": \"Acme Corp – Accounts Payable\\n456 Finance Ave\\nNew York, NY 10001\\nUSA\",\n\n  \"_comment_additional\": \"--- ADDITIONAL INFORMATION ---\",\n\n  \"sampleOnlyOrder\": false,\n  \"reOrder\": false,\n  \"bibleLink\": \"https://drive.google.com/file/d/abc123\",\n  \"memo\": \"Rush order – please prioritize factory allocation.\",\n  \"attachments\": [\n    {\n      \"name\": \"spec-sheet.pdf\",\n      \"url\": \"https://cdn.example.com/files/spec-sheet.pdf\",\n      \"size\": 204800,\n      \"type\": \"application/pdf\"\n    }\n  ],\n\n  \"_comment_costsheet\": \"--- COST SHEET LINE ITEMS (up to 400) ---\",\n\n  \"lineItems\": [\n    {\n      \"_comment\": \"Line 1 — Header\",\n      \"itemTypeId\": 1,\n      \"shortDescription\": \"Cotton T-Shirt - White\",\n      \"vendorId\": 1,\n      \"quantity\": \"1000\",\n      \"sellPricePerUnit\": \"14.50\",\n      \"skuMarginPct\": \"57.38\",\n      \"salesAmount\": \"14500.00\",\n      \"pickupExwFob\": \"6180.00\",\n      \"oceanDdp\": \"7200.00\",\n      \"airDdp\": \"9500.00\",\n      \"exclude\": false,\n\n      \"_comment_purchase\": \"Purchase Information\",\n      \"description\": \"100% ring-spun cotton, 180gsm, screen print front & back\",\n      \"factoryId\": 1,\n      \"vendorCurrencyId\": 1,\n      \"factoryCostPerUnit\": \"4.20\",\n      \"packingCostPerUnit\": \"0.35\",\n      \"sampleFees\": \"50.00\",\n      \"otherPerUnit\": \"0.10\",\n\n      \"_comment_landed\": \"Landed Cost\",\n      \"freightPerUnit\": \"0.80\",\n      \"dutyPct\": \"12\",\n      \"tariffPct\": \"10\",\n      \"tariffMuPct\": \"0\",\n      \"otherCostPct\": \"0\",\n      \"paddingPct\": \"5\",\n      \"usdFactoryCost\": \"4.20\",\n      \"landedCostPerUnit\": \"6.18\",\n      \"extendedLandedCost\": \"6180.00\",\n\n      \"_comment_class\": \"Classification\",\n      \"productClassId\": 1,\n      \"sustainabilityId\": 1,\n      \"htsCode\": \"6109.10.00\",\n      \"countryOfOrigin\": \"Bangladesh\",\n      \"countryOfDest\": \"US\",\n\n      \"_comment_packing\": \"Packing Details\",\n      \"unitsPerCarton\": 24,\n      \"dimLCm\": \"60\",\n      \"dimWCm\": \"40\",\n      \"dimHCm\": \"35\",\n      \"weightKgPerCarton\": \"5.5\",\n      \"totalCartons\": 42,\n      \"cbmPerCarton\": \"0.08400\",\n      \"totalCbm\": \"3.528\",\n      \"chargeableWeightKg\": \"231.000\",\n      \"shippingGroupId\": 1,\n\n      \"_comment_vendor\": \"Other Details (Vendor Only)\",\n      \"exFactoryDate\": \"2026-07-01\",\n      \"vendorIncotermsId\": 1,\n      \"shipToVendorId\": null,\n      \"shipToVendorAddrId\": null,\n      \"notes\": \"Confirm colorways before bulk production\"\n    },\n    {\n      \"_comment\": \"Line 2 — Header\",\n      \"itemTypeId\": 1,\n      \"shortDescription\": \"Pullover Hoodie - Black\",\n      \"vendorId\": 1,\n      \"quantity\": \"500\",\n      \"sellPricePerUnit\": \"38.00\",\n      \"skuMarginPct\": \"57.95\",\n      \"salesAmount\": \"19000.00\",\n      \"pickupExwFob\": null,\n      \"oceanDdp\": null,\n      \"airDdp\": null,\n      \"exclude\": false,\n\n      \"description\": \"80/20 cotton-poly blend, 320gsm, embroidered logo\",\n      \"factoryId\": 1,\n      \"vendorCurrencyId\": 1,\n      \"factoryCostPerUnit\": \"11.50\",\n      \"packingCostPerUnit\": \"0.60\",\n      \"sampleFees\": \"75.00\",\n      \"otherPerUnit\": \"0.20\",\n\n      \"freightPerUnit\": \"1.20\",\n      \"dutyPct\": \"12\",\n      \"tariffPct\": \"10\",\n      \"tariffMuPct\": \"0\",\n      \"otherCostPct\": \"0\",\n      \"paddingPct\": \"5\",\n      \"usdFactoryCost\": \"11.50\",\n      \"landedCostPerUnit\": \"15.98\",\n      \"extendedLandedCost\": \"7990.00\",\n\n      \"productClassId\": 1,\n      \"sustainabilityId\": 1,\n      \"htsCode\": \"6110.20.20\",\n      \"countryOfOrigin\": \"Vietnam\",\n      \"countryOfDest\": \"US\",\n\n      \"unitsPerCarton\": 12,\n      \"dimLCm\": \"65\",\n      \"dimWCm\": \"45\",\n      \"dimHCm\": \"40\",\n      \"weightKgPerCarton\": \"7.2\",\n      \"totalCartons\": 42,\n      \"cbmPerCarton\": \"0.11700\",\n      \"totalCbm\": \"4.914\",\n      \"chargeableWeightKg\": \"302.400\",\n      \"shippingGroupId\": 1,\n\n      \"exFactoryDate\": \"2026-07-10\",\n      \"vendorIncotermsId\": 1,\n      \"notes\": \"Size run: S/M/L/XL equal split\"\n    }\n  ]\n}"
+            },
+            "description": "Creates the estimate header + all cost sheet line items in a single atomic transaction.\n\nThe POST body auto-saves the returned `estimate.id` into the `{{estimateId}}` collection variable for subsequent requests."
+          }
+        },
+
+        {
+          "name": "3. GET — Get Estimate by ID (with Line Items)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}"]
+            },
+            "description": "Returns the full estimate header + joined customer record + all line items ordered by lineNumber."
+          }
+        },
+
+        {
+          "name": "4. PATCH — Update Header Fields Only (no line items change)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sellCurrencyId\": 2,\n  \"projectedTotalAmt\": \"130000.00\",\n  \"memo\": \"Updated memo — buyer confirmed revised quantities.\",\n  \"deckRequest\": false\n}"
+            },
+            "description": "Only updates the fields you send. Omitting `lineItems` leaves the cost sheet completely unchanged."
+          }
+        },
+
+        {
+          "name": "5. PATCH — Update Header + Replace Entire Cost Sheet",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sellCurrencyId\": 1,\n  \"projectedTotalAmt\": \"95000.00\",\n  \"shipTo\": \"Acme Corp\\n123 Warehouse Blvd, Suite 4\\nLos Angeles, CA 90001\\nUSA\",\n  \"billTo\": \"Acme Corp – Accounts Payable\\n456 Finance Ave\\nNew York, NY 10001\\nUSA\",\n\n  \"lineItems\": [\n    {\n      \"itemTypeId\": 1,\n      \"shortDescription\": \"Cotton T-Shirt - Black (Updated)\",\n      \"vendorId\": 1,\n      \"quantity\": \"800\",\n      \"sellPricePerUnit\": \"13.00\",\n      \"skuMarginPct\": \"55.20\",\n      \"salesAmount\": \"10400.00\",\n      \"exclude\": false,\n\n      \"description\": \"Updated spec — new color, same fabric\",\n      \"factoryId\": 1,\n      \"vendorCurrencyId\": 1,\n      \"factoryCostPerUnit\": \"4.00\",\n      \"packingCostPerUnit\": \"0.35\",\n      \"sampleFees\": \"0.00\",\n      \"otherPerUnit\": \"0.10\",\n\n      \"freightPerUnit\": \"0.80\",\n      \"dutyPct\": \"12\",\n      \"tariffPct\": \"10\",\n      \"tariffMuPct\": \"0\",\n      \"otherCostPct\": \"0\",\n      \"paddingPct\": \"5\",\n      \"usdFactoryCost\": \"4.00\",\n      \"landedCostPerUnit\": \"5.83\",\n      \"extendedLandedCost\": \"4664.00\",\n\n      \"productClassId\": 1,\n      \"sustainabilityId\": 1,\n      \"htsCode\": \"6109.10.00\",\n      \"countryOfOrigin\": \"Bangladesh\",\n      \"countryOfDest\": \"US\",\n\n      \"unitsPerCarton\": 24,\n      \"dimLCm\": \"60\",\n      \"dimWCm\": \"40\",\n      \"dimHCm\": \"35\",\n      \"weightKgPerCarton\": \"5.5\",\n      \"totalCartons\": 34,\n      \"cbmPerCarton\": \"0.08400\",\n      \"totalCbm\": \"2.856\",\n      \"chargeableWeightKg\": \"187.000\",\n      \"shippingGroupId\": 1,\n\n      \"exFactoryDate\": \"2026-07-15\",\n      \"vendorIncotermsId\": 1,\n      \"notes\": \"Black only — no colorway split this round\"\n    }\n  ]\n}"
+            },
+            "description": "When `lineItems` is present in the PATCH body:\n- All existing line items are DELETED\n- The new array is inserted fresh with lineNumbers starting from 1\n- The header fields are updated in the same transaction\n\nThis is the full 'Save' action when the user edits the entire form."
+          }
+        },
+
+        {
+          "name": "6. PATCH — Clear All Line Items (send empty array)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lineItems\": []\n}"
+            },
+            "description": "Sending `lineItems: []` deletes all existing cost sheet rows. Header is unchanged."
+          }
+        },
+
+        {
+          "name": "7. DELETE — Soft-Delete Estimate",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}"]
+            },
+            "description": "Sets `is_active = false`. The estimate is not physically deleted and will no longer appear in list results."
+          }
+        }
+
+      ]
+    },
+
+    {
+      "name": "Line Items (individual management)",
+      "item": [
+
+        {
+          "name": "GET — List Line Items for Estimate",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/line-items",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}","line-items"]
+            }
+          }
+        },
+
+        {
+          "name": "POST — Add Single Line Item",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/line-items",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}","line-items"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"itemTypeId\": 1,\n  \"shortDescription\": \"Baseball Cap - Red\",\n  \"vendorId\": 1,\n  \"quantity\": \"300\",\n  \"sellPricePerUnit\": \"9.00\",\n  \"factoryCostPerUnit\": \"2.50\",\n  \"packingCostPerUnit\": \"0.20\",\n  \"freightPerUnit\": \"0.40\",\n  \"dutyPct\": \"8\",\n  \"tariffPct\": \"10\",\n  \"paddingPct\": \"5\",\n  \"productClassId\": 1,\n  \"htsCode\": \"6505.00.60\",\n  \"countryOfOrigin\": \"China\",\n  \"countryOfDest\": \"US\",\n  \"unitsPerCarton\": 48,\n  \"dimLCm\": \"50\",\n  \"dimWCm\": \"35\",\n  \"dimHCm\": \"30\",\n  \"weightKgPerCarton\": \"3.5\",\n  \"exFactoryDate\": \"2026-07-20\",\n  \"vendorIncotermsId\": 1,\n  \"notes\": \"One size fits all\"\n}"
+            }
+          }
+        },
+
+        {
+          "name": "POST — Bulk Insert Line Items (up to 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/line-items/bulk",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}","line-items","bulk"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"itemTypeId\": 1,\n      \"shortDescription\": \"Tote Bag - Natural\",\n      \"vendorId\": 1,\n      \"quantity\": \"500\",\n      \"sellPricePerUnit\": \"7.50\",\n      \"factoryCostPerUnit\": \"2.10\",\n      \"dutyPct\": \"5\",\n      \"tariffPct\": \"10\",\n      \"countryOfOrigin\": \"India\",\n      \"countryOfDest\": \"US\"\n    },\n    {\n      \"itemTypeId\": 1,\n      \"shortDescription\": \"Drawstring Bag - Black\",\n      \"vendorId\": 1,\n      \"quantity\": \"750\",\n      \"sellPricePerUnit\": \"5.00\",\n      \"factoryCostPerUnit\": \"1.40\",\n      \"dutyPct\": \"5\",\n      \"tariffPct\": \"10\",\n      \"countryOfOrigin\": \"Bangladesh\",\n      \"countryOfDest\": \"US\"\n    }\n  ]\n}"
+            }
+          }
+        },
+
+        {
+          "name": "PATCH — Update Single Line Item",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/line-items/{{lineItemId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}","line-items","{{lineItemId}}"],
+              "variable": [{ "key": "lineItemId", "value": "1" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sellPricePerUnit\": \"15.00\",\n  \"quantity\": \"900\",\n  \"notes\": \"Price revised after buyer negotiation\"\n}"
+            }
+          }
+        },
+
+        {
+          "name": "POST — Recalculate Landed Cost for Line Item",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/line-items/{{lineItemId}}/recalculate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}","line-items","{{lineItemId}}","recalculate"],
+              "variable": [{ "key": "lineItemId", "value": "1" }]
+            },
+            "description": "Triggers server-side recalculation of: landedCostPerUnit, extendedLandedCost, salesAmount, skuMarginPct, cbmPerCarton, totalCartons, totalCbm, chargeableWeightKg"
+          }
+        },
+
+        {
+          "name": "DELETE — Exclude Line Item (soft exclude)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/line-items/{{lineItemId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates","{{estimateId}}","line-items","{{lineItemId}}"],
+              "variable": [{ "key": "lineItemId", "value": "1" }]
+            },
+            "description": "Sets `exclude = true` on the line item. Row remains in DB for audit purposes."
+          }
+        }
+
+      ]
+    },
+
+    {
+      "name": "Filter / Search Estimates",
+      "item": [
+        {
+          "name": "GET — Filter by Status (draft)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates?status=draft&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates"],
+              "query": [
+                { "key": "status", "value": "draft" },
+                { "key": "page",   "value": "1" },
+                { "key": "limit",  "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET — Filter by Customer",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates?customerId=1&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates"],
+              "query": [
+                { "key": "customerId", "value": "1" },
+                { "key": "page",       "value": "1" },
+                { "key": "limit",      "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET — Search by PO or Project Name",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/estimates?search=PO-2026&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","estimates"],
+              "query": [
+                { "key": "search", "value": "PO-2026" },
+                { "key": "page",   "value": "1" },
+                { "key": "limit",  "value": "20" }
+              ]
+            }
+          }
+        }
+      ]
+    }
+
+  ]
+}
