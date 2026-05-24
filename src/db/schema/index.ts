@@ -267,6 +267,7 @@ export const vendors = pgTable('vendors', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
   companyName: varchar('company_name', { length: 255 }),
+  country: varchar('country', { length: 100 }),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
   defaultCurrencyId: integer('default_currency_id').references(() => currencies.id),
   ...syncCols,
@@ -318,6 +319,7 @@ export const factories = pgTable('factories', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
   country: varchar('country', { length: 100 }),
+  vendorId: integer('vendor_id').references(() => vendors.id),
   ...syncCols,
 });
 

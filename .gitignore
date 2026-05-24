@@ -16,6 +16,8 @@ Client_Shipping_Billing_APIs_README.md
 Classification_GET_APIs.postman_collection.json
 Cost-Sheet NS APIs.postman_collection.json
 docs
+Estimates_API.postman_collection.json
+Freight_Cost_GET_APIs.postman_collection.json
 
 # Dependencies
 node_modules/

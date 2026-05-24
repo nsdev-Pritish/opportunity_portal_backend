@@ -12,6 +12,7 @@
  *    "netsuiteInternalId": "1",
  *    "name": "V001 - Acme Mfg",
  *    "companyname": "Acme Manufacturing Ltd",
+ *    "country": "China",
  *    "NSsubsidiary": "3",   ← NS internal id of Primary Subsidiary
  *    "NScurrency": "12"     ← NS internal id of Primary Currency
  *  }
@@ -29,6 +30,7 @@ const CreateSchema = z.object({
   netsuiteInternalId: z.string().min(1),
   name              : z.string().min(1).max(255),
   companyname       : z.string().max(255).optional().nullable(),
+  country           : z.string().max(100).optional().nullable(),
   NSsubsidiary      : z.string().optional().nullable(),
   NScurrency        : z.string().optional().nullable(),
 });
@@ -81,6 +83,7 @@ export default async function vendorCostSheetRoutes(app: FastifyInstance) {
         .set({
           name             : body.name,
           companyName      : body.companyname,
+          country          : body.country,
           subsidiaryId,
           defaultCurrencyId,
           updatedAt        : new Date(),
@@ -94,6 +97,7 @@ export default async function vendorCostSheetRoutes(app: FastifyInstance) {
       netsuiteInternalId: body.netsuiteInternalId,
       name              : body.name,
       companyName       : body.companyname ?? null,
+      country           : body.country ?? null,
       subsidiaryId,
       defaultCurrencyId,
       source            : 'netsuite',
@@ -117,6 +121,7 @@ export default async function vendorCostSheetRoutes(app: FastifyInstance) {
       .set({
         name             : body.name,
         companyName      : body.companyname,
+        country          : body.country,
         subsidiaryId     : body.NSsubsidiary !== undefined ? subsidiaryId : undefined,
         defaultCurrencyId: body.NScurrency !== undefined ? defaultCurrencyId : undefined,
         syncStatus       : 'synced',
