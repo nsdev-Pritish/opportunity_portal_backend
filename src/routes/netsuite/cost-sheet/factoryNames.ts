@@ -38,7 +38,8 @@ async function resolveVendorId(db: ReturnType<typeof getDb>, nsVendorId?: string
   if (!nsVendorId) return null;
   const [v] = await db.select({ id: vendors.id }).from(vendors)
     .where(eq(vendors.netsuiteInternalId, nsVendorId)).limit(1);
-  return v?.id ?? null;
+  if (!v) throw new NotFoundError('Vendor', nsVendorId);
+  return v.id;
 }
 
 export default async function factoryNameRoutes(app: FastifyInstance) {
