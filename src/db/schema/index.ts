@@ -185,6 +185,7 @@ export const likelyToClose = pgTable('likely_to_close', {
 export const departments = pgTable('departments', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
+  deptShow: boolean('dept_show').notNull().default(true),
   ...syncCols,
 });
 

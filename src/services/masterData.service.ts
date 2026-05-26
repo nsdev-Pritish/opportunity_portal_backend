@@ -13,6 +13,7 @@ export async function listActiveRecords(entity: MasterEntityKey, scopeId?: numbe
     const conditions: any[] = [eq(table.isActive, true)];
     if (scopeId && 'customerId' in table) conditions.push(eq(table.customerId, scopeId));
     if (scopeId && 'vendorId'   in table) conditions.push(eq(table.vendorId,   scopeId));
+    if (entity === 'departments' && 'deptShow' in table) conditions.push(eq(table.deptShow, true));
     
     // Determine sort column based on table structure
     let sortColumn = table.name ?? table.label ?? table.code;

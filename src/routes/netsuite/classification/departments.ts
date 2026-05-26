@@ -22,6 +22,7 @@ import { invalidateDropdown } from '../../../utils/cache.js';
 const CreateSchema = z.object({
   netsuiteInternalId: z.string().min(1),
   name: z.string().min(1).max(255),
+  deptShow: z.boolean().default(true),
 });
 
 const UpdateSchema = CreateSchema.omit({ netsuiteInternalId: true }).partial();
@@ -47,7 +48,7 @@ export default async function departmentRoutes(app: FastifyInstance) {
       .where(eq(departments.netsuiteInternalId, body.netsuiteInternalId)).limit(1);
     if (existing) {
       const [upd] = await db.update(departments)
-        .set({ name: body.name, updatedAt: new Date() })
+        .set({ name: body.name, deptShow: body.deptShow, updatedAt: new Date() })
         .where(eq(departments.id, existing.id)).returning();
       await invalidateDropdown('departments');
       return reply.status(200).send({ ...upd, _action: 'updated' });
