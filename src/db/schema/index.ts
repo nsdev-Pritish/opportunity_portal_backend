@@ -456,7 +456,7 @@ export const estimates = pgTable('estimates', {
   businessTypeId: integer('business_type_id').references(() => businessTypes.id),
   compliancePartnerId: integer('compliance_partner_id').references(() => compliancePartners.id),
   acctManagerId: integer('acct_manager_id').references(() => accountManagers.id),
-  productDeveloperId: integer('product_developer_id').references(() => productDevelopers.id),
+  productDeveloperIds: integer('product_developer_ids').array().default([]),
   hkPartnerId: integer('hk_partner_id').references(() => hkPartners.id),
   opsPartner1Id: integer('ops_partner_1_id').references(() => opsPartners.id),
   opsPartner2Id: integer('ops_partner_2_id').references(() => opsPartners.id),
@@ -714,7 +714,6 @@ export const estimatesRelations = relations(estimates, ({ one, many }) => ({
   projectNameRel: one(projectNames, { fields: [estimates.projectNameId], references: [projectNames.id] }),
   sellCurrency: one(currencies, { fields: [estimates.sellCurrencyId], references: [currencies.id] }),
   acctManager: one(accountManagers, { fields: [estimates.acctManagerId], references: [accountManagers.id] }),
-  productDeveloper: one(productDevelopers, { fields: [estimates.productDeveloperId], references: [productDevelopers.id] }),
   lineItems: many(estimateLineItems),
   createdByUser: one(users, { fields: [estimates.createdBy], references: [users.id] }),
 }));

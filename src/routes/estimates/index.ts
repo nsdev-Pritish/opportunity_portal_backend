@@ -124,7 +124,7 @@ const EstimateHeaderSchema = z.object({
   businessTypeId: z.number().int().positive().optional(),
   compliancePartnerId: z.number().int().positive().optional(),
   acctManagerId: z.number().int().positive().optional(),
-  productDeveloperId: z.number().int().positive().optional(),
+  productDeveloperIds: z.array(z.number().int().positive()).optional(),
   hkPartnerId: z.number().int().positive().optional(),
   opsPartner1Id: z.number().int().positive().optional(),
   opsPartner2Id: z.number().int().positive().optional(),
@@ -154,17 +154,27 @@ const EstimateHeaderSchema = z.object({
   })).optional(),
 });
 
-// POST body: header + optional cost sheet items + optional freight groups
-const CreateEstimateSchema = EstimateHeaderSchema.extend({
-  lineItems: z.array(LineItemSchema).max(400).optional(),
-  freightGroups: z.array(FreightGroupSchema).max(50).optional(),
-});
+// ── Phase 1: Body-level only ─────────────────────────────────────────────────
+const CreateEstimateSchema = EstimateHeaderSchema;
+const UpdateEstimateSchema = EstimateHeaderSchema.partial();
 
-// PATCH body: all header fields optional + optional full line-item/freight-group replacement
-const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
-  lineItems: z.array(LineItemSchema).max(400).optional(),
-  freightGroups: z.array(FreightGroupSchema).max(50).optional(),
-});
+// Phase 2 – uncomment to add line items (replace Phase 1 schemas above):
+// const CreateEstimateSchema = EstimateHeaderSchema.extend({
+//   lineItems: z.array(LineItemSchema).max(400).optional(),
+// });
+// const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
+//   lineItems: z.array(LineItemSchema).max(400).optional(),
+// });
+
+// Phase 3 – uncomment to add freight groups too (replace Phase 2 schemas above):
+// const CreateEstimateSchema = EstimateHeaderSchema.extend({
+//   lineItems: z.array(LineItemSchema).max(400).optional(),
+//   freightGroups: z.array(FreightGroupSchema).max(50).optional(),
+// });
+// const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
+//   lineItems: z.array(LineItemSchema).max(400).optional(),
+//   freightGroups: z.array(FreightGroupSchema).max(50).optional(),
+// });
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
@@ -183,14 +193,10 @@ export default async function estimateRoutes(app: FastifyInstance) {
     }),
   );
 
-  // POST /api/v1/estimates — create estimate + cost sheet items + freight groups atomically
+  // POST /api/v1/estimates — Phase 1: body-level fields only
   app.post<{ Body: unknown }>('/', async (req, reply) => {
-    const { lineItems, freightGroups, ...headerData } = CreateEstimateSchema.parse(req.body);
-    const result = await createEstimateWithItems(
-      headerData,
-      lineItems ?? [],
-      freightGroups ?? [],
-    );
+    const headerData = CreateEstimateSchema.parse(req.body);
+    const result = await createEstimateWithItems(headerData, [], []);
     return reply.status(201).send(result);
   });
 
@@ -199,15 +205,10 @@ export default async function estimateRoutes(app: FastifyInstance) {
     getEstimate(parseInt(req.params.id)),
   );
 
-  // PATCH /api/v1/estimates/:id — update header; optionally replaces all line items and freight groups atomically
+  // PATCH /api/v1/estimates/:id — Phase 1: body-level fields only
   app.patch<{ Params: { id: string }; Body: unknown }>('/:id', async (req) => {
-    const { lineItems, freightGroups, ...headerData } = UpdateEstimateSchema.parse(req.body);
-    return updateEstimateWithItems(
-      parseInt(req.params.id),
-      headerData,
-      lineItems,
-      freightGroups,
-    );
+    const headerData = UpdateEstimateSchema.parse(req.body);
+    return updateEstimateWithItems(parseInt(req.params.id), headerData);
   });
 
   // DELETE /api/v1/estimates/:id — soft-delete

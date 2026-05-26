@@ -7,31 +7,46 @@
  *
  * Called automatically from estimate.service.ts after create / update.
  * Safe to call even when NS_SUITELET_URL is not configured — it will skip silently.
+ *
+ * Phase 1: header-level fields only.
+ * Phase 2: uncomment the line-items section when ready.
+ * Phase 3: uncomment the freight-groups section when ready.
  */
 
 import crypto from 'crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import {
-  estimates, estimateLineItems, estimateFreightGroups,
-  customers, contacts, currencies, projectTypes, likelyToClose,
+  estimates,
+  subsidiaries, customers, contacts, currencies, projectNames, projectTypes, likelyToClose,
   departments, salesChannels, businessVerticals, businessTypes,
   accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
-  clientIncoterms, clientShippingMethods, addresses, projectNames,
-  itemTypes, vendors, sustainabilityOptions, productClasses, vendorIncoterms,
-  lclRates, fclRates, airRates,
+  clientIncoterms, clientShippingMethods, addresses,
+  // Phase 2 – uncomment when line items are added:
+  // estimateLineItems, itemTypes, vendors, sustainabilityOptions, productClasses,
+  // vendorIncoterms, factories,
+  // Phase 3 – uncomment when freight groups are added:
+  // estimateFreightGroups, lclRates, fclRates, airRates,
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
 // ── OAuth 1.0a TBA header builder ─────────────────────────────────────────────
 
-function buildOAuthHeader(method: string, baseUrl: string): string | null {
+function buildOAuthHeader(method: string, fullUrl: string): string | null {
   const { NS_ACCOUNT_ID, NS_CONSUMER_KEY, NS_CONSUMER_SECRET, NS_TOKEN_ID, NS_TOKEN_SECRET } = env;
   if (!NS_CONSUMER_KEY || !NS_CONSUMER_SECRET || !NS_TOKEN_ID || !NS_TOKEN_SECRET) return null;
 
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const nonce     = crypto.randomBytes(16).toString('hex');
+
+  // Per OAuth 1.0a spec: base URL must exclude query string; query params
+  // must be merged into the normalized parameter string alongside oauth_* params.
+  const urlObj  = new URL(fullUrl);
+  const baseUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
+
+  const urlQueryParams: Record<string, string> = {};
+  urlObj.searchParams.forEach((v, k) => { urlQueryParams[k] = v; });
 
   const oauthParams: Record<string, string> = {
     oauth_consumer_key    : NS_CONSUMER_KEY,
@@ -42,8 +57,8 @@ function buildOAuthHeader(method: string, baseUrl: string): string | null {
     oauth_version         : '1.0',
   };
 
-  // Normalised parameter string (sorted, percent-encoded)
-  const paramStr = Object.entries(oauthParams)
+  // Merge URL query params + oauth params, sort, encode
+  const paramStr = Object.entries({ ...urlQueryParams, ...oauthParams })
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
@@ -72,16 +87,6 @@ function formatNsDate(date: string | null | undefined): string {
   return `${parseInt(m, 10)}/${parseInt(d, 10)}/${y}`;
 }
 
-function fmtCurrency(val: string | number | null | undefined): string {
-  if (val == null || val === '') return '$0.00';
-  return `$${parseFloat(String(val)).toFixed(2)}`;
-}
-
-function fmtPct(val: string | number | null | undefined): string {
-  if (val == null || val === '') return '0%';
-  return `${parseFloat(String(val)).toFixed(2)}%`;
-}
-
 // ── NS-ID lookup: given a portal FK id, return the netsuiteInternalId string ──
 
 async function getNsId(table: any, portalId: number | null | undefined): Promise<string> {
@@ -95,7 +100,7 @@ async function getNsId(table: any, portalId: number | null | undefined): Promise
   return row?.nsId ?? '';
 }
 
-// ── Build the full suitelet payload ───────────────────────────────────────────
+// ── Build the suitelet payload ─────────────────────────────────────────────────
 
 async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
   const db = getDb();
@@ -104,224 +109,98 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
   const [est] = await db.select().from(estimates).where(eq(estimates.id, estimateId)).limit(1);
   if (!est) throw new Error(`Estimate ${estimateId} not found`);
 
-  // 2. Fetch line items + freight groups
-  const [lineItems, freightGroups] = await Promise.all([
-    db.select().from(estimateLineItems)
-      .where(eq(estimateLineItems.estimateId, estimateId))
-      .orderBy(estimateLineItems.lineNumber),
-    db.select().from(estimateFreightGroups)
-      .where(eq(estimateFreightGroups.estimateId, estimateId))
-      .orderBy(estimateFreightGroups.sortOrder),
-  ]);
-
-  // 3. Resolve all header-level FK NS IDs in one parallel batch
+  // 2. Resolve all header-level FK → NS internal IDs in one parallel batch
   const [
-    customerNsId, contactNsId, projectNameNsId, projectTypeNsId,
-    deptNsId, hkPartnerNsId, complianceNsId, channelNsId,
-    currencyNsId, likelyToCloseNsId, shipTermsNsId, shipMethodNsId,
-    businessTypeNsId, bizVerticalNsId, ops1NsId, ops2NsId,
-    prodDevNsId, acctMgrNsId, billAddrNsId, shipAddrNsId,
+    subsidiaryNsId, customerNsId, contactNsId, projectNameNsId, projectTypeNsId,
+    likelyToCloseNsId, currencyNsId,
+    deptNsId, channelNsId, bizVerticalNsId, businessTypeNsId,
+    acctMgrNsId, hkPartnerNsId, ops1NsId, ops2NsId, complianceNsId,
+    shipTermsNsId, shipMethodNsId, shipAddrNsId, billAddrNsId,
   ] = await Promise.all([
-    getNsId(customers,             est.customerId),
-    getNsId(contacts,              est.customerContactId),
-    getNsId(projectNames,          est.projectNameId),
-    getNsId(projectTypes,          est.projectTypeId),
-    getNsId(departments,           est.departmentId),
-    getNsId(hkPartners,            est.hkPartnerId),
-    getNsId(compliancePartners,    est.compliancePartnerId),
-    getNsId(salesChannels,         est.salesChannelId),
-    getNsId(currencies,            est.sellCurrencyId),
-    getNsId(likelyToClose,         est.likelyToCloseId),
-    getNsId(clientIncoterms,       est.clientIncotermsId),
-    getNsId(clientShippingMethods, est.clientShipMethodId),
-    getNsId(businessTypes,         est.businessTypeId),
-    getNsId(businessVerticals,     est.businessVerticalId),
-    getNsId(opsPartners,           est.opsPartner1Id),
-    getNsId(opsPartners,           est.opsPartner2Id),
-    getNsId(productDevelopers,     est.productDeveloperId),
-    getNsId(accountManagers,       est.acctManagerId),
-    getNsId(addresses,             est.billingAddressId),
-    getNsId(addresses,             est.shippingAddressId),
+    getNsId(subsidiaries,         est.subsidiaryId),
+    getNsId(customers,            est.customerId),
+    getNsId(contacts,             est.customerContactId),
+    getNsId(projectNames,         est.projectNameId),
+    getNsId(projectTypes,         est.projectTypeId),
+    getNsId(likelyToClose,        est.likelyToCloseId),
+    getNsId(currencies,           est.sellCurrencyId),
+    getNsId(departments,          est.departmentId),
+    getNsId(salesChannels,        est.salesChannelId),
+    getNsId(businessVerticals,    est.businessVerticalId),
+    getNsId(businessTypes,        est.businessTypeId),
+    getNsId(accountManagers,      est.acctManagerId),
+    getNsId(hkPartners,           est.hkPartnerId),
+    getNsId(opsPartners,          est.opsPartner1Id),
+    getNsId(opsPartners,          est.opsPartner2Id),
+    getNsId(compliancePartners,   est.compliancePartnerId),
+    getNsId(clientIncoterms,      est.clientIncotermsId),
+    getNsId(clientShippingMethods,est.clientShipMethodId),
+    getNsId(addresses,            est.shippingAddressId),
+    getNsId(addresses,            est.billingAddressId),
   ]);
 
-  // 4. Freight summary — derive from the primary (first) group
-  const primaryGroup = freightGroups[0] ?? null;
-  let freightPol = '', freightPod = '', freightBaseRate = '', freightAdditionalFees = '';
+  // Resolve NS IDs for all product developers in parallel
+  const prodDevNsIds = await Promise.all(
+    (est.productDeveloperIds ?? []).map(id => getNsId(productDevelopers, id))
+  );
 
-  if (primaryGroup?.lclRateId && primaryGroup.chosenType === 'LCL') {
-    const [r] = await db.select().from(lclRates).where(eq(lclRates.id, primaryGroup.lclRateId)).limit(1);
-    if (r) { freightPol = r.pol ?? ''; freightPod = r.pod ?? ''; freightBaseRate = String(r.pricePerCbm ?? ''); }
-  } else if (primaryGroup?.fclRateId && primaryGroup.chosenType === 'FCL') {
-    const [r] = await db.select().from(fclRates).where(eq(fclRates.id, primaryGroup.fclRateId)).limit(1);
-    if (r) { freightPol = r.pol ?? ''; freightPod = r.pod ?? ''; }
-  } else if (primaryGroup?.airRateId && primaryGroup.chosenType === 'AIR') {
-    const [r] = await db.select().from(airRates).where(eq(airRates.id, primaryGroup.airRateId)).limit(1);
-    if (r) { freightPol = r.pol ?? ''; freightPod = r.pod ?? ''; freightBaseRate = String(r.pricePerKg ?? ''); }
-  }
-
-  const totalFreightCost  = freightGroups.reduce((s, g) => s + parseFloat(String(g.freightCost         ?? 0)), 0);
-  const totalCbm          = freightGroups.reduce((s, g) => s + parseFloat(String(g.totalCbm            ?? 0)), 0);
-  const totalWeight       = freightGroups.reduce((s, g) => s + parseFloat(String(g.chargeableWeightKg  ?? 0)), 0);
-  const totalCartons      = lineItems.reduce((s, li)    => s + (li.totalCartons ?? 0), 0);
-  const totalLanded       = lineItems.reduce((s, li)    => s + parseFloat(String(li.extendedLandedCost  ?? 0)), 0);
-
-  // 5. Build lines object (string-keyed as NetSuite expects)
-  const lines: Record<string, unknown> = {};
-  for (let i = 0; i < lineItems.length; i++) {
-    const li = lineItems[i];
-
-    const [itemNsId, vendorNsId, vendorCurrNsId, sustainNsId, classNsId, vendorIncNsId] = await Promise.all([
-      getNsId(itemTypes,             li.itemTypeId),
-      getNsId(vendors,               li.vendorId),
-      getNsId(currencies,            li.vendorCurrencyId),
-      getNsId(sustainabilityOptions, li.sustainabilityId),
-      getNsId(productClasses,        li.productClassId),
-      getNsId(vendorIncoterms,       li.vendorIncotermsId),
-    ]);
-
-    // Match freight group via shippingGroupId stored on line item
-    const lineGroup = freightGroups.find(g => g.id === li.shippingGroupId) ?? null;
-
-    lines[String(i)] = {
-      item            : itemNsId,
-      itemText        : '',
-      description     : li.description ?? '',
-      shortDescription: li.shortDescription ?? '',
-      vendor          : vendorNsId,
-      quantity        : String(li.quantity ?? '0'),
-      rate            : String(li.sellPricePerUnit ?? '0'),
-      margin          : fmtPct(li.skuMarginPct),
-      amount          : String(li.salesAmount ?? '0'),
-      excludeFromPrint: li.exclude ?? false,
-      selectedForQuote: false,
-      rowId           : `tr-${i}`,
-      detail: {
-        agreedPrice      : fmtCurrency(li.factoryCostPerUnit),
-        description      : li.description ?? '',
-        vendor           : vendorNsId,
-        factoryInformation: '',
-        classValue       : classNsId,
-        sustainability   : sustainNsId,
-        htscode          : li.htsCode ?? '',
-        origincountry    : li.countryOfOrigin ?? '',
-        vendorCurrency   : vendorCurrNsId,
-        exDate           : formatNsDate(li.exFactoryDate),
-        vendorSku        : '',
-        vendorShip       : vendorIncNsId,
-        vendorAddress    : '',
-        notesPO          : li.notes ?? '',
-        addrInfo         : '',
-        converted        : 'false',
-        countryDestination: li.countryOfDest ?? 'US',
-        image            : '',
-        d1               : String(li.dimLCm ?? ''),
-        d2               : String(li.dimWCm ?? ''),
-        d3               : String(li.dimHCm ?? ''),
-        weight           : String(li.weightKgPerCarton ?? ''),
-        pack             : String(li.cbmPerCarton ?? ''),
-        unitspercarton   : String(li.unitsPerCarton ?? ''),
-        cartonstotal     : String(li.totalCartons ?? 0),
-        cbmpack          : String(li.cbmPerCarton  ?? '0.000'),
-        totalpack        : String(li.totalCbm      ?? '0.000'),
-        totalweight      : String(li.chargeableWeightKg ?? '0'),
-        freight          : String(li.freightPerUnit ?? ''),
-        duty             : fmtPct(li.dutyPct),
-        dutymu           : fmtPct(li.tariffMuPct),
-        tariff           : fmtPct(li.tariffPct),
-        othercost        : fmtCurrency(li.otherPerUnit),
-        otherpercent     : fmtPct(li.otherCostPct),
-        packingcost      : fmtCurrency(li.packingCostPerUnit),
-        samplefee        : fmtCurrency(li.sampleFees),
-        factorycost      : fmtCurrency(li.factoryCostPerUnit),
-        paddingval       : String(li.paddingPct ?? ''),
-        landedcost       : fmtCurrency(li.landedCostPerUnit),
-        extlandedcost    : fmtCurrency(li.extendedLandedCost),
-        shippinggroup    : lineGroup?.groupName ?? '',
-        shippingFreight  : {
-          freightType   : lineGroup?.chosenType ?? '',
-          pol           : freightPol,
-          pod           : freightPod,
-          freightTotal  : parseFloat(String(lineGroup?.freightCost        ?? 0)),
-          freightPerUnit: parseFloat(String(lineGroup?.freightCostPerUnit ?? 0)),
-          shippinggroup : lineGroup?.groupName ?? '',
-          freightProvider: lineGroup?.customProvider ?? '',
-          freightNotes  : lineGroup?.customNotes    ?? '',
-        },
-        className        : '',
-      },
-    };
-  }
-
-  // 6. Assemble the top-level payload exactly as the NS suitelet expects
-  const today = new Date().toISOString().split('T')[0];
+  // 3. Phase 1 payload — header fields only
   const payload: Record<string, unknown> = {
-    sub                   : '1',          // subsidiary (hardcoded — adjust if multi-sub)
-    customer              : customerNsId,
-    projectName           : projectNameNsId,
-    projectNameText       : est.projectName ?? '',
-    projectType           : projectTypeNsId,
-    projectTypeMain       : projectTypeNsId,
-    projectedTotal        : String(est.projectedTotalAmt ?? ''),
-    expectedCloseDate     : formatNsDate(est.expectedCloseDate),
-    promiseDate           : formatNsDate(est.promiseDate),
-    salesRep              : acctMgrNsId,
-    department            : deptNsId,
-    hkPartner             : hkPartnerNsId,
-    compliancePartner     : complianceNsId,
-    channel               : channelNsId,
-    spendCategory         : bizVerticalNsId,
-    memo                  : est.memo ?? '',
-    currency              : currencyNsId,
-    creativePartner       : prodDevNsId,
-    likelyToClose         : likelyToCloseNsId,
-    pipeline              : true,
-    bibleLink             : est.bibleLink ?? '',
-    qtyReq                : String(est.estimatedQty ?? ''),
-    shipTerms             : shipTermsNsId,
-    shipMethod            : shipMethodNsId,
-    businessType          : businessTypeNsId,
-    divisionalBudget      : '',
-    ops                   : ops1NsId,
-    ops2                  : ops2NsId,
-    prodDev               : prodDevNsId,
-    customerPO            : est.customerPo ?? '',
-    notesReason           : '',
-    status                : 'A',
-    reason                : null,
-    contact               : contactNsId,
-    billAddress           : billAddrNsId,
-    shipAddress           : shipAddrNsId,
-    flagBill              : false,
-    flagShip              : false,
-    flagContact           : false,
-    businessVertical      : bizVerticalNsId,
-    clientPursuitAlternative: '',
-    requestWrikePortal    : est.deckRequest        ?? false,
-    requestSetupPortal    : est.artSetupRequest    ?? false,
-    requestWrikePortalPack: est.pkgDeckRequest     ?? false,
-    requestSetupPortalPack: est.pkgArtSetupRequest ?? false,
-    totalfactoryCostUSD   : '',
-    totalDuty             : '',
-    totalTariff           : '',
-    totalFreightEst       : String(totalFreightCost.toFixed(2)),
-    totalOtherCost        : '',
-    totalLanded           : String(totalLanded.toFixed(2)),
-    freightMethod         : primaryGroup?.chosenType ?? '',
-    freightTotalCost      : String(totalFreightCost.toFixed(2)),
-    freightProvider       : primaryGroup?.customProvider ?? '',
-    freightNotes          : primaryGroup?.customNotes    ?? '',
-    freightTotalCBM       : String(totalCbm.toFixed(3)),
-    freightTotalWeight    : String(totalWeight.toFixed(3)),
-    freightTotalCartons   : String(totalCartons),
-    freightCalcDate       : formatNsDate(today),
-    freightPol,
-    freightPod,
-    freightBaseRate,
-    freightAdditionalFees,
-    freightCostperUnit    : String(primaryGroup?.freightCostPerUnit ?? '0'),
-    files                 : [],
-    lines,
+    subsidiaryNSId      : subsidiaryNsId,
+    customerNSId        : customerNsId,
+    customerContactNSId : contactNsId,
+    customerPoNS        : est.customerPo ?? '',
+    projectNameNSId     : projectNameNsId,
+    projectTypeNSId     : projectTypeNsId,
+    expectedCloseDateNS : formatNsDate(est.expectedCloseDate),
+    promiseDateNS       : formatNsDate(est.promiseDate),
+    likelyToCloseNSId   : likelyToCloseNsId,
+    sellCurrencyNSId    : currencyNsId,
+    projectedTotalAmtNSId: String(est.projectedTotalAmt ?? ''),
+    estimatedQtyNSId    : String(est.estimatedQty ?? ''),
+    departmentNSId      : deptNsId,
+    salesChannelNSId    : channelNsId,
+    businessVerticalNSId: bizVerticalNsId,
+    businessTypeNSId    : businessTypeNsId,
+    acctManagerNSId     : acctMgrNsId,
+    productDeveloperNSIds: prodDevNsIds.filter(id => id !== ''),
+    hkPartnerNSId       : hkPartnerNsId,
+    opsPartner1NSId     : ops1NsId,
+    opsPartner2NSId     : ops2NsId,
+    compliancePartnerNSId: complianceNsId,
+    clientIncotermsNSId : shipTermsNsId,
+    clientShipMethodNSId: shipMethodNsId,
+    shippingAddressNS   : shipAddrNsId,
+    shipToNS            : est.shipTo ?? '',
+    billingAddressNS    : billAddrNsId,
+    billToNS            : est.billTo ?? '',
+    sampleOnlyOrderNSId : est.sampleOnlyOrder ?? false,
+    reOrderNSId         : est.reOrder ?? false,
+    deckRequestNS       : est.deckRequest ?? false,
+    artSetupRequestNS   : est.artSetupRequest ?? false,
+    pkgDeckRequestNS    : est.pkgDeckRequest ?? false,
+    pkgArtSetupRequestNS: est.pkgArtSetupRequest ?? false,
+    bibleLinkNS         : est.bibleLink ?? '',
+    memoNS              : est.memo ?? '',
   };
+
+  // Phase 2 – Line items (uncomment when ready):
+  // const lineItems = await db.select().from(estimateLineItems)
+  //   .where(eq(estimateLineItems.estimateId, estimateId))
+  //   .orderBy(estimateLineItems.lineNumber);
+  // const lines: Record<string, unknown> = {};
+  // for (let i = 0; i < lineItems.length; i++) {
+  //   const li = lineItems[i];
+  //   const [itemNsId, vendorNsId, ...] = await Promise.all([...]);
+  //   lines[String(i)] = { ... };
+  // }
+  // payload.lines = lines;
+
+  // Phase 3 – Freight groups (uncomment when ready):
+  // const freightGroups = await db.select().from(estimateFreightGroups)
+  //   .where(eq(estimateFreightGroups.estimateId, estimateId))
+  //   .orderBy(estimateFreightGroups.sortOrder);
+  // payload.freightGroups = freightGroups.map(g => ({ ... }));
 
   // On update, include the NS internal ID so the suitelet can locate the record
   if (mode === 'update' && est.netsuiteInternalId) {
@@ -346,19 +225,28 @@ export async function syncEstimateToNetsuite(
 
   try {
     const payload = await buildNsPayload(estimateId, mode);
-    const url = `${env.NS_SUITELET_URL}?mode=${mode}`;
 
-    const authHeader = buildOAuthHeader('POST', env.NS_SUITELET_URL);
+    // Append mode param — handle URLs that already carry query params (e.g. ?script=&deploy=)
+    const url = env.NS_SUITELET_URL.includes('?')
+      ? `${env.NS_SUITELET_URL}&mode=${mode}`
+      : `${env.NS_SUITELET_URL}?mode=${mode}`;
+
+    // OAuth signature must be computed over the exact request URL (including mode param)
+    const authHeader = buildOAuthHeader('POST', url);
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (authHeader) headers['Authorization'] = authHeader;
 
-    logger.info({ estimateId, mode }, 'Posting estimate to NetSuite suitelet');
+    logger.info({
+      estimateId, mode, url,
+      accountId : env.NS_ACCOUNT_ID,
+      authHeader: authHeader ? authHeader.substring(0, 80) + '...' : 'MISSING — credentials not set',
+    }, 'Posting estimate to NetSuite suitelet');
 
     const res = await fetch(url, {
       method : 'POST',
       headers,
       body   : JSON.stringify(payload),
-      signal : AbortSignal.timeout(30_000), // 30 s hard timeout
+      signal : AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {
@@ -366,16 +254,16 @@ export async function syncEstimateToNetsuite(
       throw new Error(`NS suitelet responded ${res.status}: ${body}`);
     }
 
-    // NS response: { id: "12345", tranId: "EST-0042" }  (field names may vary)
+    // NS response: { id: "12345", tranId: "EST-0042" }
     const nsResp = await res.json() as {
-      id?             : string;
-      internalId?     : string;
-      tranId?         : string;
-      documentNumber? : string;
+      id?            : string;
+      internalId?    : string;
+      tranId?        : string;
+      documentNumber?: string;
     };
 
-    const nsInternalId  = nsResp.id          ?? nsResp.internalId;
-    const documentNumber = nsResp.tranId      ?? nsResp.documentNumber;
+    const nsInternalId   = nsResp.id          ?? nsResp.internalId;
+    const documentNumber = nsResp.tranId       ?? nsResp.documentNumber;
 
     await db.update(estimates)
       .set({
@@ -393,7 +281,7 @@ export async function syncEstimateToNetsuite(
     const message = err?.message ?? String(err);
     logger.error({ estimateId, mode, error: message }, 'NetSuite sync failed');
 
-    // Mark as failed but do NOT throw — portal create/update should still succeed
+    // Mark as failed — portal create/update still succeeds even when NS is down
     await db.update(estimates)
       .set({ syncStatus: 'failed', syncError: message } as any)
       .where(eq(estimates.id, estimateId));

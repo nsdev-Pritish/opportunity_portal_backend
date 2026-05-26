@@ -67,8 +67,11 @@ async function runMigrations() {
 
       const statements = content
         .split('--> statement-breakpoint')
-        .map(s => s.trim())
-        .filter(s => s.length > 0 && !/^--/.test(s));
+        .map(s =>
+          // Strip leading comment lines so files that open with -- comments still execute
+          s.split('\n').filter(line => !line.trimStart().startsWith('--')).join('\n').trim()
+        )
+        .filter(s => s.length > 0);
 
       if (statements.length === 0) {
         await sql`INSERT INTO schema_migrations (name) VALUES (${file})`;

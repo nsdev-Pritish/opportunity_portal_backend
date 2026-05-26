@@ -159,44 +159,36 @@ export async function createEstimateWithItems(
 ) {
   const db = getDb();
   const startTime = Date.now();
-  logger.info({ itemCount: lineItems.length, groupCount: freightGroups.length }, 'Creating estimate with line items and freight groups');
+  logger.info('Creating estimate');
 
   return db.transaction(async (tx) => {
-    // 1. Insert estimate header
+    // Step 1: Insert estimate header
     const [estimate] = await tx.insert(estimates)
       .values({ ...headerData, source: 'portal', syncStatus: 'pending' } as any)
       .returning();
 
-    // 2. Insert line items (parents first, then components)
-    const { parents, components } = await insertLineItemsWithComponents(tx, estimate.id, lineItems);
+    // Step 2 – Line items (Phase 2: uncomment when ready):
+    // const { parents, components } = await insertLineItemsWithComponents(tx, estimate.id, lineItems);
 
-    // 3. Insert freight groups
-    const insertedGroups: any[] = [];
-    if (freightGroups.length > 0) {
-      const groupRows = freightGroups.map((g, idx) => ({
-        ...g,
-        estimateId: estimate.id,
-        sortOrder: (g.sortOrder as number) ?? idx + 1,
-        groupName: (g.groupName as string) ?? `Group ${idx + 1}`,
-      }));
-      for (let i = 0; i < groupRows.length; i += CHUNK) {
-        const rows = await tx.insert(estimateFreightGroups).values(groupRows.slice(i, i + CHUNK) as any).returning();
-        insertedGroups.push(...rows);
-      }
-    }
+    // Step 3 – Freight groups (Phase 3: uncomment when ready):
+    // const insertedGroups: any[] = [];
+    // if (freightGroups.length > 0) {
+    //   const groupRows = freightGroups.map((g, idx) => ({
+    //     ...g,
+    //     estimateId: estimate.id,
+    //     sortOrder: (g.sortOrder as number) ?? idx + 1,
+    //     groupName: (g.groupName as string) ?? `Group ${idx + 1}`,
+    //   }));
+    //   for (let i = 0; i < groupRows.length; i += CHUNK) {
+    //     const rows = await tx.insert(estimateFreightGroups).values(groupRows.slice(i, i + CHUNK) as any).returning();
+    //     insertedGroups.push(...rows);
+    //   }
+    // }
 
     const duration = Date.now() - startTime;
-    logger.info(
-      { estimateId: estimate.id, parentCount: parents.length, componentCount: components.length, groupCount: insertedGroups.length, durationMs: duration },
-      'Estimate created',
-    );
+    logger.info({ estimateId: estimate.id, durationMs: duration }, 'Estimate created');
 
-    return {
-      estimate,
-      lineItems: [...parents, ...components],
-      freightGroups: insertedGroups,
-      summary: { totalItems: parents.length, totalComponents: components.length, totalFreightGroups: insertedGroups.length },
-    };
+    return { estimate };
   }).then(async (result) => {
     await syncEstimateToNetsuite(result.estimate.id, 'create');
     return result;
@@ -223,71 +215,47 @@ export async function updateEstimateWithItems(
 
     if (!updated) throw new NotFoundError('Estimate', id);
 
-    // 2. Replace line items if provided
-    let allLineItems: any[];
-    if (newLineItems !== undefined) {
-      // Delete all existing (cascade removes components automatically)
-      await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, id));
+    // Step 2 – Line items (Phase 2: uncomment when ready):
+    // if (newLineItems !== undefined) {
+    //   await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, id));
+    //   const { parents, components } = await insertLineItemsWithComponents(tx, id, newLineItems);
+    //   allLineItems = [...parents, ...components];
+    // } else {
+    //   allLineItems = await tx.select()
+    //     .from(estimateLineItems)
+    //     .where(eq(estimateLineItems.estimateId, id))
+    //     .orderBy(asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder));
+    // }
 
-      const { parents, components } = await insertLineItemsWithComponents(tx, id, newLineItems);
-      allLineItems = [...parents, ...components];
-    } else {
-      allLineItems = await tx.select()
-        .from(estimateLineItems)
-        .where(eq(estimateLineItems.estimateId, id))
-        .orderBy(asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder));
-    }
+    // Step 3 – Freight groups (Phase 3: uncomment when ready):
+    // if (newFreightGroups !== undefined) {
+    //   await tx.delete(estimateFreightGroups).where(eq(estimateFreightGroups.estimateId, id));
+    //   const freightGroupRows: any[] = [];
+    //   if (newFreightGroups.length > 0) {
+    //     const groupRows = newFreightGroups.map((g, idx) => ({
+    //       ...g, estimateId: id,
+    //       sortOrder: (g.sortOrder as number) ?? idx + 1,
+    //       groupName: (g.groupName as string) ?? `Group ${idx + 1}`,
+    //       updatedAt: new Date(),
+    //     }));
+    //     for (let i = 0; i < groupRows.length; i += CHUNK) {
+    //       const rows = await tx.insert(estimateFreightGroups).values(groupRows.slice(i, i + CHUNK) as any).returning();
+    //       freightGroupRows.push(...rows);
+    //     }
+    //   }
+    // }
 
-    // 3. Replace freight groups if provided
-    let freightGroups: any[];
-    if (newFreightGroups !== undefined) {
-      await tx.delete(estimateFreightGroups).where(eq(estimateFreightGroups.estimateId, id));
-
-      freightGroups = [];
-      if (newFreightGroups.length > 0) {
-        const groupRows = newFreightGroups.map((g, idx) => ({
-          ...g,
-          estimateId: id,
-          sortOrder: (g.sortOrder as number) ?? idx + 1,
-          groupName: (g.groupName as string) ?? `Group ${idx + 1}`,
-          updatedAt: new Date(),
-        }));
-        for (let i = 0; i < groupRows.length; i += CHUNK) {
-          const rows = await tx.insert(estimateFreightGroups).values(groupRows.slice(i, i + CHUNK) as any).returning();
-          freightGroups.push(...rows);
-        }
-      }
-    } else {
-      freightGroups = await tx.select()
-        .from(estimateFreightGroups)
-        .where(eq(estimateFreightGroups.estimateId, id))
-        .orderBy(asc(estimateFreightGroups.sortOrder));
-    }
-
-    return { estimate: updated, lineItems: allLineItems, freightGroups };
+    return { estimate: updated };
   });
 
   await cacheDel(CacheKeys.estimate(id));
 
   const duration = Date.now() - startTime;
-  logger.info(
-    {
-      estimateId: id,
-      itemCount: result.lineItems.length,
-      groupCount: result.freightGroups.length,
-      replacedItems: newLineItems !== undefined,
-      replacedGroups: newFreightGroups !== undefined,
-      durationMs: duration,
-    },
-    'Estimate updated',
-  );
+  logger.info({ estimateId: id, durationMs: duration }, 'Estimate updated');
 
   await syncEstimateToNetsuite(id, 'update');
 
-  return {
-    ...result,
-    summary: { totalItems: result.lineItems.length, totalFreightGroups: result.freightGroups.length },
-  };
+  return result;
 }
 
 // ── Deactivate ───────────────────────────────────────────────────────────────
