@@ -8,71 +8,102 @@ import {
   deactivateEstimate,
 } from '../../services/estimate.service.js';
 
-// ── Line item schema (mirrors every estimate_line_items column) ─────────────
-const LineItemSchema = z.object({
+// ── Freight Group schema (mirrors estimate_freight_groups columns) ────────────
+const FreightGroupSchema = z.object({
+  id: z.number().int().positive().optional(),           // present on update
+  groupName: z.string().max(255).optional(),
+  sortOrder: z.number().int().nonnegative().optional(),
+  chosenType: z.enum(['LCL', 'FCL', 'AIR', 'CUSTOM']).optional(),
+  lclRateId: z.number().int().positive().optional(),
+  fclRateId: z.number().int().positive().optional(),
+  airRateId: z.number().int().positive().optional(),
+  customProvider: z.string().max(255).optional(),
+  customFreightCost: z.string().optional(),
+  customNotes: z.string().optional(),
+  pol: z.string().max(255).optional(),
+  pod: z.string().max(255).optional(),
+  totalCartons: z.number().int().nonnegative().optional(),
+  totalCbm: z.string().optional(),
+  chargeableWeightKg: z.string().optional(),
+  freightCost: z.string().optional(),
+  freightCostPerUnit: z.string().optional(),
+});
+
+// ── Component schema — all detail fields shared by both item levels ──────────
+// Components (Component Kit Items) carry purchase/landed/classification/packing
+// data. This schema is reused for both top-level items and their components.
+const ComponentSchema = z.object({
   // ── Line header ────────────────────────────────────────────────────────────
-  itemTypeId: z.number().int().positive().optional(),        // Item Type dropdown
-  shortDescription: z.string().max(500).optional(),          // Short Description text
-  vendorId: z.number().int().positive().optional(),          // Vendor dropdown
-  quantity: z.string().optional(),                           // Quantity
-  sellPricePerUnit: z.string().optional(),                   // Sell Price (per unit)
-  skuMarginPct: z.string().optional(),                       // SKU Margin % (calculated, displayed)
-  salesAmount: z.string().optional(),                        // Sales Amount (calculated: sellPrice × qty)
-  pickupExwFob: z.string().optional(),                       // Pick-up (EXW/FOB) optional column
-  oceanDdp: z.string().optional(),                           // Ocean DDP optional column
-  airDdp: z.string().optional(),                             // Air DDP optional column
-  exclude: z.boolean().optional(),                           // Exclude checkbox
+  itemTypeId: z.number().int().positive().optional(),
+  shortDescription: z.string().max(500).optional(),
+  vendorId: z.number().int().positive().optional(),
+  quantity: z.string().optional(),
+  sellPricePerUnit: z.string().optional(),
+  skuMarginPct: z.string().optional(),
+  salesAmount: z.string().optional(),
+  pickupExwFob: z.string().optional(),
+  oceanDdp: z.string().optional(),
+  airDdp: z.string().optional(),
+  exclude: z.boolean().optional(),
 
   // ── Purchase Information ───────────────────────────────────────────────────
-  description: z.string().optional(),                        // Description textarea
-  factoryId: z.number().int().positive().optional(),         // Factory Name dropdown
-  vendorCurrencyId: z.number().int().positive().optional(),  // Vendor Currency dropdown
-  factoryCostPerUnit: z.string().optional(),                 // Factory Cost (per unit)
-  packingCostPerUnit: z.string().optional(),                 // Packing Cost (per unit)
-  sampleFees: z.string().optional(),                         // Sample Fees
-  otherPerUnit: z.string().optional(),                       // Other (per unit)
+  description: z.string().optional(),
+  factoryId: z.number().int().positive().optional(),
+  vendorCurrencyId: z.number().int().positive().optional(),
+  factoryCostPerUnit: z.string().optional(),
+  packingCostPerUnit: z.string().optional(),
+  sampleFees: z.string().optional(),
+  otherPerUnit: z.string().optional(),
 
   // ── Landed Cost ────────────────────────────────────────────────────────────
-  landedCostPerUnit: z.string().optional(),                  // Landed Cost (per unit) — calculated
-  extendedLandedCost: z.string().optional(),                 // Extended Landed Cost — calculated
-  freightPerUnit: z.string().optional(),                     // Freight (/unit)
-  dutyPct: z.string().optional(),                            // Duty (%)
-  tariffPct: z.string().optional(),                          // Tariff (%)
-  tariffMuPct: z.string().optional(),                        // Tariff MU (%)
-  otherCostPct: z.string().optional(),                       // Other %
-  usdFactoryCost: z.string().optional(),                     // USD Factory Cost (per unit) — calculated
-  paddingPct: z.string().optional(),                         // Padding (%)
+  landedCostPerUnit: z.string().optional(),
+  extendedLandedCost: z.string().optional(),
+  freightPerUnit: z.string().optional(),
+  dutyPct: z.string().optional(),
+  tariffPct: z.string().optional(),
+  tariffMuPct: z.string().optional(),
+  otherCostPct: z.string().optional(),
+  usdFactoryCost: z.string().optional(),
+  paddingPct: z.string().optional(),
 
   // ── Classification ─────────────────────────────────────────────────────────
-  productClassId: z.number().int().positive().optional(),    // Product Class dropdown
-  sustainabilityId: z.number().int().positive().optional(),  // Sustainability dropdown
-  htsCode: z.string().max(20).optional(),                    // HTS Code text
-  countryOfOrigin: z.string().max(100).optional(),           // Country of Origin text
-  countryOfDest: z.enum(['US', 'EU']).optional(),            // Country of Destination toggle (US / EU)
+  productClassId: z.number().int().positive().optional(),
+  sustainabilityId: z.number().int().positive().optional(),
+  htsCode: z.string().max(20).optional(),
+  countryOfOrigin: z.string().max(100).optional(),
+  countryOfDest: z.enum(['US', 'EU']).optional(),
 
   // ── Packing Details ────────────────────────────────────────────────────────
-  unitsPerCarton: z.number().int().positive().optional(),    // Units per Carton
-  dimLCm: z.string().optional(),                             // Dimension L (cm)
-  dimWCm: z.string().optional(),                             // Dimension W (cm)
-  dimHCm: z.string().optional(),                             // Dimension H (cm)
-  weightKgPerCarton: z.string().optional(),                  // Weight KG (per Carton)
-  totalCartons: z.number().int().nonnegative().optional(),   // Total # Cartons — calculated
-  cbmPerCarton: z.string().optional(),                       // CBM per Carton — calculated
-  totalCbm: z.string().optional(),                           // Total CBM — calculated
-  chargeableWeightKg: z.string().optional(),                 // Chargeable Weight KG — calculated
-  shippingGroupId: z.number().int().positive().optional(),   // Shipping Group dropdown
+  unitsPerCarton: z.number().int().positive().optional(),
+  dimLCm: z.string().optional(),
+  dimWCm: z.string().optional(),
+  dimHCm: z.string().optional(),
+  weightKgPerCarton: z.string().optional(),
+  totalCartons: z.number().int().nonnegative().optional(),
+  cbmPerCarton: z.string().optional(),
+  totalCbm: z.string().optional(),
+  chargeableWeightKg: z.string().optional(),
+  shippingGroupId: z.number().int().positive().optional(),
 
   // ── Other Details (Vendor Only) ────────────────────────────────────────────
-  exFactoryDate: z.string().optional(),                      // Ex-Factory Date
-  vendorIncotermsId: z.number().int().positive().optional(), // Vendor Incoterms dropdown
-  shipToVendorId: z.number().int().positive().optional(),    // Ship to Vendor dropdown
-  shipToVendorAddrId: z.number().int().positive().optional(),// Ship to Vendor Address dropdown
-  notes: z.string().optional(),                              // Notes textarea
+  exFactoryDate: z.string().optional(),
+  vendorIncotermsId: z.number().int().positive().optional(),
+  shipToVendorId: z.number().int().positive().optional(),
+  shipToVendorAddrId: z.number().int().positive().optional(),
+  notes: z.string().optional(),
+});
+
+// ── Line item schema — top-level item + optional nested components ──────────
+// When itemType is "Quote Kit Item", components[] holds the Component Kit Items.
+// Each component carries its own purchase/landed/packing detail fields.
+const LineItemSchema = ComponentSchema.extend({
+  components: z.array(ComponentSchema).max(50).optional(),
 });
 
 // ── Estimate header schema ──────────────────────────────────────────────────
 const EstimateHeaderSchema = z.object({
   // Primary Information
+  subsidiaryId: z.number().int().positive().optional(),
   customerId: z.number().int().positive(),
   customerContactId: z.number().int().positive().optional(),
   customerPo: z.string().max(100).optional(),
@@ -123,20 +154,21 @@ const EstimateHeaderSchema = z.object({
   })).optional(),
 });
 
-// POST body: header + optional cost sheet items (up to 400)
+// POST body: header + optional cost sheet items + optional freight groups
 const CreateEstimateSchema = EstimateHeaderSchema.extend({
   lineItems: z.array(LineItemSchema).max(400).optional(),
+  freightGroups: z.array(FreightGroupSchema).max(50).optional(),
 });
 
-// PATCH body: all header fields optional + optional full line-item replacement
+// PATCH body: all header fields optional + optional full line-item/freight-group replacement
 const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
   lineItems: z.array(LineItemSchema).max(400).optional(),
+  freightGroups: z.array(FreightGroupSchema).max(50).optional(),
 });
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
 export default async function estimateRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', app.authenticate);
 
   // GET /api/v1/estimates — paginated list
   app.get<{
@@ -151,12 +183,13 @@ export default async function estimateRoutes(app: FastifyInstance) {
     }),
   );
 
-  // POST /api/v1/estimates — create estimate + cost sheet items atomically
+  // POST /api/v1/estimates — create estimate + cost sheet items + freight groups atomically
   app.post<{ Body: unknown }>('/', async (req, reply) => {
-    const { lineItems, ...headerData } = CreateEstimateSchema.parse(req.body);
+    const { lineItems, freightGroups, ...headerData } = CreateEstimateSchema.parse(req.body);
     const result = await createEstimateWithItems(
-      { ...headerData, createdBy: (req as any).user.id },
+      headerData,
       lineItems ?? [],
+      freightGroups ?? [],
     );
     return reply.status(201).send(result);
   });
@@ -166,13 +199,14 @@ export default async function estimateRoutes(app: FastifyInstance) {
     getEstimate(parseInt(req.params.id)),
   );
 
-  // PATCH /api/v1/estimates/:id — update header; if lineItems provided, replaces all items atomically
+  // PATCH /api/v1/estimates/:id — update header; optionally replaces all line items and freight groups atomically
   app.patch<{ Params: { id: string }; Body: unknown }>('/:id', async (req) => {
-    const { lineItems, ...headerData } = UpdateEstimateSchema.parse(req.body);
+    const { lineItems, freightGroups, ...headerData } = UpdateEstimateSchema.parse(req.body);
     return updateEstimateWithItems(
       parseInt(req.params.id),
-      { ...headerData, updatedBy: (req as any).user.id },
+      headerData,
       lineItems,
+      freightGroups,
     );
   });
 

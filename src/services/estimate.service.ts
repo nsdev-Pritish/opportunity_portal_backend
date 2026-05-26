@@ -1,12 +1,17 @@
-import { eq, and, desc, asc, like, or, count } from 'drizzle-orm';
+import { eq, and, desc, asc, like, or, count, isNull } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import {
-  estimates, estimateLineItems,
+  estimates, estimateLineItems, estimateFreightGroups,
   customers,
 } from '../db/schema/index.js';
 import { cacheDel, CacheKeys } from '../utils/cache.js';
 import { NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { syncEstimateToNetsuite } from './netsuiteSync.service.js';
+
+type RawLineItem = Record<string, unknown> & { components?: Record<string, unknown>[] };
+
+const CHUNK = 100;
 
 // ── List ────────────────────────────────────────────────────────────────────
 
@@ -53,7 +58,7 @@ export async function listEstimates(opts: {
   return { data: rows, pagination: { page: opts.page, limit: opts.limit, total: Number(total) } };
 }
 
-// ── Get single (with line items) ────────────────────────────────────────────
+// ── Get single (with nested line items) ─────────────────────────────────────
 
 export async function getEstimate(id: number) {
   const db = getDb();
@@ -65,27 +70,96 @@ export async function getEstimate(id: number) {
 
   if (!row) throw new NotFoundError('Estimate', id);
 
-  const lineItems = await db.select()
-    .from(estimateLineItems)
-    .where(eq(estimateLineItems.estimateId, id))
-    .orderBy(asc(estimateLineItems.lineNumber));
+  const [allLineItemRows, freightGroups] = await Promise.all([
+    db.select()
+      .from(estimateLineItems)
+      .where(eq(estimateLineItems.estimateId, id))
+      .orderBy(asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder)),
+    db.select()
+      .from(estimateFreightGroups)
+      .where(eq(estimateFreightGroups.estimateId, id))
+      .orderBy(asc(estimateFreightGroups.sortOrder)),
+  ]);
+
+  // Nest components under their parent
+  const componentMap: Record<number, typeof allLineItemRows> = {};
+  for (const r of allLineItemRows) {
+    if (r.parentLineItemId !== null) {
+      (componentMap[r.parentLineItemId!] ??= []).push(r);
+    }
+  }
+
+  const lineItems = allLineItemRows
+    .filter(r => r.parentLineItemId === null)
+    .map(p => ({ ...p, components: componentMap[p.id] ?? [] }));
 
   return {
     ...row.estimates,
     customer: row.customers,
     lineItems,
+    freightGroups,
   };
+}
+
+// ── Internal: two-pass insert (parents → components) ─────────────────────────
+
+async function insertLineItemsWithComponents(
+  tx: any,
+  estimateId: number,
+  items: RawLineItem[],
+): Promise<{ parents: any[]; components: any[] }> {
+  if (items.length === 0) return { parents: [], components: [] };
+
+  // Pass 1: insert parent rows
+  const parentValues = items.map((item, i) => {
+    const { components: _c, ...rest } = item;
+    return { ...rest, estimateId, lineNumber: i + 1, parentLineItemId: null, sortOrder: i };
+  });
+
+  const parents: any[] = [];
+  for (let i = 0; i < parentValues.length; i += CHUNK) {
+    const rows = await tx.insert(estimateLineItems)
+      .values(parentValues.slice(i, i + CHUNK) as any)
+      .returning();
+    parents.push(...rows);
+  }
+
+  // Pass 2: insert components referencing their parent's DB id
+  const componentValues: any[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const comps = items[i].components ?? [];
+    for (let j = 0; j < comps.length; j++) {
+      componentValues.push({
+        ...comps[j],
+        estimateId,
+        lineNumber: 0,
+        parentLineItemId: parents[i].id,
+        sortOrder: j,
+      });
+    }
+  }
+
+  const components: any[] = [];
+  for (let i = 0; i < componentValues.length; i += CHUNK) {
+    const rows = await tx.insert(estimateLineItems)
+      .values(componentValues.slice(i, i + CHUNK) as any)
+      .returning();
+    components.push(...rows);
+  }
+
+  return { parents, components };
 }
 
 // ── Create estimate + cost sheet items atomically ───────────────────────────
 
 export async function createEstimateWithItems(
   headerData: Record<string, unknown>,
-  lineItems: Record<string, unknown>[],
+  lineItems: RawLineItem[],
+  freightGroups: Record<string, unknown>[] = [],
 ) {
   const db = getDb();
   const startTime = Date.now();
-  logger.info({ itemCount: lineItems.length }, 'Creating estimate with line items');
+  logger.info({ itemCount: lineItems.length, groupCount: freightGroups.length }, 'Creating estimate with line items and freight groups');
 
   return db.transaction(async (tx) => {
     // 1. Insert estimate header
@@ -93,32 +167,39 @@ export async function createEstimateWithItems(
       .values({ ...headerData, source: 'portal', syncStatus: 'pending' } as any)
       .returning();
 
-    // 2. Bulk insert line items in chunks of 100
-    const inserted: any[] = [];
-    if (lineItems.length > 0) {
-      const CHUNK = 100;
-      for (let i = 0; i < lineItems.length; i += CHUNK) {
-        const chunk = lineItems.slice(i, i + CHUNK).map((item, offset) => ({
-          ...item,
-          estimateId: estimate.id,
-          lineNumber: i + offset + 1,
-        }));
-        const rows = await tx.insert(estimateLineItems).values(chunk as any).returning();
-        inserted.push(...rows);
+    // 2. Insert line items (parents first, then components)
+    const { parents, components } = await insertLineItemsWithComponents(tx, estimate.id, lineItems);
+
+    // 3. Insert freight groups
+    const insertedGroups: any[] = [];
+    if (freightGroups.length > 0) {
+      const groupRows = freightGroups.map((g, idx) => ({
+        ...g,
+        estimateId: estimate.id,
+        sortOrder: (g.sortOrder as number) ?? idx + 1,
+        groupName: (g.groupName as string) ?? `Group ${idx + 1}`,
+      }));
+      for (let i = 0; i < groupRows.length; i += CHUNK) {
+        const rows = await tx.insert(estimateFreightGroups).values(groupRows.slice(i, i + CHUNK) as any).returning();
+        insertedGroups.push(...rows);
       }
     }
 
     const duration = Date.now() - startTime;
     logger.info(
-      { estimateId: estimate.id, itemCount: inserted.length, durationMs: duration },
+      { estimateId: estimate.id, parentCount: parents.length, componentCount: components.length, groupCount: insertedGroups.length, durationMs: duration },
       'Estimate created',
     );
 
     return {
       estimate,
-      lineItems: inserted,
-      summary: { totalItems: inserted.length },
+      lineItems: [...parents, ...components],
+      freightGroups: insertedGroups,
+      summary: { totalItems: parents.length, totalComponents: components.length, totalFreightGroups: insertedGroups.length },
     };
+  }).then(async (result) => {
+    await syncEstimateToNetsuite(result.estimate.id, 'create');
+    return result;
   });
 }
 
@@ -127,7 +208,8 @@ export async function createEstimateWithItems(
 export async function updateEstimateWithItems(
   id: number,
   headerData: Record<string, unknown>,
-  newLineItems?: Record<string, unknown>[],
+  newLineItems?: RawLineItem[],
+  newFreightGroups?: Record<string, unknown>[],
 ) {
   const db = getDb();
   const startTime = Date.now();
@@ -141,46 +223,70 @@ export async function updateEstimateWithItems(
 
     if (!updated) throw new NotFoundError('Estimate', id);
 
-    // 2. If lineItems provided → hard-replace the entire cost sheet atomically
-    let lineItems: any[];
+    // 2. Replace line items if provided
+    let allLineItems: any[];
     if (newLineItems !== undefined) {
+      // Delete all existing (cascade removes components automatically)
       await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, id));
 
-      lineItems = [];
-      if (newLineItems.length > 0) {
-        const CHUNK = 100;
-        for (let i = 0; i < newLineItems.length; i += CHUNK) {
-          const chunk = newLineItems.slice(i, i + CHUNK).map((item, offset) => ({
-            ...item,
-            estimateId: id,
-            lineNumber: i + offset + 1,
-          }));
-          const rows = await tx.insert(estimateLineItems).values(chunk as any).returning();
-          lineItems.push(...rows);
+      const { parents, components } = await insertLineItemsWithComponents(tx, id, newLineItems);
+      allLineItems = [...parents, ...components];
+    } else {
+      allLineItems = await tx.select()
+        .from(estimateLineItems)
+        .where(eq(estimateLineItems.estimateId, id))
+        .orderBy(asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder));
+    }
+
+    // 3. Replace freight groups if provided
+    let freightGroups: any[];
+    if (newFreightGroups !== undefined) {
+      await tx.delete(estimateFreightGroups).where(eq(estimateFreightGroups.estimateId, id));
+
+      freightGroups = [];
+      if (newFreightGroups.length > 0) {
+        const groupRows = newFreightGroups.map((g, idx) => ({
+          ...g,
+          estimateId: id,
+          sortOrder: (g.sortOrder as number) ?? idx + 1,
+          groupName: (g.groupName as string) ?? `Group ${idx + 1}`,
+          updatedAt: new Date(),
+        }));
+        for (let i = 0; i < groupRows.length; i += CHUNK) {
+          const rows = await tx.insert(estimateFreightGroups).values(groupRows.slice(i, i + CHUNK) as any).returning();
+          freightGroups.push(...rows);
         }
       }
     } else {
-      // Return existing items unchanged
-      lineItems = await tx.select()
-        .from(estimateLineItems)
-        .where(eq(estimateLineItems.estimateId, id))
-        .orderBy(asc(estimateLineItems.lineNumber));
+      freightGroups = await tx.select()
+        .from(estimateFreightGroups)
+        .where(eq(estimateFreightGroups.estimateId, id))
+        .orderBy(asc(estimateFreightGroups.sortOrder));
     }
 
-    return { estimate: updated, lineItems };
+    return { estimate: updated, lineItems: allLineItems, freightGroups };
   });
 
   await cacheDel(CacheKeys.estimate(id));
 
   const duration = Date.now() - startTime;
   logger.info(
-    { estimateId: id, itemCount: result.lineItems.length, replaced: newLineItems !== undefined, durationMs: duration },
+    {
+      estimateId: id,
+      itemCount: result.lineItems.length,
+      groupCount: result.freightGroups.length,
+      replacedItems: newLineItems !== undefined,
+      replacedGroups: newFreightGroups !== undefined,
+      durationMs: duration,
+    },
     'Estimate updated',
   );
 
+  await syncEstimateToNetsuite(id, 'update');
+
   return {
     ...result,
-    summary: { totalItems: result.lineItems.length },
+    summary: { totalItems: result.lineItems.length, totalFreightGroups: result.freightGroups.length },
   };
 }
 

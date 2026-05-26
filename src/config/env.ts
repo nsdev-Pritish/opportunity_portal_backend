@@ -20,6 +20,17 @@ const envSchema = z.object({
   // Paste the output here AND share with NetSuite integration team
   NS_API_KEY: z.string().min(16),
 
+  // ── Portal → NetSuite outbound sync (all optional) ──────────────
+  // URL of the NetSuite suitelet that accepts estimate creates/updates
+  NS_SUITELET_URL: z.string().url().optional(),
+  // NetSuite account ID (realm) used in OAuth TBA header
+  NS_ACCOUNT_ID: z.string().optional(),
+  // TBA credentials — required only if NS_SUITELET_URL is set
+  NS_CONSUMER_KEY: z.string().optional(),
+  NS_CONSUMER_SECRET: z.string().optional(),
+  NS_TOKEN_ID: z.string().optional(),
+  NS_TOKEN_SECRET: z.string().optional(),
+
   CACHE_TTL_DROPDOWN: z.coerce.number().default(300),
   CACHE_TTL_ESTIMATE: z.coerce.number().default(120),
 });

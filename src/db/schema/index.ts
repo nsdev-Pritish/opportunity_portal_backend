@@ -1,6 +1,6 @@
 import {
   pgTable, serial, varchar, boolean, timestamp, integer,
-  numeric, text, jsonb, date, index, uniqueIndex, pgEnum,
+  numeric, text, jsonb, date, index, uniqueIndex, pgEnum, AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
@@ -432,8 +432,10 @@ export const additionalFees = pgTable('additional_fees', {
 export const estimates = pgTable('estimates', {
   id: serial('id').primaryKey(),
   netsuiteInternalId: varchar('netsuite_internal_id', { length: 50 }).unique(),
+  documentNumber: varchar('document_number', { length: 100 }),  // NS transaction ID (e.g. "EST-0042")
 
   // Primary Information
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
   customerId: integer('customer_id').references(() => customers.id).notNull(),
   customerContactId: integer('customer_contact_id').references(() => contacts.id),
   customerPo: varchar('customer_po', { length: 100 }),
@@ -566,6 +568,10 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   shipToVendorAddrId: integer('ship_to_vendor_addr_id').references(() => vendorAddresses.id),
   notes: text('notes'),
 
+  // Parent–child relationship (Quote Kit Item → Component Kit Items)
+  parentLineItemId: integer('parent_line_item_id').references((): AnyPgColumn => estimateLineItems.id, { onDelete: 'cascade' }),
+  sortOrder: integer('sort_order').notNull().default(0),
+
   // Sync
   syncStatus: syncStatusEnum('sync_status').default('pending').notNull(),
   syncError: text('sync_error'),
@@ -577,6 +583,48 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   syncIdx: index('eli_sync_idx').on(t.syncStatus),
   vendorIdx: index('eli_vendor_idx').on(t.vendorId),
   lineNumberIdx: uniqueIndex('eli_line_number_idx').on(t.estimateId, t.lineNumber),
+  parentIdx: index('eli_parent_idx').on(t.parentLineItemId),
+}));
+
+// ══════════════════════════════════════════════════════════════════
+//  ESTIMATE FREIGHT GROUPS (per-estimate shipping group selections)
+// ══════════════════════════════════════════════════════════════════
+
+export const estimateFreightGroups = pgTable('estimate_freight_groups', {
+  id: serial('id').primaryKey(),
+  estimateId: integer('estimate_id').references(() => estimates.id, { onDelete: 'cascade' }).notNull(),
+  groupName: varchar('group_name', { length: 255 }).notNull().default('Group 1'),
+  sortOrder: integer('sort_order').notNull().default(1),
+
+  // The chosen freight option for this group (LCL | FCL | AIR | CUSTOM)
+  chosenType: varchar('chosen_type', { length: 20 }),
+
+  // Rate selections for each freight option
+  lclRateId: integer('lcl_rate_id').references(() => lclRates.id),
+  fclRateId: integer('fcl_rate_id').references(() => fclRates.id),
+  airRateId: integer('air_rate_id').references(() => airRates.id),
+
+  // Custom Provider fields
+  customProvider: varchar('custom_provider', { length: 255 }),
+  customFreightCost: numeric('custom_freight_cost', { precision: 15, scale: 4 }),
+  customNotes: text('custom_notes'),
+
+  // Port details
+  pol: varchar('pol', { length: 255 }),
+  pod: varchar('pod', { length: 255 }),
+
+  // Computed totals (aggregated from cost-sheet line items assigned to this group)
+  totalCartons: integer('total_cartons').default(0),
+  totalCbm: numeric('total_cbm', { precision: 10, scale: 3 }),
+  chargeableWeightKg: numeric('chargeable_weight_kg', { precision: 10, scale: 3 }),
+  freightCost: numeric('freight_cost', { precision: 15, scale: 4 }),
+  freightCostPerUnit: numeric('freight_cost_per_unit', { precision: 15, scale: 4 }),
+
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  estimateIdx: index('efg_estimate_idx').on(t.estimateId),
+  sortIdx: index('efg_sort_idx').on(t.estimateId, t.sortOrder),
 }));
 
 // ══════════════════════════════════════════════════════════════════
@@ -671,8 +719,14 @@ export const estimatesRelations = relations(estimates, ({ one, many }) => ({
   createdByUser: one(users, { fields: [estimates.createdBy], references: [users.id] }),
 }));
 
-export const estimateLineItemsRelations = relations(estimateLineItems, ({ one }) => ({
+export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, many }) => ({
   estimate: one(estimates, { fields: [estimateLineItems.estimateId], references: [estimates.id] }),
+  parent: one(estimateLineItems, {
+    fields: [estimateLineItems.parentLineItemId],
+    references: [estimateLineItems.id],
+    relationName: 'parent_child',
+  }),
+  components: many(estimateLineItems, { relationName: 'parent_child' }),
   vendor: one(vendors, { fields: [estimateLineItems.vendorId], references: [vendors.id] }),
   factory: one(factories, { fields: [estimateLineItems.factoryId], references: [factories.id] }),
   vendorCurrency: one(currencies, { fields: [estimateLineItems.vendorCurrencyId], references: [currencies.id] }),

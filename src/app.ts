@@ -71,6 +71,20 @@ export async function buildApp(): Promise<FastifyInstance> {
       return reply.status(err.statusCode).send({ error: err.message, code: err.code ?? 'ERROR' });
     if (err.validation)
       return reply.status(400).send({ error: 'Request validation failed', code: 'VALIDATION_ERROR', details: err.validation });
+
+    // PostgreSQL foreign key violation — one of the provided IDs does not exist in its table
+    const dbCode = (err as any)?.cause?.code ?? (err as any)?.code;
+    if (dbCode === '23503') {
+      const detail = (err as any)?.cause?.detail ?? (err as any)?.detail ?? '';
+      return reply.status(400).send({ error: 'Invalid reference: one of the provided IDs does not exist', code: 'INVALID_REFERENCE', detail });
+    }
+
+    // PostgreSQL unique constraint violation
+    if (dbCode === '23505') {
+      const detail = (err as any)?.cause?.detail ?? (err as any)?.detail ?? '';
+      return reply.status(409).send({ error: 'Duplicate entry: a record with this value already exists', code: 'DUPLICATE_ENTRY', detail });
+    }
+
     logger.error({ err, url: req.url, method: req.method }, 'Unhandled error');
     return reply.status(500).send({ error: 'Internal Server Error', code: 'INTERNAL_ERROR' });
   });
