@@ -1,8 +1,10 @@
-import { eq, and, desc, asc, like, or, count, isNull } from 'drizzle-orm';
+import { eq, and, desc, asc, like, ilike, or, count, isNull, gte, lte, inArray, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '../config/database.js';
 import {
   estimates, estimateLineItems, estimateFreightGroups,
-  customers,
+  customers, departments, businessVerticals, accountManagers,
+  likelyToClose, opsPartners, productDevelopers,
 } from '../db/schema/index.js';
 import { cacheDel, CacheKeys } from '../utils/cache.js';
 import { NotFoundError } from '../utils/errors.js';
@@ -12,6 +14,180 @@ import { syncEstimateToNetsuite } from './netsuiteSync.service.js';
 type RawLineItem = Record<string, unknown> & { components?: Record<string, unknown>[] };
 
 const CHUNK = 100;
+
+// ── Shared filter helper ─────────────────────────────────────────────────────
+
+type EstimateFilterOpts = {
+  customerId?: number;
+  customerName?: string;
+  salesRepId?: number;
+  salesRepName?: string;
+  opsPartnerId?: number;
+  opsPartnerName?: string;
+  businessVerticalId?: number;
+  businessVerticalName?: string;
+  departmentId?: number;
+  departmentName?: string;
+  projectNameId?: number;
+  projectName?: string;
+  statuses?: string[];
+  productDeveloperId?: number;
+  productDeveloperName?: string;
+  likelyToCloseId?: number;
+  likelyToCloseName?: string;
+  expectedCloseDateFrom?: string;
+  expectedCloseDateTo?: string;
+  dateOfEntryFrom?: string;
+  dateOfEntryTo?: string;
+};
+
+function buildConditions(
+  opts: EstimateFilterOpts & { estimateId?: number; documentNumber?: string },
+  op1: any,
+  op2: any,
+): any[] {
+  const conds: any[] = [eq(estimates.isActive, true)];
+
+  if (opts.estimateId)          conds.push(eq(estimates.id, opts.estimateId));
+  if (opts.documentNumber)      conds.push(ilike(estimates.documentNumber!, `%${opts.documentNumber}%`));
+  if (opts.customerId)          conds.push(eq(estimates.customerId, opts.customerId));
+  if (opts.customerName)        conds.push(ilike(customers.name, `%${opts.customerName}%`));
+  if (opts.salesRepId)          conds.push(eq(estimates.acctManagerId, opts.salesRepId));
+  if (opts.salesRepName)        conds.push(ilike(accountManagers.name, `%${opts.salesRepName}%`));
+  if (opts.opsPartnerId)        conds.push(or(eq(estimates.opsPartner1Id, opts.opsPartnerId), eq(estimates.opsPartner2Id, opts.opsPartnerId))!);
+  if (opts.opsPartnerName)      conds.push(or(ilike(op1.name, `%${opts.opsPartnerName}%`), ilike(op2.name, `%${opts.opsPartnerName}%`))!);
+  if (opts.businessVerticalId)  conds.push(eq(estimates.businessVerticalId, opts.businessVerticalId));
+  if (opts.businessVerticalName) conds.push(ilike(businessVerticals.name, `%${opts.businessVerticalName}%`));
+  if (opts.departmentId)        conds.push(eq(estimates.departmentId, opts.departmentId));
+  if (opts.departmentName)      conds.push(ilike(departments.name, `%${opts.departmentName}%`));
+  if (opts.projectNameId)       conds.push(eq(estimates.projectNameId, opts.projectNameId));
+  if (opts.projectName)         conds.push(ilike(estimates.projectName!, `%${opts.projectName}%`));
+  if (opts.statuses?.length) {
+    conds.push(opts.statuses.length === 1
+      ? eq(estimates.status, opts.statuses[0] as any)
+      : inArray(estimates.status, opts.statuses as any[]));
+  }
+  if (opts.productDeveloperId)  conds.push(sql`${opts.productDeveloperId} = ANY(${estimates.productDeveloperIds})`);
+  if (opts.productDeveloperName) conds.push(sql`EXISTS (SELECT 1 FROM product_developers pd WHERE pd.id = ANY(${estimates.productDeveloperIds}) AND pd.name ILIKE ${'%' + opts.productDeveloperName + '%'})`);
+  if (opts.likelyToCloseId)     conds.push(eq(estimates.likelyToCloseId, opts.likelyToCloseId));
+  if (opts.likelyToCloseName)   conds.push(ilike(likelyToClose.name, `%${opts.likelyToCloseName}%`));
+  if (opts.expectedCloseDateFrom) conds.push(gte(estimates.expectedCloseDate, opts.expectedCloseDateFrom));
+  if (opts.expectedCloseDateTo)   conds.push(lte(estimates.expectedCloseDate, opts.expectedCloseDateTo));
+  if (opts.dateOfEntryFrom)     conds.push(gte(estimates.createdAt, new Date(opts.dateOfEntryFrom)));
+  if (opts.dateOfEntryTo)       conds.push(lte(estimates.createdAt, new Date(opts.dateOfEntryTo)));
+
+  return conds;
+}
+
+function buildBaseQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
+  return db.select({
+    id: estimates.id,
+    documentNumber: estimates.documentNumber,
+    netsuiteInternalId: estimates.netsuiteInternalId,
+    projectNameId: estimates.projectNameId,
+    projectName: estimates.projectName,
+    status: estimates.status,
+    customerPo: estimates.customerPo,
+    projectedTotalAmt: estimates.projectedTotalAmt,
+    expectedCloseDate: estimates.expectedCloseDate,
+    promiseDate: estimates.promiseDate,
+    likelyToCloseId: estimates.likelyToCloseId,
+    departmentId: estimates.departmentId,
+    businessVerticalId: estimates.businessVerticalId,
+    opsPartner1Id: estimates.opsPartner1Id,
+    opsPartner2Id: estimates.opsPartner2Id,
+    acctManagerId: estimates.acctManagerId,
+    productDeveloperIds: estimates.productDeveloperIds,
+    createdAt: estimates.createdAt,
+    updatedAt: estimates.updatedAt,
+    customerId: estimates.customerId,
+    customerName: customers.name,
+    departmentName: departments.name,
+    businessVerticalName: businessVerticals.name,
+    salesRepName: accountManagers.name,
+    likelyToCloseName: likelyToClose.name,
+    opsPartner1Name: op1.name,
+    opsPartner2Name: op2.name,
+  })
+    .from(estimates)
+    .leftJoin(customers,         eq(estimates.customerId,        customers.id))
+    .leftJoin(departments,       eq(estimates.departmentId,      departments.id))
+    .leftJoin(businessVerticals, eq(estimates.businessVerticalId, businessVerticals.id))
+    .leftJoin(accountManagers,   eq(estimates.acctManagerId,     accountManagers.id))
+    .leftJoin(likelyToClose,     eq(estimates.likelyToCloseId,   likelyToClose.id))
+    .leftJoin(op1,               eq(estimates.opsPartner1Id,     op1.id))
+    .leftJoin(op2,               eq(estimates.opsPartner2Id,     op2.id));
+}
+
+function buildCountQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
+  return db.select({ total: count() })
+    .from(estimates)
+    .leftJoin(customers,         eq(estimates.customerId,        customers.id))
+    .leftJoin(departments,       eq(estimates.departmentId,      departments.id))
+    .leftJoin(businessVerticals, eq(estimates.businessVerticalId, businessVerticals.id))
+    .leftJoin(accountManagers,   eq(estimates.acctManagerId,     accountManagers.id))
+    .leftJoin(likelyToClose,     eq(estimates.likelyToCloseId,   likelyToClose.id))
+    .leftJoin(op1,               eq(estimates.opsPartner1Id,     op1.id))
+    .leftJoin(op2,               eq(estimates.opsPartner2Id,     op2.id));
+}
+
+// ── Document-number dropdown ─────────────────────────────────────────────────
+
+export async function listDocumentNumbers(opts: EstimateFilterOpts) {
+  const db = getDb();
+  const op1 = alias(opsPartners, 'op1');
+  const op2 = alias(opsPartners, 'op2');
+  const conds = buildConditions(opts, op1, op2);
+
+  const rows = await db.select({
+    id: estimates.id,
+    documentNumber: estimates.documentNumber,
+    projectName: estimates.projectName,
+    customerName: customers.name,
+    status: estimates.status,
+  })
+    .from(estimates)
+    .leftJoin(customers,         eq(estimates.customerId,        customers.id))
+    .leftJoin(departments,       eq(estimates.departmentId,      departments.id))
+    .leftJoin(businessVerticals, eq(estimates.businessVerticalId, businessVerticals.id))
+    .leftJoin(accountManagers,   eq(estimates.acctManagerId,     accountManagers.id))
+    .leftJoin(likelyToClose,     eq(estimates.likelyToCloseId,   likelyToClose.id))
+    .leftJoin(op1,               eq(estimates.opsPartner1Id,     op1.id))
+    .leftJoin(op2,               eq(estimates.opsPartner2Id,     op2.id))
+    .where(and(...conds))
+    .orderBy(asc(estimates.documentNumber), desc(estimates.createdAt))
+    .limit(500);
+
+  return rows;
+}
+
+// ── Advanced search (all UI filters) ────────────────────────────────────────
+
+export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
+  page: number;
+  limit: number;
+  estimateId?: number;
+  documentNumber?: string;
+}) {
+  const db = getDb();
+  const op1 = alias(opsPartners, 'op1');
+  const op2 = alias(opsPartners, 'op2');
+  const offset = (opts.page - 1) * opts.limit;
+  const conds = buildConditions(opts, op1, op2);
+  const whereClause = and(...conds);
+
+  const [rows, [{ total }]] = await Promise.all([
+    buildBaseQuery(db, op1, op2)
+      .where(whereClause)
+      .orderBy(desc(estimates.updatedAt))
+      .limit(opts.limit)
+      .offset(offset),
+    buildCountQuery(db, op1, op2)
+      .where(whereClause),
+  ]);
+
+  return { data: rows, pagination: { page: opts.page, limit: opts.limit, total: Number(total) } };
+}
 
 // ── List ────────────────────────────────────────────────────────────────────
 
@@ -125,6 +301,8 @@ async function insertLineItemsWithComponents(
   }
 
   // Pass 2: insert components referencing their parent's DB id
+  // Continue lineNumber sequence after parents to satisfy the unique (estimateId, lineNumber) constraint
+  let lineCounter = parentValues.length + 1;
   const componentValues: any[] = [];
   for (let i = 0; i < items.length; i++) {
     const comps = items[i].components ?? [];
@@ -132,7 +310,7 @@ async function insertLineItemsWithComponents(
       componentValues.push({
         ...comps[j],
         estimateId,
-        lineNumber: 0,
+        lineNumber: lineCounter++,
         parentLineItemId: parents[i].id,
         sortOrder: j,
       });
@@ -167,8 +345,8 @@ export async function createEstimateWithItems(
       .values({ ...headerData, source: 'portal', syncStatus: 'pending' } as any)
       .returning();
 
-    // Step 2 – Line items (Phase 2: uncomment when ready):
-    // const { parents, components } = await insertLineItemsWithComponents(tx, estimate.id, lineItems);
+    // Step 2 – Line items
+    const { parents, components } = await insertLineItemsWithComponents(tx, estimate.id, lineItems);
 
     // Step 3 – Freight groups (Phase 3: uncomment when ready):
     // const insertedGroups: any[] = [];
@@ -186,9 +364,9 @@ export async function createEstimateWithItems(
     // }
 
     const duration = Date.now() - startTime;
-    logger.info({ estimateId: estimate.id, durationMs: duration }, 'Estimate created');
+    logger.info({ estimateId: estimate.id, lineItemCount: parents.length + components.length, durationMs: duration }, 'Estimate created');
 
-    return { estimate };
+    return { estimate, lineItems: [...parents, ...components] };
   }).then(async (result) => {
     await syncEstimateToNetsuite(result.estimate.id, 'create');
     return result;
@@ -215,17 +393,18 @@ export async function updateEstimateWithItems(
 
     if (!updated) throw new NotFoundError('Estimate', id);
 
-    // Step 2 – Line items (Phase 2: uncomment when ready):
-    // if (newLineItems !== undefined) {
-    //   await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, id));
-    //   const { parents, components } = await insertLineItemsWithComponents(tx, id, newLineItems);
-    //   allLineItems = [...parents, ...components];
-    // } else {
-    //   allLineItems = await tx.select()
-    //     .from(estimateLineItems)
-    //     .where(eq(estimateLineItems.estimateId, id))
-    //     .orderBy(asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder));
-    // }
+    // Step 2 – Line items
+    let allLineItems: any[];
+    if (newLineItems !== undefined) {
+      await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, id));
+      const { parents, components } = await insertLineItemsWithComponents(tx, id, newLineItems);
+      allLineItems = [...parents, ...components];
+    } else {
+      allLineItems = await tx.select()
+        .from(estimateLineItems)
+        .where(eq(estimateLineItems.estimateId, id))
+        .orderBy(asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder));
+    }
 
     // Step 3 – Freight groups (Phase 3: uncomment when ready):
     // if (newFreightGroups !== undefined) {
@@ -245,7 +424,7 @@ export async function updateEstimateWithItems(
     //   }
     // }
 
-    return { estimate: updated };
+    return { estimate: updated, lineItems: allLineItems };
   });
 
   await cacheDel(CacheKeys.estimate(id));

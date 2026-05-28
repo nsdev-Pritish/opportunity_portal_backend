@@ -1,0 +1,354 @@
+{
+  "info": {
+    "name": "PRISM — Estimates Filter APIs",
+    "description": "Two GET endpoints for the Estimates filter UI.\n\n1. **Document Numbers Dropdown** — populates the Estimate picker\n2. **Search / Filter** — returns the full results table\n\nAll filter params are included in each request. Toggle them on/off as needed.\n\n**salesRepId / salesRepName** → maps to the `account_managers` table (acctManagerId on the estimate).\n\nSetup: run Login first to save the JWT token.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "token",   "value": "",                      "type": "string" }
+  ],
+  "item": [
+
+    {
+      "name": "Login (saves JWT token)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "if (res.token) {",
+              "  pm.collectionVariables.set('token', res.token);",
+              "  console.log('Token saved.');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "auth", "login"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"admin@prism.com\",\n  \"password\": \"yourpassword\"\n}"
+        }
+      }
+    },
+
+    {
+      "name": "GET — Document Numbers Dropdown",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/document-numbers",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "estimates", "document-numbers"],
+          "query": [
+            {
+              "key": "customerName",
+              "value": "Acme",
+              "description": "UI: Customer — partial name search (ILIKE)",
+              "disabled": true
+            },
+            {
+              "key": "customerId",
+              "value": "1",
+              "description": "UI: Customer — exact ID match",
+              "disabled": true
+            },
+            {
+              "key": "salesRepName",
+              "value": "John",
+              "description": "UI: Sales Rep — maps to account_managers.name (ILIKE)",
+              "disabled": true
+            },
+            {
+              "key": "salesRepId",
+              "value": "3",
+              "description": "UI: Sales Rep — exact account_managers.id match",
+              "disabled": true
+            },
+            {
+              "key": "opsPartnerId",
+              "value": "2",
+              "description": "UI: OPS Partner — matches opsPartner1Id OR opsPartner2Id",
+              "disabled": true
+            },
+            {
+              "key": "opsPartnerName",
+              "value": "Kumar",
+              "description": "UI: OPS Partner — ILIKE on both opsPartner1.name and opsPartner2.name",
+              "disabled": true
+            },
+            {
+              "key": "businessVerticalId",
+              "value": "1",
+              "description": "UI: Business Vertical — exact ID",
+              "disabled": true
+            },
+            {
+              "key": "businessVerticalName",
+              "value": "Retail",
+              "description": "UI: Business Vertical — ILIKE on business_verticals.name",
+              "disabled": true
+            },
+            {
+              "key": "departmentId",
+              "value": "1",
+              "description": "UI: Department — exact ID",
+              "disabled": true
+            },
+            {
+              "key": "departmentName",
+              "value": "Hardgoods",
+              "description": "UI: Department — ILIKE on departments.name",
+              "disabled": true
+            },
+            {
+              "key": "projectNameId",
+              "value": "5",
+              "description": "UI: Project Name dropdown — exact project_names.id",
+              "disabled": true
+            },
+            {
+              "key": "projectName",
+              "value": "Summer",
+              "description": "UI: Project Name — ILIKE on estimates.project_name (free text)",
+              "disabled": true
+            },
+            {
+              "key": "statuses",
+              "value": "draft,submitted,approved,otb",
+              "description": "UI: Status — comma-separated. 'In Progress/Partially Converted' default = draft,submitted,approved,otb",
+              "disabled": true
+            },
+            {
+              "key": "productDeveloperId",
+              "value": "4",
+              "description": "UI: Product Developer — checks if id is in productDeveloperIds array",
+              "disabled": true
+            },
+            {
+              "key": "productDeveloperName",
+              "value": "Sarah",
+              "description": "UI: Product Developer — ILIKE on product_developers.name where id in productDeveloperIds array",
+              "disabled": true
+            },
+            {
+              "key": "likelyToCloseId",
+              "value": "2",
+              "description": "UI: Likely To Close — exact ID",
+              "disabled": true
+            },
+            {
+              "key": "likelyToCloseName",
+              "value": "High",
+              "description": "UI: Likely To Close — ILIKE on likely_to_close.name",
+              "disabled": true
+            },
+            {
+              "key": "expectedCloseDateFrom",
+              "value": "2026-01-01",
+              "description": "UI: Expected Close Date — From (ISO date, inclusive)",
+              "disabled": true
+            },
+            {
+              "key": "expectedCloseDateTo",
+              "value": "2026-12-31",
+              "description": "UI: Expected Close Date — To (ISO date, inclusive)",
+              "disabled": true
+            },
+            {
+              "key": "dateOfEntryFrom",
+              "value": "2026-01-01",
+              "description": "UI: Date of Entry — From (ISO date, filters created_at)",
+              "disabled": true
+            },
+            {
+              "key": "dateOfEntryTo",
+              "value": "2026-12-31",
+              "description": "UI: Date of Entry — To (ISO date, filters created_at)",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "Populates the **Estimate** dropdown in the filter panel.\n\nReturns: `[ { id, documentNumber, projectName, customerName, status } ]` — up to 500 rows.\n\nAll params are optional. Enable only the ones you need — they are ANDed together.\n\n**Note:** `salesRepName` / `salesRepId` both target the `account_managers` table (UI label = Sales Rep)."
+      }
+    },
+
+    {
+      "name": "GET — Estimates Search (All Filters)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/search?page=1&limit=20&statuses=draft,submitted,approved,otb",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "estimates", "search"],
+          "query": [
+            {
+              "key": "page",
+              "value": "1",
+              "description": "Page number (1-based)",
+              "disabled": false
+            },
+            {
+              "key": "limit",
+              "value": "20",
+              "description": "Records per page — max 100",
+              "disabled": false
+            },
+            {
+              "key": "statuses",
+              "value": "draft,submitted,approved,otb",
+              "description": "UI: Status — default 'In Progress/Partially Converted'. Values: draft | submitted | approved | otb | closed_won | closed_lost. Comma-separated for multi.",
+              "disabled": false
+            },
+            {
+              "key": "estimateId",
+              "value": "42",
+              "description": "UI: Estimate dropdown — exact match on internal estimate ID",
+              "disabled": true
+            },
+            {
+              "key": "documentNumber",
+              "value": "EST-0042",
+              "description": "UI: Estimate dropdown — ILIKE on document_number (e.g. 'EST-00' matches all starting with EST-00)",
+              "disabled": true
+            },
+            {
+              "key": "customerName",
+              "value": "Acme",
+              "description": "UI: Customer — ILIKE on customers.name",
+              "disabled": true
+            },
+            {
+              "key": "customerId",
+              "value": "1",
+              "description": "UI: Customer — exact customers.id",
+              "disabled": true
+            },
+            {
+              "key": "salesRepName",
+              "value": "John",
+              "description": "UI: Sales Rep — ILIKE on account_managers.name (acctManagerId FK)",
+              "disabled": true
+            },
+            {
+              "key": "salesRepId",
+              "value": "3",
+              "description": "UI: Sales Rep — exact account_managers.id (acctManagerId FK)",
+              "disabled": true
+            },
+            {
+              "key": "opsPartnerId",
+              "value": "2",
+              "description": "UI: OPS Partner dropdown — matches opsPartner1Id OR opsPartner2Id",
+              "disabled": true
+            },
+            {
+              "key": "opsPartnerName",
+              "value": "Kumar",
+              "description": "UI: OPS Partner — ILIKE on both opsPartner1.name and opsPartner2.name",
+              "disabled": true
+            },
+            {
+              "key": "businessVerticalId",
+              "value": "1",
+              "description": "UI: Business Vertical — exact ID",
+              "disabled": true
+            },
+            {
+              "key": "businessVerticalName",
+              "value": "Retail",
+              "description": "UI: Business Vertical — ILIKE on business_verticals.name",
+              "disabled": true
+            },
+            {
+              "key": "departmentId",
+              "value": "1",
+              "description": "UI: Department — exact ID",
+              "disabled": true
+            },
+            {
+              "key": "departmentName",
+              "value": "Hardgoods",
+              "description": "UI: Department — ILIKE on departments.name",
+              "disabled": true
+            },
+            {
+              "key": "projectNameId",
+              "value": "5",
+              "description": "UI: Project Name dropdown — exact project_names.id",
+              "disabled": true
+            },
+            {
+              "key": "projectName",
+              "value": "Summer",
+              "description": "UI: Project Name — ILIKE on estimates.project_name",
+              "disabled": true
+            },
+            {
+              "key": "productDeveloperId",
+              "value": "4",
+              "description": "UI: Product Developer — checks if id is in productDeveloperIds array",
+              "disabled": true
+            },
+            {
+              "key": "productDeveloperName",
+              "value": "Sarah",
+              "description": "UI: Product Developer — ILIKE on product_developers.name where id in productDeveloperIds array",
+              "disabled": true
+            },
+            {
+              "key": "likelyToCloseId",
+              "value": "2",
+              "description": "UI: Likely To Close — exact ID",
+              "disabled": true
+            },
+            {
+              "key": "likelyToCloseName",
+              "value": "High",
+              "description": "UI: Likely To Close — ILIKE on likely_to_close.name",
+              "disabled": true
+            },
+            {
+              "key": "expectedCloseDateFrom",
+              "value": "2026-01-01",
+              "description": "UI: Expected Close Date — From (ISO date, inclusive)",
+              "disabled": true
+            },
+            {
+              "key": "expectedCloseDateTo",
+              "value": "2026-12-31",
+              "description": "UI: Expected Close Date — To (ISO date, inclusive)",
+              "disabled": true
+            },
+            {
+              "key": "dateOfEntryFrom",
+              "value": "2026-01-01",
+              "description": "UI: Date of Entry — From (ISO date, filters created_at)",
+              "disabled": true
+            },
+            {
+              "key": "dateOfEntryTo",
+              "value": "2026-12-31",
+              "description": "UI: Date of Entry — To (ISO date, filters created_at)",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "Returns a **paginated** list for the results table below the filter panel.\n\nResponse shape:\n```json\n{\n  \"data\": [\n    {\n      \"id\", \"documentNumber\", \"netsuiteInternalId\",\n      \"projectName\", \"status\", \"customerPo\",\n      \"projectedTotalAmt\", \"expectedCloseDate\", \"promiseDate\",\n      \"customerId\",    \"customerName\",\n      \"departmentId\",  \"departmentName\",\n      \"businessVerticalId\", \"businessVerticalName\",\n      \"acctManagerId\", \"salesRepName\",\n      \"likelyToCloseId\", \"likelyToCloseName\",\n      \"opsPartner1Id\", \"opsPartner1Name\",\n      \"opsPartner2Id\", \"opsPartner2Name\",\n      \"productDeveloperIds\",\n      \"createdAt\", \"updatedAt\"\n    }\n  ],\n  \"pagination\": { \"page\", \"limit\", \"total\" }\n}\n```\n\nAll filter params are optional and ANDed together. The `statuses` param is pre-enabled with the default 'In Progress / Partially Converted' value.\n\n**salesRepName / salesRepId** → `account_managers` table (UI label = Sales Rep)."
+      }
+    }
+
+  ]
+}

@@ -358,6 +358,12 @@ export const sustainabilityOptions = pgTable('sustainability_options', {
   ...syncCols,
 });
 
+export const componentKitItems = pgTable('component_kit_items', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+});
+
 export const shippingGroups = pgTable('shipping_groups', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
@@ -511,7 +517,7 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   lineNumber: integer('line_number').notNull(),
 
   // Line Header
-  itemTypeId: integer('item_type_id').references(() => itemTypes.id),
+  itemTypeId: integer('item_type_id').references(() => csItems.id),
   shortDescription: varchar('short_description', { length: 500 }),
   vendorId: integer('vendor_id').references(() => vendors.id),
   quantity: numeric('quantity', { precision: 12, scale: 4 }).default('0'),
@@ -546,6 +552,7 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   // Classification
   productClassId: integer('product_class_id').references(() => productClasses.id),
   sustainabilityId: integer('sustainability_id').references(() => sustainabilityOptions.id),
+  componentKitItemId: integer('component_kit_item_id').references(() => componentKitItems.id),
   htsCode: varchar('hts_code', { length: 20 }),
   countryOfOrigin: varchar('country_of_origin', { length: 100 }),
   countryOfDest: countryOfDestEnum('country_of_dest').default('US'),
@@ -568,6 +575,28 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   shipToVendorId: integer('ship_to_vendor_id').references(() => vendors.id),
   shipToVendorAddrId: integer('ship_to_vendor_addr_id').references(() => vendorAddresses.id),
   notes: text('notes'),
+
+  // Extended Line Fields
+  selected:           boolean('selected').default(true).notNull(),
+  lineComponents:       text('line_components'),
+  previousLineId:       integer('previous_line_id'),
+  additionalFeeInfo:    text('additional_fee_info'),
+  countryOrigin:        varchar('country_origin', { length: 100 }),
+  itemClass:            varchar('item_class', { length: 255 }),
+  classItem:            varchar('class_item', { length: 255 }),
+  vendorSku:            varchar('vendor_sku', { length: 255 }),
+  shippingInstruction:  text('shipping_instruction'),
+  paddingAmount:        numeric('padding_amount',        { precision: 15, scale: 4 }),
+  dutyMarkupAmount:     numeric('duty_markup_amount',    { precision: 15, scale: 4 }),
+  converted:            boolean('converted').default(false),
+  freightSelectedGroup: varchar('freight_selected_group', { length: 255 }),
+  freightPol:           varchar('freight_pol', { length: 255 }),
+  freightPod:           varchar('freight_pod', { length: 255 }),
+  totalFreightCost:     numeric('total_freight_cost',    { precision: 15, scale: 4 }),
+  freightCostPerUnit:   numeric('freight_cost_per_unit', { precision: 15, scale: 4 }),
+  freightProvider:      varchar('freight_provider', { length: 255 }),
+  freightNotes:         text('freight_notes'),
+  excludeFromPrint:     boolean('exclude_from_print').default(false),
 
   // Parent–child relationship (Quote Kit Item → Component Kit Items)
   parentLineItemId: integer('parent_line_item_id').references((): AnyPgColumn => estimateLineItems.id, { onDelete: 'cascade' }),
@@ -731,6 +760,7 @@ export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, m
   factory: one(factories, { fields: [estimateLineItems.factoryId], references: [factories.id] }),
   vendorCurrency: one(currencies, { fields: [estimateLineItems.vendorCurrencyId], references: [currencies.id] }),
   productClass: one(productClasses, { fields: [estimateLineItems.productClassId], references: [productClasses.id] }),
+  componentKitItem: one(componentKitItems, { fields: [estimateLineItems.componentKitItemId], references: [componentKitItems.id] }),
 }));
 
 // ─── Export all tables as a map for generic service ───────────────
@@ -765,6 +795,7 @@ export const MASTER_TABLES = {
   item_types: itemTypes,
   product_classes: productClasses,
   sustainability_options: sustainabilityOptions,
+  component_kit_items: componentKitItems,
   shipping_groups: shippingGroups,
   cs_items: csItems,
   lcl_rates: lclRates,

@@ -17,14 +17,13 @@ import crypto from 'crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import {
-  estimates,
+  estimates, estimateLineItems,
   subsidiaries, customers, contacts, currencies, projectNames, projectTypes, likelyToClose,
   departments, salesChannels, businessVerticals, businessTypes,
   accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
   clientIncoterms, clientShippingMethods, addresses,
-  // Phase 2 – uncomment when line items are added:
-  // estimateLineItems, itemTypes, vendors, sustainabilityOptions, productClasses,
-  // vendorIncoterms, factories,
+  csItems, vendors, sustainabilityOptions, productClasses, vendorIncoterms, factories,
+  shippingGroups, vendorAddresses, componentKitItems,
   // Phase 3 – uncomment when freight groups are added:
   // estimateFreightGroups, lclRates, fclRates, airRates,
 } from '../db/schema/index.js';
@@ -84,7 +83,19 @@ function buildOAuthHeader(method: string, fullUrl: string): string | null {
 function formatNsDate(date: string | null | undefined): string {
   if (!date) return '';
   const [y, m, d] = date.split('-');
-  return `${parseInt(m, 10)}/${parseInt(d, 10)}/${y}`;
+  return `${m}/${d}/${y}`;  // MM/DD/YYYY — DB stores zero-padded so no parseInt needed
+}
+
+// Convert a stored NS internal ID string → number for NS payload, null if absent
+function toNsNum(nsId: string): number | null {
+  return nsId ? Number(nsId) : null;
+}
+
+// Convert a Drizzle numeric string → number for NS payload, null if absent
+function toNum(val: string | number | null | undefined): number | null {
+  if (val === null || val === undefined || val === '') return null;
+  const n = Number(val);
+  return isNaN(n) ? null : n;
 }
 
 // ── NS-ID lookup: given a portal FK id, return the netsuiteInternalId string ──
@@ -163,7 +174,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
     businessVerticalNSId: bizVerticalNsId,
     businessTypeNSId    : businessTypeNsId,
     acctManagerNSId     : acctMgrNsId,
-    productDeveloperNSIds: prodDevNsIds.filter(id => id !== ''),
+    productDeveloperNSIds: prodDevNsIds.filter(id => id !== '').map(Number),
     hkPartnerNSId       : hkPartnerNsId,
     opsPartner1NSId     : ops1NsId,
     opsPartner2NSId     : ops2NsId,
@@ -184,17 +195,137 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
     memoNS              : est.memo ?? '',
   };
 
-  // Phase 2 – Line items (uncomment when ready):
-  // const lineItems = await db.select().from(estimateLineItems)
-  //   .where(eq(estimateLineItems.estimateId, estimateId))
-  //   .orderBy(estimateLineItems.lineNumber);
-  // const lines: Record<string, unknown> = {};
-  // for (let i = 0; i < lineItems.length; i++) {
-  //   const li = lineItems[i];
-  //   const [itemNsId, vendorNsId, ...] = await Promise.all([...]);
-  //   lines[String(i)] = { ... };
-  // }
-  // payload.lines = lines;
+  // Phase 2 – Line items
+  const lineItemRows = await db.select().from(estimateLineItems)
+    .where(eq(estimateLineItems.estimateId, estimateId))
+    .orderBy(estimateLineItems.lineNumber);
+
+  if (lineItemRows.length > 0) {
+    // Resolve all FK → NS IDs in parallel across all line items (7 lookups per row)
+    const lineNsData = await Promise.all(lineItemRows.map(li =>
+      Promise.all([
+        getNsId(csItems,              li.itemTypeId),           // [0]
+        getNsId(vendors,              li.vendorId),              // [1]
+        getNsId(currencies,           li.vendorCurrencyId),      // [2]
+        getNsId(factories,            li.factoryId),             // [3]
+        getNsId(productClasses,       li.productClassId),        // [4]
+        getNsId(sustainabilityOptions,li.sustainabilityId),      // [5]
+        getNsId(vendorIncoterms,      li.vendorIncotermsId),     // [6]
+        getNsId(shippingGroups,       li.shippingGroupId),       // [7]
+        getNsId(vendors,              li.shipToVendorId),        // [8]
+        getNsId(vendorAddresses,      li.shipToVendorAddrId),    // [9]
+        getNsId(componentKitItems,    li.componentKitItemId),    // [10]
+      ])
+    ));
+
+    // Build lookup maps so each row knows its payload line number and its components' line numbers
+    const dbIdToLineNum = new Map<number, number>();
+    for (let i = 0; i < lineItemRows.length; i++) {
+      dbIdToLineNum.set(lineItemRows[i].id, i + 1);
+    }
+    const parentToComponentLineNums = new Map<number, number[]>();
+    for (const li of lineItemRows) {
+      if (li.parentLineItemId !== null) {
+        const compLineNum = dbIdToLineNum.get(li.id)!;
+        const arr = parentToComponentLineNums.get(li.parentLineItemId!) ?? [];
+        arr.push(compLineNum);
+        parentToComponentLineNums.set(li.parentLineItemId!, arr);
+      }
+    }
+
+    // 1-based index to match NS suitelet convention
+    const lines: Record<string, unknown> = {};
+    for (let i = 0; i < lineItemRows.length; i++) {
+      const li = lineItemRows[i];
+      const [
+        itemTypeNsId, vendorNsId, vendorCurrencyNsId, factoryNsId,
+        productClassNsId, sustainabilityNsId, vendorIncotermsNsId,
+        shippingGroupNsId, shipToVendorNsId, shipToVendorAddrNsId,
+        componentKitItemNsId,
+      ] = lineNsData[i];
+
+      const isComponent = li.parentLineItemId !== null;
+
+      lines[String(i + 1)] = {
+         itemTypeIdNSId         : isComponent ? toNsNum(componentKitItemNsId) : toNsNum(itemTypeNsId),
+      shortDescriptionNS     : li.shortDescription ?? '',
+      descriptionNS          : li.description ?? '',
+      vendorIdNSId           : toNsNum(vendorNsId),
+      quantityNS             : toNum(li.quantity),
+      sellPricePerUnitNS     : toNum(li.sellPricePerUnit),
+      skuMarginPctNS         : toNum(li.skuMarginPct),
+      salesAmountNS          : toNum(li.salesAmount),
+      excludeNS              : li.exclude ?? false,
+
+      pickupExwFobNS         : toNum(li.pickupExwFob),
+      oceanDdp               : toNum(li.oceanDdp),
+      airDdp                 : toNum(li.airDdp),
+
+      factoryIdNSId          : toNsNum(factoryNsId),
+      vendorCurrencyIdNSId   : toNsNum(vendorCurrencyNsId),
+      factoryCostPerUnitNS   : toNum(li.factoryCostPerUnit),
+      usdFactoryCostNS       : toNum(li.usdFactoryCost),
+      packingCostPerUnitNS   : toNum(li.packingCostPerUnit),
+      sampleFeesNS           : toNum(li.sampleFees),
+      otherPerUnitNS         : toNum(li.otherPerUnit),
+      landedCostPerUnitNS    : toNum(li.landedCostPerUnit),
+      extendedLandedCostNS   : toNum(li.extendedLandedCost),
+      freightPerUnitNS       : toNum(li.freightPerUnit),
+      dutyPctNS              : toNum(li.dutyPct),
+      tariffPctNS            : toNum(li.tariffPct),
+      tariffMuPctNS          : toNum(li.tariffMuPct),
+      otherCostPctNS         : toNum(li.otherCostPct),
+      paddingPctNS           : toNum(li.paddingPct),
+
+      productClassIdNSId     : productClassNsId ? Number(productClassNsId) : '',
+      sustainabilityIdNSId   : toNsNum(sustainabilityNsId),
+      htsCodeNS              : li.htsCode ?? '',
+      countryOfDestNSId      : li.countryOfDest ?? '',
+
+      unitsPerCartonNS       : li.unitsPerCarton ?? null,
+      dimLCmNS               : toNum(li.dimLCm),
+      dimWCmNS               : toNum(li.dimWCm),
+      dimHCmNS               : toNum(li.dimHCm),
+      weightKgPerCartonNS    : toNum(li.weightKgPerCarton),
+      totalCartonsNS         : li.totalCartons ?? null,
+      cbmPerCartonNS         : toNum(li.cbmPerCarton),
+      totalCbmNS             : toNum(li.totalCbm),
+      chargeableWeightKgNS   : toNum(li.chargeableWeightKg),
+
+      shippingGroupIdNSId    : toNsNum(shippingGroupNsId),
+      exFactoryDateNS        : formatNsDate(li.exFactoryDate),
+      vendorIncotermsIdNSId  : toNsNum(vendorIncotermsNsId),
+      shipToVendorIdNSId     : toNsNum(shipToVendorNsId),
+      shipToVendorAddrIdNSId : shipToVendorAddrNsId ? Number(shipToVendorAddrNsId) : '',
+      notesNS                : li.notes ?? '',
+
+        // ── Extended line fields ────────────────────────────────────────────
+        selectedNS            : li.selected ?? true,
+        ...(!isComponent && parentToComponentLineNums.has(li.id)
+          ? { lineComponentsNS: parentToComponentLineNums.get(li.id) }
+          : {}),
+        previousLineIDNS      : li.previousLineId ?? null,
+        additionalFeeInfoNS   : li.additionalFeeInfo ?? '',
+        countryOriginNSId     : li.countryOrigin ?? '',
+        classNSId             : productClassNsId ? Number(productClassNsId) : null,
+        classItemNSId         : productClassNsId ? Number(productClassNsId) : null,
+        vendorSKUNS           : li.vendorSku ?? '',
+        shippingInstructionNS : li.shippingInstruction ?? '',
+        paddingAmountNS       : toNum(li.paddingAmount),
+        dutyMarkupAmountNS    : toNum(li.dutyMarkupAmount),
+        convertedNS           : li.converted ?? false,
+        freightSelectedGroupNS: li.freightSelectedGroup ?? '',
+        freightPOLNS          : li.freightPol ?? '',
+        freightPODNS          : li.freightPod ?? '',
+        totalFreightCostNS    : toNum(li.totalFreightCost),
+        freightCostPerUnitNS  : toNum(li.freightCostPerUnit),
+        freightProviderNS     : li.freightProvider ?? '',
+        freightNotesNS        : li.freightNotes ?? '',
+        excludeFromPrintNS    : li.excludeFromPrint ?? false,
+      };
+    }
+    payload.lines = lines;
+  }
 
   // Phase 3 – Freight groups (uncomment when ready):
   // const freightGroups = await db.select().from(estimateFreightGroups)
@@ -264,6 +395,15 @@ export async function syncEstimateToNetsuite(
 
     const nsInternalId   = nsResp.id          ?? nsResp.internalId;
     const documentNumber = nsResp.tranId       ?? nsResp.documentNumber;
+
+    logger.info({
+      estimateId,
+      rawResponse    : nsResp,
+      nsInternalId   : nsInternalId   ?? null,
+      documentNumber : documentNumber ?? null,
+      hasInternalId  : !!nsInternalId,
+      hasDocumentNum : !!documentNumber,
+    }, 'NetSuite suitelet response received');
 
     await db.update(estimates)
       .set({

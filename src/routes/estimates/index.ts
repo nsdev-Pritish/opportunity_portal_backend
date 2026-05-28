@@ -1,11 +1,25 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+
+// Recursively convert "" / null to undefined so Zod number fields accept blank frontend values
+function stripEmpty(val: unknown): unknown {
+  if (val === '' || val === null) return undefined;
+  if (Array.isArray(val)) return val.map(stripEmpty);
+  if (val && typeof val === 'object') {
+    return Object.fromEntries(
+      Object.entries(val as Record<string, unknown>).map(([k, v]) => [k, stripEmpty(v)])
+    );
+  }
+  return val;
+}
 import {
   listEstimates,
   getEstimate,
   createEstimateWithItems,
   updateEstimateWithItems,
   deactivateEstimate,
+  listDocumentNumbers,
+  searchEstimatesAdvanced,
 } from '../../services/estimate.service.js';
 
 // ── Freight Group schema (mirrors estimate_freight_groups columns) ────────────
@@ -69,6 +83,7 @@ const ComponentSchema = z.object({
   // ── Classification ─────────────────────────────────────────────────────────
   productClassId: z.number().int().positive().optional(),
   sustainabilityId: z.number().int().positive().optional(),
+  componentKitItemId: z.number().int().positive().optional(),
   htsCode: z.string().max(20).optional(),
   countryOfOrigin: z.string().max(100).optional(),
   countryOfDest: z.enum(['US', 'EU']).optional(),
@@ -91,6 +106,28 @@ const ComponentSchema = z.object({
   shipToVendorId: z.number().int().positive().optional(),
   shipToVendorAddrId: z.number().int().positive().optional(),
   notes: z.string().optional(),
+
+  // ── Extended Line Fields ───────────────────────────────────────────────────
+  lineComponents:       z.string().optional(),
+  previousLineId:       z.number().int().positive().optional(),
+  additionalFeeInfo:    z.string().optional(),
+  countryOrigin:        z.string().max(100).optional(),
+  itemClass:            z.string().max(255).optional(),   // UI field: class
+  classItem:            z.string().max(255).optional(),
+  vendorSku:            z.string().max(255).optional(),
+  shippingInstruction:  z.string().optional(),
+  paddingAmount:        z.string().optional(),            // numeric string e.g. "12.50"
+  dutyMarkupAmount:     z.string().optional(),            // numeric string
+  converted:            z.boolean().optional(),
+  freightSelectedGroup: z.string().max(255).optional(),
+  freightPol:           z.string().max(255).optional(),
+  freightPod:           z.string().max(255).optional(),
+  totalFreightCost:     z.string().optional(),            // numeric string
+  freightCostPerUnit:   z.string().optional(),            // numeric string
+  freightProvider:      z.string().max(255).optional(),
+  freightNotes:         z.string().optional(),
+  selected:             z.boolean().optional(),
+  excludeFromPrint:     z.boolean().optional(),
 });
 
 // ── Line item schema — top-level item + optional nested components ──────────
@@ -154,17 +191,13 @@ const EstimateHeaderSchema = z.object({
   })).optional(),
 });
 
-// ── Phase 1: Body-level only ─────────────────────────────────────────────────
-const CreateEstimateSchema = EstimateHeaderSchema;
-const UpdateEstimateSchema = EstimateHeaderSchema.partial();
-
-// Phase 2 – uncomment to add line items (replace Phase 1 schemas above):
-// const CreateEstimateSchema = EstimateHeaderSchema.extend({
-//   lineItems: z.array(LineItemSchema).max(400).optional(),
-// });
-// const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
-//   lineItems: z.array(LineItemSchema).max(400).optional(),
-// });
+// ── Phase 2: Header + line items ─────────────────────────────────────────────
+const CreateEstimateSchema = EstimateHeaderSchema.extend({
+  lineItems: z.array(LineItemSchema).max(400).optional(),
+});
+const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
+  lineItems: z.array(LineItemSchema).max(400).optional(),
+});
 
 // Phase 3 – uncomment to add freight groups too (replace Phase 2 schemas above):
 // const CreateEstimateSchema = EstimateHeaderSchema.extend({
@@ -193,11 +226,88 @@ export default async function estimateRoutes(app: FastifyInstance) {
     }),
   );
 
-  // POST /api/v1/estimates — Phase 1: body-level fields only
+  // POST /api/v1/estimates — Phase 2: header + optional line items
   app.post<{ Body: unknown }>('/', async (req, reply) => {
-    const headerData = CreateEstimateSchema.parse(req.body);
-    const result = await createEstimateWithItems(headerData, [], []);
+    const { lineItems, ...headerData } = CreateEstimateSchema.parse(stripEmpty(req.body));
+    const result = await createEstimateWithItems(headerData, lineItems ?? [], []);
     return reply.status(201).send(result);
+  });
+
+  // GET /api/v1/estimates/document-numbers — dropdown list (filtered)
+  type DocNumQuery = {
+    customerId?: string; customerName?: string;
+    salesRepId?: string; salesRepName?: string;
+    opsPartnerId?: string; opsPartnerName?: string;
+    businessVerticalId?: string; businessVerticalName?: string;
+    departmentId?: string; departmentName?: string;
+    projectNameId?: string; projectName?: string;
+    statuses?: string;
+    productDeveloperId?: string; productDeveloperName?: string;
+    likelyToCloseId?: string; likelyToCloseName?: string;
+    expectedCloseDateFrom?: string; expectedCloseDateTo?: string;
+    dateOfEntryFrom?: string; dateOfEntryTo?: string;
+  };
+  app.get<{ Querystring: DocNumQuery }>('/document-numbers', async (req) => {
+    const q = req.query;
+    return listDocumentNumbers({
+      customerId:            q.customerId            ? parseInt(q.customerId)            : undefined,
+      customerName:          q.customerName          || undefined,
+      salesRepId:            q.salesRepId            ? parseInt(q.salesRepId)            : undefined,
+      salesRepName:          q.salesRepName          || undefined,
+      opsPartnerId:          q.opsPartnerId          ? parseInt(q.opsPartnerId)          : undefined,
+      opsPartnerName:        q.opsPartnerName        || undefined,
+      businessVerticalId:    q.businessVerticalId    ? parseInt(q.businessVerticalId)    : undefined,
+      businessVerticalName:  q.businessVerticalName  || undefined,
+      departmentId:          q.departmentId          ? parseInt(q.departmentId)          : undefined,
+      departmentName:        q.departmentName        || undefined,
+      projectNameId:         q.projectNameId         ? parseInt(q.projectNameId)         : undefined,
+      projectName:           q.projectName           || undefined,
+      statuses:              q.statuses              ? q.statuses.split(',').map(s => s.trim()).filter(Boolean) : undefined,
+      productDeveloperId:    q.productDeveloperId    ? parseInt(q.productDeveloperId)    : undefined,
+      productDeveloperName:  q.productDeveloperName  || undefined,
+      likelyToCloseId:       q.likelyToCloseId       ? parseInt(q.likelyToCloseId)       : undefined,
+      likelyToCloseName:     q.likelyToCloseName     || undefined,
+      expectedCloseDateFrom: q.expectedCloseDateFrom || undefined,
+      expectedCloseDateTo:   q.expectedCloseDateTo   || undefined,
+      dateOfEntryFrom:       q.dateOfEntryFrom       || undefined,
+      dateOfEntryTo:         q.dateOfEntryTo         || undefined,
+    });
+  });
+
+  // GET /api/v1/estimates/search — advanced filtered list
+  type SearchQuery = DocNumQuery & {
+    page?: string; limit?: string;
+    estimateId?: string; documentNumber?: string;
+  };
+  app.get<{ Querystring: SearchQuery }>('/search', async (req) => {
+    const q = req.query;
+    return searchEstimatesAdvanced({
+      page:                  parseInt(q.page  ?? '1'),
+      limit:                 Math.min(parseInt(q.limit ?? '20'), 100),
+      estimateId:            q.estimateId            ? parseInt(q.estimateId)            : undefined,
+      documentNumber:        q.documentNumber        || undefined,
+      customerId:            q.customerId            ? parseInt(q.customerId)            : undefined,
+      customerName:          q.customerName          || undefined,
+      salesRepId:            q.salesRepId            ? parseInt(q.salesRepId)            : undefined,
+      salesRepName:          q.salesRepName          || undefined,
+      opsPartnerId:          q.opsPartnerId          ? parseInt(q.opsPartnerId)          : undefined,
+      opsPartnerName:        q.opsPartnerName        || undefined,
+      businessVerticalId:    q.businessVerticalId    ? parseInt(q.businessVerticalId)    : undefined,
+      businessVerticalName:  q.businessVerticalName  || undefined,
+      departmentId:          q.departmentId          ? parseInt(q.departmentId)          : undefined,
+      departmentName:        q.departmentName        || undefined,
+      projectNameId:         q.projectNameId         ? parseInt(q.projectNameId)         : undefined,
+      projectName:           q.projectName           || undefined,
+      statuses:              q.statuses              ? q.statuses.split(',').map(s => s.trim()).filter(Boolean) : undefined,
+      productDeveloperId:    q.productDeveloperId    ? parseInt(q.productDeveloperId)    : undefined,
+      productDeveloperName:  q.productDeveloperName  || undefined,
+      likelyToCloseId:       q.likelyToCloseId       ? parseInt(q.likelyToCloseId)       : undefined,
+      likelyToCloseName:     q.likelyToCloseName     || undefined,
+      expectedCloseDateFrom: q.expectedCloseDateFrom || undefined,
+      expectedCloseDateTo:   q.expectedCloseDateTo   || undefined,
+      dateOfEntryFrom:       q.dateOfEntryFrom       || undefined,
+      dateOfEntryTo:         q.dateOfEntryTo         || undefined,
+    });
   });
 
   // GET /api/v1/estimates/:id — full estimate with line items
@@ -205,10 +315,10 @@ export default async function estimateRoutes(app: FastifyInstance) {
     getEstimate(parseInt(req.params.id)),
   );
 
-  // PATCH /api/v1/estimates/:id — Phase 1: body-level fields only
+  // PATCH /api/v1/estimates/:id — Phase 2: header + optional line items
   app.patch<{ Params: { id: string }; Body: unknown }>('/:id', async (req) => {
-    const headerData = UpdateEstimateSchema.parse(req.body);
-    return updateEstimateWithItems(parseInt(req.params.id), headerData);
+    const { lineItems, ...headerData } = UpdateEstimateSchema.parse(stripEmpty(req.body));
+    return updateEstimateWithItems(parseInt(req.params.id), headerData, lineItems);
   });
 
   // DELETE /api/v1/estimates/:id — soft-delete
