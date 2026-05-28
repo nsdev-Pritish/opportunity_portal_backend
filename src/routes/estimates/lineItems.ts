@@ -18,7 +18,7 @@ const LineItemSchema = z.object({
   countryOfDest: z.enum(['US','EU']).optional(),
   unitsPerCarton: z.number().int().optional(), dimLCm: z.string().optional(),
   dimWCm: z.string().optional(), dimHCm: z.string().optional(),
-  weightKgPerCarton: z.string().optional(), shippingGroupId: z.number().int().optional(),
+  weightKgPerCarton: z.string().optional(), shippingGroupId: z.string().max(255).optional(),
   exFactoryDate: z.string().optional(), vendorIncotermsId: z.number().int().optional(),
   shipToVendorId: z.number().int().optional(), notes: z.string().optional(),
   exclude: z.boolean().optional(), pickupExwFob: z.string().optional(),

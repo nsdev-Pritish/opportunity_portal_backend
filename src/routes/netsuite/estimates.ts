@@ -122,7 +122,7 @@ const LineItemSchema = z.object({
   dimWCm              : z.string().optional().nullable(),
   dimHCm              : z.string().optional().nullable(),
   weightKgPerCarton   : z.string().optional().nullable(),
-  shippingGroupId     : z.number().int().optional().nullable(),
+  shippingGroupId     : z.string().max(255).optional().nullable(),
   exFactoryDate       : z.string().optional().nullable(),
   vendorIncotermsId   : z.number().int().optional().nullable(),
   shipToVendorId      : z.number().int().optional().nullable(),
