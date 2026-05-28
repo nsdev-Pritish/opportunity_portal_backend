@@ -281,6 +281,13 @@ export default async function estimateRoutes(app: FastifyInstance) {
   };
   app.get<{ Querystring: SearchQuery }>('/search', async (req) => {
     const q = req.query;
+
+    // When a specific estimate is selected (by id or exact document number),
+    // return the full estimate with line items + freight groups instead of a summary list
+    if (q.estimateId) {
+      return getEstimate(parseInt(q.estimateId));
+    }
+
     return searchEstimatesAdvanced({
       page:                  parseInt(q.page  ?? '1'),
       limit:                 Math.min(parseInt(q.limit ?? '20'), 100),

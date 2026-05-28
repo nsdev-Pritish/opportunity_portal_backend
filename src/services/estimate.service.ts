@@ -186,7 +186,34 @@ export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
       .where(whereClause),
   ]);
 
-  return { data: rows, pagination: { page: opts.page, limit: opts.limit, total: Number(total) } };
+  // Fetch all line items for the returned estimates in one batch query
+  const estimateIds = rows.map(r => r.id);
+  let lineItemsByEstimate: Record<number, any[]> = {};
+
+  if (estimateIds.length > 0) {
+    const allLineItems = await db.select()
+      .from(estimateLineItems)
+      .where(inArray(estimateLineItems.estimateId, estimateIds))
+      .orderBy(asc(estimateLineItems.estimateId), asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder));
+
+    // Nest components under their parent, group by estimateId
+    for (const li of allLineItems) {
+      if (!lineItemsByEstimate[li.estimateId]) lineItemsByEstimate[li.estimateId] = [];
+      if (li.parentLineItemId === null) {
+        lineItemsByEstimate[li.estimateId].push({ ...li, components: [] });
+      }
+    }
+    for (const li of allLineItems) {
+      if (li.parentLineItemId !== null) {
+        const parent = lineItemsByEstimate[li.estimateId]?.find((p: any) => p.id === li.parentLineItemId);
+        if (parent) parent.components.push(li);
+      }
+    }
+  }
+
+  const data = rows.map(r => ({ ...r, lineItems: lineItemsByEstimate[r.id] ?? [] }));
+
+  return { data, pagination: { page: opts.page, limit: opts.limit, total: Number(total) } };
 }
 
 // ── List ────────────────────────────────────────────────────────────────────
