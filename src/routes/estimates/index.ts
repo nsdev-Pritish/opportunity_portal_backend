@@ -98,7 +98,7 @@ const ComponentSchema = z.object({
   cbmPerCarton: z.string().optional(),
   totalCbm: z.string().optional(),
   chargeableWeightKg: z.string().optional(),
-  shippingGroupId: z.number().int().positive().optional(),
+  shippingGroupId: z.string().max(255).optional(),
 
   // ── Other Details (Vendor Only) ────────────────────────────────────────────
   exFactoryDate: z.string().optional(),

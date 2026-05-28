@@ -567,7 +567,7 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   totalCartons: integer('total_cartons').default(0),
   totalCbm: numeric('total_cbm', { precision: 10, scale: 3 }),
   chargeableWeightKg: numeric('chargeable_weight_kg', { precision: 10, scale: 3 }),
-  shippingGroupId: integer('shipping_group_id').references(() => shippingGroups.id),
+  shippingGroupId: varchar('shipping_group_id', { length: 255 }),
 
   // Other Details (Vendor)
   exFactoryDate: date('ex_factory_date'),

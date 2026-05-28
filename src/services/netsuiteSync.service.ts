@@ -14,7 +14,7 @@
  */
 
 import crypto from 'crypto';
-import { eq } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import {
   estimates, estimateLineItems,
@@ -23,7 +23,7 @@ import {
   accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
   clientIncoterms, clientShippingMethods, addresses,
   csItems, vendors, sustainabilityOptions, productClasses, vendorIncoterms, factories,
-  shippingGroups, vendorAddresses, componentKitItems,
+  vendorAddresses, componentKitItems,
   // Phase 3 – uncomment when freight groups are added:
   // estimateFreightGroups, lclRates, fclRates, airRates,
 } from '../db/schema/index.js';
@@ -211,7 +211,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
         getNsId(productClasses,       li.productClassId),        // [4]
         getNsId(sustainabilityOptions,li.sustainabilityId),      // [5]
         getNsId(vendorIncoterms,      li.vendorIncotermsId),     // [6]
-        getNsId(shippingGroups,       li.shippingGroupId),       // [7]
+        Promise.resolve(li.shippingGroupId ?? null),              // [7] text label, not a FK lookup
         getNsId(vendors,              li.shipToVendorId),        // [8]
         getNsId(vendorAddresses,      li.shipToVendorAddrId),    // [9]
         getNsId(componentKitItems,    li.componentKitItemId),    // [10]
@@ -292,7 +292,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
       totalCbmNS             : toNum(li.totalCbm),
       chargeableWeightKgNS   : toNum(li.chargeableWeightKg),
 
-      shippingGroupIdNSId    : toNsNum(shippingGroupNsId),
+      shippingGroupIdNSId    : shippingGroupNsId ?? null,
       exFactoryDateNS        : formatNsDate(li.exFactoryDate),
       vendorIncotermsIdNSId  : toNsNum(vendorIncotermsNsId),
       shipToVendorIdNSId     : toNsNum(shipToVendorNsId),
@@ -385,12 +385,13 @@ export async function syncEstimateToNetsuite(
       throw new Error(`NS suitelet responded ${res.status}: ${body}`);
     }
 
-    // NS response: { id: "12345", tranId: "EST-0042" }
+    // NS response: { id: "12345", tranId: "EST-0042", lineIds: { "1": "67890", "2": "67891" } }
     const nsResp = await res.json() as {
       id?            : string;
       internalId?    : string;
       tranId?        : string;
       documentNumber?: string;
+      lineIds?       : (string | number)[] | Record<string, string | number>;
     };
 
     const nsInternalId   = nsResp.id          ?? nsResp.internalId;
@@ -414,6 +415,33 @@ export async function syncEstimateToNetsuite(
         syncedAt          : new Date(),
       } as any)
       .where(eq(estimates.id, estimateId));
+
+    // Store NS line IDs back to each line item.
+    // lineIds may be a 0-based array ["id1","id2",...] or a 1-based object {"1":"id1","2":"id2",...}.
+    if (nsResp.lineIds && typeof nsResp.lineIds === 'object') {
+      const lineRows = await db
+        .select({ id: estimateLineItems.id })
+        .from(estimateLineItems)
+        .where(eq(estimateLineItems.estimateId, estimateId))
+        .orderBy(asc(estimateLineItems.lineNumber));
+
+      const lineIdsArray = Array.isArray(nsResp.lineIds)
+        ? nsResp.lineIds                                                      // 0-based array → use index directly
+        : Object.entries(nsResp.lineIds)                                      // 1-based object → convert to 0-based
+            .reduce<(string | number)[]>((acc, [k, v]) => { acc[parseInt(k, 10) - 1] = v; return acc; }, []);
+
+      await Promise.all(
+        lineIdsArray.map((nsLineId, idx) => {
+          const portalLineId = lineRows[idx]?.id;
+          if (!portalLineId || !nsLineId) return Promise.resolve();
+          return db.update(estimateLineItems)
+            .set({ netsuiteInternalId: String(nsLineId) } as any)
+            .where(eq(estimateLineItems.id, portalLineId));
+        }),
+      );
+
+      logger.info({ estimateId, lineCount: lineRows.length, lineIds: nsResp.lineIds }, 'Line item NS IDs stored');
+    }
 
     logger.info({ estimateId, nsInternalId, documentNumber }, 'Estimate synced to NetSuite successfully');
 
