@@ -44,9 +44,12 @@
  * shippingMethods.ts      → /shipping-methods
  * itemTypes.ts            → /item-types
  * productClasses.ts       → /product-classes
- * sustainabilityOptions.ts → /sustainability-options
- * shippingGroups.ts       → /shipping-groups
- * estimates.ts            → /estimates
+ * sustainabilityOptions.ts        → /sustainability-options
+ * shippingGroups.ts              → /shipping-groups
+ * closedLostReasons.ts           → /closed-lost-reasons
+ * clientPursuitAlternatives.ts   → /client-pursuit-alternatives
+ * estimateStatuses.ts            → /estimate-statuses
+ * estimates.ts                   → /estimates
  * lineItems.ts            → /estimates/:nsId/line-items
  */
 
@@ -68,9 +71,12 @@ import productDeveloperRoutes   from './classification/productDeveloper.js';
 import itemTypeRoutes           from './itemTypes.js';
 import productClassRoutes       from './productClasses.js';
 import sustainabilityRoutes     from './sustainabilityOptions.js';
-import shippingGroupRoutes      from './shippingGroups.js';
-import estimateNsRoutes         from './estimates.js';
-import lineItemNsRoutes         from './lineItems.js';
+import shippingGroupRoutes             from './shippingGroups.js';
+import closedLostReasonRoutes          from './closedLostReasons.js';
+import clientPursuitAlternativeRoutes  from './clientPursuitAlternatives.js';
+import estimateStatusRoutes            from './estimateStatuses.js';
+import estimateNsRoutes                from './estimates.js';
+import lineItemNsRoutes                from './lineItems.js';
 
 // Primary Information imports
 import customerRoutes           from './primary/customers.js';
@@ -118,8 +124,11 @@ export default async function netsuiteRoutes(app: FastifyInstance) {
   await app.register(itemTypeRoutes,          { prefix: '/item-types' });
   await app.register(productClassRoutes,      { prefix: '/product-classes' });
   await app.register(sustainabilityRoutes,    { prefix: '/sustainability-options' });
-  await app.register(shippingGroupRoutes,     { prefix: '/shipping-groups' });
-  await app.register(estimateNsRoutes,        { prefix: '/estimates' });
+  await app.register(shippingGroupRoutes,             { prefix: '/shipping-groups' });
+  await app.register(closedLostReasonRoutes,          { prefix: '/closed-lost-reasons' });
+  await app.register(clientPursuitAlternativeRoutes,  { prefix: '/client-pursuit-alternatives' });
+  await app.register(estimateStatusRoutes,            { prefix: '/estimate-statuses' });
+  await app.register(estimateNsRoutes,                { prefix: '/estimates' });
   await app.register(lineItemNsRoutes,        { prefix: '/estimates/:nsId/line-items' });
 
   // Client Shipping & Billing

@@ -364,6 +364,30 @@ export const componentKitItems = pgTable('component_kit_items', {
   ...syncCols,
 });
 
+export const closedLostReasons = pgTable('closed_lost_reasons', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('closed_lost_reasons_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const clientPursuitAlternatives = pgTable('client_pursuit_alternatives', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('client_pursuit_alternatives_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const estimateStatuses = pgTable('estimate_statuses', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('estimate_statuses_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
 export const shippingGroups = pgTable('shipping_groups', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
@@ -796,6 +820,9 @@ export const MASTER_TABLES = {
   product_classes: productClasses,
   sustainability_options: sustainabilityOptions,
   component_kit_items: componentKitItems,
+  closed_lost_reasons: closedLostReasons,
+  client_pursuit_alternatives: clientPursuitAlternatives,
+  estimate_statuses: estimateStatuses,
   shipping_groups: shippingGroups,
   cs_items: csItems,
   lcl_rates: lclRates,
