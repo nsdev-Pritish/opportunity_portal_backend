@@ -1,0 +1,195 @@
+{
+  "info": {
+    "name": "Edit Estimates Dropdowns & Product Class EU",
+    "description": "GET APIs for estimateStatuses, clientPursuitAlternatives, closedLostReasons, and productClassesEu via /api/v1/master route",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Estimate Statuses",
+      "item": [
+        {
+          "name": "List all active Estimate Statuses",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/estimate_statuses",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "estimate_statuses"]
+            },
+            "description": "Returns all active estimate statuses ordered by name. Fields: id, name, stage, probability, netsuiteInternalId, isActive, createdAt, updatedAt"
+          },
+          "response": [
+            {
+              "name": "200 OK – Example",
+              "status": "OK",
+              "code": 200,
+              "body": "[\n  {\n    \"id\": 1,\n    \"name\": \"In Progress\",\n    \"stage\": \"Proposal\",\n    \"probability\": \"25.00\",\n    \"netsuiteInternalId\": \"1\",\n    \"isActive\": true,\n    \"source\": \"netsuite\",\n    \"syncStatus\": \"synced\",\n    \"createdAt\": \"2025-01-01T00:00:00.000Z\",\n    \"updatedAt\": \"2025-01-01T00:00:00.000Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Get single Estimate Status by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/estimate_statuses/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "estimate_statuses", "1"]
+            },
+            "description": "Returns a single estimate status by its internal database ID."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Client Pursuit Alternatives",
+      "item": [
+        {
+          "name": "List all active Client Pursuit Alternatives",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/client_pursuit_alternatives",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "client_pursuit_alternatives"]
+            },
+            "description": "Returns all active client pursuit alternatives ordered by name. Fields: id, name, netsuiteInternalId, isActive, createdAt, updatedAt"
+          },
+          "response": [
+            {
+              "name": "200 OK – Example",
+              "status": "OK",
+              "code": 200,
+              "body": "[\n  {\n    \"id\": 1,\n    \"name\": \"Competitor A\",\n    \"netsuiteInternalId\": \"1\",\n    \"isActive\": true,\n    \"source\": \"netsuite\",\n    \"syncStatus\": \"synced\",\n    \"createdAt\": \"2025-01-01T00:00:00.000Z\",\n    \"updatedAt\": \"2025-01-01T00:00:00.000Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Get single Client Pursuit Alternative by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/client_pursuit_alternatives/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "client_pursuit_alternatives", "1"]
+            },
+            "description": "Returns a single client pursuit alternative by its internal database ID."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Closed Lost Reasons",
+      "item": [
+        {
+          "name": "List all active Closed Lost Reasons",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/closed_lost_reasons",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "closed_lost_reasons"]
+            },
+            "description": "Returns all active closed lost reasons ordered by name. Fields: id, name, netsuiteInternalId, isActive, createdAt, updatedAt"
+          },
+          "response": [
+            {
+              "name": "200 OK – Example",
+              "status": "OK",
+              "code": 200,
+              "body": "[\n  {\n    \"id\": 1,\n    \"name\": \"Price\",\n    \"netsuiteInternalId\": \"1\",\n    \"isActive\": true,\n    \"source\": \"netsuite\",\n    \"syncStatus\": \"synced\",\n    \"createdAt\": \"2025-01-01T00:00:00.000Z\",\n    \"updatedAt\": \"2025-01-01T00:00:00.000Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Get single Closed Lost Reason by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/closed_lost_reasons/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "closed_lost_reasons", "1"]
+            },
+            "description": "Returns a single closed lost reason by its internal database ID."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Product Classes EU",
+      "item": [
+        {
+          "name": "List all active Product Classes EU",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/product_classes_eu",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "product_classes_eu"]
+            },
+            "description": "Returns all active EU product classes ordered by name. Fields: id, name, parentClass, classCode, euHtsCode, chinaDutyRate, cambodiaDutyRate, taiwanDutyRate, thailandDutyRate, vietnamDutyRate, netsuiteInternalId, isActive, createdAt, updatedAt"
+          },
+          "response": [
+            {
+              "name": "200 OK – Example",
+              "status": "OK",
+              "code": 200,
+              "body": "[\n  {\n    \"id\": 1,\n    \"name\": \"Bags EU\",\n    \"parentClass\": \"Soft Goods\",\n    \"classCode\": \"Bags & Packs\",\n    \"euHtsCode\": \"4202.92\",\n    \"chinaDutyRate\": \"20.000\",\n    \"cambodiaDutyRate\": \"15.000\",\n    \"taiwanDutyRate\": \"10.000\",\n    \"thailandDutyRate\": \"12.000\",\n    \"vietnamDutyRate\": \"8.000\",\n    \"netsuiteInternalId\": \"1\",\n    \"isActive\": true,\n    \"source\": \"netsuite\",\n    \"syncStatus\": \"synced\",\n    \"createdAt\": \"2025-01-01T00:00:00.000Z\",\n    \"updatedAt\": \"2025-01-01T00:00:00.000Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Get single Product Class EU by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/product_classes_eu/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "product_classes_eu", "1"]
+            },
+            "description": "Returns a single EU product class by its internal database ID."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "All Dropdowns (Batch)",
+      "item": [
+        {
+          "name": "Get All Dropdowns (includes all 4 new entities)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/all-dropdowns",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "all-dropdowns"]
+            },
+            "description": "Returns all dropdown data in a single request. Now includes estimate_statuses, client_pursuit_alternatives, closed_lost_reasons, and product_classes_eu."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
