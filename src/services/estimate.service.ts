@@ -261,6 +261,34 @@ export async function listEstimates(opts: {
   return { data: rows, pagination: { page: opts.page, limit: opts.limit, total: Number(total) } };
 }
 
+// ── Resolve portal ID from either portal integer ID or NS internal ID ────────
+// Allows routes to accept both /estimates/29 (portal) and /estimates/403846 (NS)
+
+export async function resolveEstimatePortalId(ref: string): Promise<number> {
+  const db = getDb();
+  const asInt = parseInt(ref, 10);
+
+  // Try portal ID first (fast path — exact PK lookup)
+  if (!isNaN(asInt)) {
+    const [byPortalId] = await db
+      .select({ id: estimates.id })
+      .from(estimates)
+      .where(and(eq(estimates.id, asInt), eq(estimates.isActive, true)))
+      .limit(1);
+    if (byPortalId) return byPortalId.id;
+  }
+
+  // Fallback: treat ref as NS internal ID string
+  const [byNsId] = await db
+    .select({ id: estimates.id })
+    .from(estimates)
+    .where(and(eq(estimates.netsuiteInternalId, ref), eq(estimates.isActive, true)))
+    .limit(1);
+  if (byNsId) return byNsId.id;
+
+  throw new NotFoundError('Estimate', ref);
+}
+
 // ── Get single (with nested line items) ─────────────────────────────────────
 
 export async function getEstimate(id: number) {
@@ -394,8 +422,10 @@ export async function createEstimateWithItems(
     logger.info({ estimateId: estimate.id, lineItemCount: parents.length + components.length, durationMs: duration }, 'Estimate created');
 
     return { estimate, lineItems: [...parents, ...components] };
-  }).then(async (result) => {
-    await syncEstimateToNetsuite(result.estimate.id, 'create');
+  }).then((result) => {
+    // Fire-and-forget: NS sync errors are caught inside syncEstimateToNetsuite;
+    // the portal response must not block on or fail due to NS availability.
+    syncEstimateToNetsuite(result.estimate.id, 'create').catch(() => {/* already logged + recorded */});
     return result;
   });
 }
@@ -459,9 +489,51 @@ export async function updateEstimateWithItems(
   const duration = Date.now() - startTime;
   logger.info({ estimateId: id, durationMs: duration }, 'Estimate updated');
 
-  await syncEstimateToNetsuite(id, 'update');
+  syncEstimateToNetsuite(id, 'update').catch(() => {/* already logged + recorded */});
 
   return result;
+}
+
+// ── List estimates with failed NS sync ───────────────────────────────────────
+
+export async function listFailedSyncs() {
+  return getDb()
+    .select({
+      id             : estimates.id,
+      documentNumber : estimates.documentNumber,
+      syncStatus     : estimates.syncStatus,
+      syncError      : estimates.syncError,
+      syncedAt       : estimates.syncedAt,
+      updatedAt      : estimates.updatedAt,
+    })
+    .from(estimates)
+    .where(eq(estimates.syncStatus as any, 'failed'))
+    .orderBy(desc(estimates.updatedAt));
+}
+
+// ── Manually re-trigger NS sync for a single estimate ────────────────────────
+
+export async function resyncEstimate(id: number) {
+  const db = getDb();
+
+  const [est] = await db
+    .select({ id: estimates.id, netsuiteInternalId: estimates.netsuiteInternalId })
+    .from(estimates)
+    .where(and(eq(estimates.id, id), eq(estimates.isActive, true)))
+    .limit(1);
+
+  if (!est) throw new NotFoundError('Estimate', String(id));
+
+  // Reset to pending so the UI knows a sync attempt is in flight
+  await db.update(estimates)
+    .set({ syncStatus: 'pending', syncError: null } as any)
+    .where(eq(estimates.id, id));
+
+  // Use 'create' if NS never received the record, 'update' if it did
+  const mode = est.netsuiteInternalId ? 'update' : 'create';
+  syncEstimateToNetsuite(id, mode).catch(() => {/* already logged + recorded inside */});
+
+  return { id, syncStatus: 'pending', message: `NS sync triggered (mode: ${mode})` };
 }
 
 // ── Deactivate ───────────────────────────────────────────────────────────────

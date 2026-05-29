@@ -12,6 +12,18 @@ function stripEmpty(val: unknown): unknown {
   }
   return val;
 }
+
+// Accept productDeveloperId (singular) as an alias for productDeveloperIds (plural)
+function normalizeBody(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const b = { ...(body as Record<string, unknown>) };
+  if (b.productDeveloperId !== undefined && b.productDeveloperIds === undefined) {
+    const pd = b.productDeveloperId;
+    b.productDeveloperIds = Array.isArray(pd) ? pd : [pd];
+    delete b.productDeveloperId;
+  }
+  return b;
+}
 import {
   listEstimates,
   getEstimate,
@@ -20,6 +32,8 @@ import {
   deactivateEstimate,
   listDocumentNumbers,
   searchEstimatesAdvanced,
+  listFailedSyncs,
+  resyncEstimate,
 } from '../../services/estimate.service.js';
 
 // ── Component schema — all detail fields shared by both item levels ──────────
@@ -215,7 +229,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
 
   // POST /api/v1/estimates — Phase 2: header + optional line items
   app.post<{ Body: unknown }>('/', async (req, reply) => {
-    const { lineItems, ...headerData } = CreateEstimateSchema.parse(stripEmpty(req.body));
+    const { lineItems, ...headerData } = CreateEstimateSchema.parse(stripEmpty(normalizeBody(req.body)));
     const result = await createEstimateWithItems(headerData, lineItems ?? [], []);
     return reply.status(201).send(result);
   });
@@ -304,6 +318,14 @@ export default async function estimateRoutes(app: FastifyInstance) {
     });
   });
 
+  // GET /api/v1/estimates/sync-failures — list estimates where NS sync failed
+  app.get('/sync-failures', async () => listFailedSyncs());
+
+  // POST /api/v1/estimates/:id/resync — manually re-trigger NS sync
+  app.post<{ Params: { id: string } }>('/:id/resync', async (req) =>
+    resyncEstimate(parseInt(req.params.id)),
+  );
+
   // GET /api/v1/estimates/:id — full estimate with line items
   app.get<{ Params: { id: string } }>('/:id', async (req) =>
     getEstimate(parseInt(req.params.id)),
@@ -311,7 +333,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
 
   // PATCH /api/v1/estimates/:id — Phase 2: header + optional line items
   app.patch<{ Params: { id: string }; Body: unknown }>('/:id', async (req) => {
-    const { lineItems, ...headerData } = UpdateEstimateSchema.parse(stripEmpty(req.body));
+    const { lineItems, ...headerData } = UpdateEstimateSchema.parse(stripEmpty(normalizeBody(req.body)));
     return updateEstimateWithItems(parseInt(req.params.id), headerData, lineItems);
   });
 

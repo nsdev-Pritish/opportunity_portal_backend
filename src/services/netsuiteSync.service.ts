@@ -163,6 +163,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
   // 3. Phase 1 payload — header fields only
   const payload: Record<string, unknown> = {
     mode,
+    internalId          : est.netsuiteInternalId ?? '',
     subsidiaryNSId      : subsidiaryNsId,
     customerNSId        : customerNsId,
     customerContactNSId : contactNsId,
@@ -347,11 +348,6 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
   //   .where(eq(estimateFreightGroups.estimateId, estimateId))
   //   .orderBy(estimateFreightGroups.sortOrder);
   // payload.freightGroups = freightGroups.map(g => ({ ... }));
-
-  // On update, include the NS internal ID so the suitelet can locate the record
-  if (mode === 'update' && est.netsuiteInternalId) {
-    payload.id = est.netsuiteInternalId;
-  }
 
   return payload;
 }
