@@ -352,6 +352,20 @@ export const productClasses = pgTable('product_classes', {
   ...syncCols,
 });
 
+export const productClassesEu = pgTable('product_classes_eu', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  parentClass: varchar('parent_class', { length: 255 }),
+  classCode: varchar('class_code', { length: 255 }),
+  euHtsCode: varchar('eu_hts_code', { length: 50 }),
+  chinaDutyRate: numeric('china_duty_rate', { precision: 10, scale: 3 }),
+  cambodiaDutyRate: numeric('cambodia_duty_rate', { precision: 10, scale: 3 }),
+  taiwanDutyRate: numeric('taiwan_duty_rate', { precision: 10, scale: 3 }),
+  thailandDutyRate: numeric('thailand_duty_rate', { precision: 10, scale: 3 }),
+  vietnamDutyRate: numeric('vietnam_duty_rate', { precision: 10, scale: 3 }),
+  ...syncCols,
+});
+
 export const sustainabilityOptions = pgTable('sustainability_options', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
@@ -383,6 +397,8 @@ export const clientPursuitAlternatives = pgTable('client_pursuit_alternatives', 
 export const estimateStatuses = pgTable('estimate_statuses', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
+  stage: varchar('stage', { length: 255 }),
+  probability: numeric('probability', { precision: 5, scale: 2 }),
   ...syncCols,
 }, (t) => ({
   nsIdIdx: uniqueIndex('estimate_statuses_ns_id_idx').on(t.netsuiteInternalId),
@@ -504,6 +520,13 @@ export const estimates = pgTable('estimates', {
   clientIncotermsId: integer('client_incoterms_id').references(() => clientIncoterms.id),
   clientShipMethodId: integer('client_ship_method_id').references(() => clientShippingMethods.id),
 
+  // Edit / Update fields
+  statusId: integer('status_id').references(() => estimateStatuses.id),
+  closedLostReasonId: integer('closed_lost_reason_id').references(() => closedLostReasons.id),
+  clientPursuitAlternativeId: integer('client_pursuit_alternative_id').references(() => clientPursuitAlternatives.id),
+  projectHoldDate: date('project_hold_date'),
+  notesClosedLostReason: text('notes_closed_lost_reason'),
+
   // Additional
   sampleOnlyOrder: boolean('sample_only_order').default(false),
   reOrder: boolean('re_order').default(false),
@@ -576,6 +599,7 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   // Classification
   productClassId: integer('product_class_id').references(() => productClasses.id),
   sustainabilityId: integer('sustainability_id').references(() => sustainabilityOptions.id),
+  productClassEuId: integer('product_class_eu_id').references(() => productClassesEu.id),
   componentKitItemId: integer('component_kit_item_id').references(() => componentKitItems.id),
   htsCode: varchar('hts_code', { length: 20 }),
   countryOfOrigin: varchar('country_of_origin', { length: 100 }),
@@ -784,6 +808,7 @@ export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, m
   factory: one(factories, { fields: [estimateLineItems.factoryId], references: [factories.id] }),
   vendorCurrency: one(currencies, { fields: [estimateLineItems.vendorCurrencyId], references: [currencies.id] }),
   productClass: one(productClasses, { fields: [estimateLineItems.productClassId], references: [productClasses.id] }),
+  productClassEu: one(productClassesEu, { fields: [estimateLineItems.productClassEuId], references: [productClassesEu.id] }),
   componentKitItem: one(componentKitItems, { fields: [estimateLineItems.componentKitItemId], references: [componentKitItems.id] }),
 }));
 
@@ -818,6 +843,7 @@ export const MASTER_TABLES = {
   factories,
   item_types: itemTypes,
   product_classes: productClasses,
+  product_classes_eu: productClassesEu,
   sustainability_options: sustainabilityOptions,
   component_kit_items: componentKitItems,
   closed_lost_reasons: closedLostReasons,

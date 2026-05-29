@@ -8,7 +8,7 @@
  *  PATCH /api/v1/netsuite/estimate-statuses/:nsId/status
  *
  * Body for POST/PUT:
- *  { "netsuiteInternalId": "1", "name": "In Progress" }
+ *  { "netsuiteInternalId": "1", "name": "In Progress", "stage": "Proposal", "probability": "25.00" }
  */
 
 import { FastifyInstance } from 'fastify';
@@ -22,6 +22,8 @@ import { invalidateDropdown } from '../../utils/cache.js';
 const CreateSchema = z.object({
   netsuiteInternalId: z.string().min(1),
   name              : z.string().min(1).max(255),
+  stage             : z.string().max(255).optional().nullable(),
+  probability       : z.string().optional().nullable(),
 });
 
 const UpdateSchema = CreateSchema.omit({ netsuiteInternalId: true }).partial();
@@ -47,7 +49,7 @@ export default async function estimateStatusRoutes(app: FastifyInstance) {
       .where(eq(estimateStatuses.netsuiteInternalId, body.netsuiteInternalId)).limit(1);
     if (existing) {
       const [upd] = await db.update(estimateStatuses)
-        .set({ name: body.name, updatedAt: new Date() })
+        .set({ name: body.name, stage: body.stage, probability: body.probability, updatedAt: new Date() })
         .where(eq(estimateStatuses.id, existing.id)).returning();
       await invalidateDropdown('estimate_statuses');
       return reply.status(200).send({ ...upd, _action: 'updated' });

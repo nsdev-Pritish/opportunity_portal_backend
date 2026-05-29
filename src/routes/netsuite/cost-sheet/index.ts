@@ -2,28 +2,31 @@
  * Cost Sheet Routes — Sub-router
  * Base prefix: /api/v1/netsuite/cost-sheet
  *
- *  /factory-names    → factoryNames.ts
- *  /product-classes  → productClasses.ts
- *  /sustainability   → sustainability.ts
- *  /vendors          → vendors.ts
- *  /vendor-addresses  → vendorAddresses.ts
- *  /vendor-incoterms  → vendorIncoterms.ts
- *  /items             → csItems.ts
+ *  /factory-names       → factoryNames.ts
+ *  /product-classes     → productClasses.ts
+ *  /product-classes-eu  → productClassesEu.ts
+ *  /sustainability      → sustainability.ts
+ *  /vendors             → vendors.ts
+ *  /vendor-addresses    → vendorAddresses.ts
+ *  /vendor-incoterms    → vendorIncoterms.ts
+ *  /items               → csItems.ts
  */
 
 import { FastifyInstance } from 'fastify';
-import factoryNameRoutes      from './factoryNames.js';
-import productClassRoutes     from './productClasses.js';
-import sustainabilityRoutes   from './sustainability.js';
-import vendorRoutes           from './vendors.js';
-import vendorAddressRoutes    from './vendorAddresses.js';
-import vendorIncotermRoutes   from './vendorIncoterms.js';
-import csItemRoutes           from './csItems.js';
-import componentKitItemRoutes from './componentKitItems.js';
+import factoryNameRoutes       from './factoryNames.js';
+import productClassRoutes      from './productClasses.js';
+import productClassEuRoutes    from './productClassesEu.js';
+import sustainabilityRoutes    from './sustainability.js';
+import vendorRoutes            from './vendors.js';
+import vendorAddressRoutes     from './vendorAddresses.js';
+import vendorIncotermRoutes    from './vendorIncoterms.js';
+import csItemRoutes            from './csItems.js';
+import componentKitItemRoutes  from './componentKitItems.js';
 
 export default async function costSheetRoutes(app: FastifyInstance) {
   await app.register(factoryNameRoutes,      { prefix: '/factory-names' });
   await app.register(productClassRoutes,     { prefix: '/product-classes' });
+  await app.register(productClassEuRoutes,   { prefix: '/product-classes-eu' });
   await app.register(sustainabilityRoutes,   { prefix: '/sustainability' });
   await app.register(vendorRoutes,           { prefix: '/vendors' });
   await app.register(vendorAddressRoutes,    { prefix: '/vendor-addresses' });

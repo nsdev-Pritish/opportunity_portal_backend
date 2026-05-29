@@ -22,27 +22,6 @@ import {
   searchEstimatesAdvanced,
 } from '../../services/estimate.service.js';
 
-// ── Freight Group schema (mirrors estimate_freight_groups columns) ────────────
-const FreightGroupSchema = z.object({
-  id: z.number().int().positive().optional(),           // present on update
-  groupName: z.string().max(255).optional(),
-  sortOrder: z.number().int().nonnegative().optional(),
-  chosenType: z.enum(['LCL', 'FCL', 'AIR', 'CUSTOM']).optional(),
-  lclRateId: z.number().int().positive().optional(),
-  fclRateId: z.number().int().positive().optional(),
-  airRateId: z.number().int().positive().optional(),
-  customProvider: z.string().max(255).optional(),
-  customFreightCost: z.string().optional(),
-  customNotes: z.string().optional(),
-  pol: z.string().max(255).optional(),
-  pod: z.string().max(255).optional(),
-  totalCartons: z.number().int().nonnegative().optional(),
-  totalCbm: z.string().optional(),
-  chargeableWeightKg: z.string().optional(),
-  freightCost: z.string().optional(),
-  freightCostPerUnit: z.string().optional(),
-});
-
 // ── Component schema — all detail fields shared by both item levels ──────────
 // Components (Component Kit Items) carry purchase/landed/classification/packing
 // data. This schema is reused for both top-level items and their components.
@@ -82,6 +61,7 @@ const ComponentSchema = z.object({
 
   // ── Classification ─────────────────────────────────────────────────────────
   productClassId: z.number().int().positive().optional(),
+  productClassEuId: z.number().int().positive().optional(),
   sustainabilityId: z.number().int().positive().optional(),
   componentKitItemId: z.number().int().positive().optional(),
   htsCode: z.string().max(20).optional(),
@@ -177,6 +157,13 @@ const EstimateHeaderSchema = z.object({
   shipTo: z.string().optional(),                              // Ship To textarea (formatted address text)
   billingAddressId: z.number().int().positive().optional(),   // Billing Address dropdown
   billTo: z.string().optional(),                              // Bill To textarea (formatted address text)
+
+  // Edit / Update fields
+  statusId: z.number().int().positive().optional(),
+  closedLostReasonId: z.number().int().positive().optional(),
+  clientPursuitAlternativeId: z.number().int().positive().optional(),
+  projectHoldDate: z.string().optional(),
+  notesClosedLostReason: z.string().optional(),
 
   // Additional Information
   sampleOnlyOrder: z.boolean().optional(),            // Sample Only Order checkbox

@@ -18,7 +18,11 @@ Cost-Sheet NS APIs.postman_collection.json
 docs
 Estimates_API.postman_collection.json
 Freight_Cost_GET_APIs.postman_collection.json
-
+Product_Class_EU.postman_collection.json
+Estimates_GET_Filter_APIs.postman_collection.json
+Estimate_Edit_Dropdowns.postman_collection.json
+Estimates_API.postman_collection.json
+Estimates_GET_Filter_APIs.postman_collection.json
 # Dependencies
 node_modules/
 npm-debug.log*

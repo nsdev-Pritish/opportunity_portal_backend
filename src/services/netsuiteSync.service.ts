@@ -22,8 +22,9 @@ import {
   departments, salesChannels, businessVerticals, businessTypes,
   accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
   clientIncoterms, clientShippingMethods, addresses,
-  csItems, vendors, sustainabilityOptions, productClasses, vendorIncoterms, factories,
+  csItems, vendors, sustainabilityOptions, productClasses, productClassesEu, vendorIncoterms, factories,
   vendorAddresses, componentKitItems,
+  closedLostReasons, clientPursuitAlternatives, estimateStatuses,
   // Phase 3 – uncomment when freight groups are added:
   // estimateFreightGroups, lclRates, fclRates, airRates,
 } from '../db/schema/index.js';
@@ -127,27 +128,31 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
     deptNsId, channelNsId, bizVerticalNsId, businessTypeNsId,
     acctMgrNsId, hkPartnerNsId, ops1NsId, ops2NsId, complianceNsId,
     shipTermsNsId, shipMethodNsId, shipAddrNsId, billAddrNsId,
+    estimateStatusNsId, closedLostReasonNsId, clientPursuitAltNsId,
   ] = await Promise.all([
-    getNsId(subsidiaries,         est.subsidiaryId),
-    getNsId(customers,            est.customerId),
-    getNsId(contacts,             est.customerContactId),
-    getNsId(projectNames,         est.projectNameId),
-    getNsId(projectTypes,         est.projectTypeId),
-    getNsId(likelyToClose,        est.likelyToCloseId),
-    getNsId(currencies,           est.sellCurrencyId),
-    getNsId(departments,          est.departmentId),
-    getNsId(salesChannels,        est.salesChannelId),
-    getNsId(businessVerticals,    est.businessVerticalId),
-    getNsId(businessTypes,        est.businessTypeId),
-    getNsId(accountManagers,      est.acctManagerId),
-    getNsId(hkPartners,           est.hkPartnerId),
-    getNsId(opsPartners,          est.opsPartner1Id),
-    getNsId(opsPartners,          est.opsPartner2Id),
-    getNsId(compliancePartners,   est.compliancePartnerId),
-    getNsId(clientIncoterms,      est.clientIncotermsId),
-    getNsId(clientShippingMethods,est.clientShipMethodId),
-    getNsId(addresses,            est.shippingAddressId),
-    getNsId(addresses,            est.billingAddressId),
+    getNsId(subsidiaries,                est.subsidiaryId),
+    getNsId(customers,                   est.customerId),
+    getNsId(contacts,                    est.customerContactId),
+    getNsId(projectNames,                est.projectNameId),
+    getNsId(projectTypes,                est.projectTypeId),
+    getNsId(likelyToClose,               est.likelyToCloseId),
+    getNsId(currencies,                  est.sellCurrencyId),
+    getNsId(departments,                 est.departmentId),
+    getNsId(salesChannels,               est.salesChannelId),
+    getNsId(businessVerticals,           est.businessVerticalId),
+    getNsId(businessTypes,               est.businessTypeId),
+    getNsId(accountManagers,             est.acctManagerId),
+    getNsId(hkPartners,                  est.hkPartnerId),
+    getNsId(opsPartners,                 est.opsPartner1Id),
+    getNsId(opsPartners,                 est.opsPartner2Id),
+    getNsId(compliancePartners,          est.compliancePartnerId),
+    getNsId(clientIncoterms,             est.clientIncotermsId),
+    getNsId(clientShippingMethods,       est.clientShipMethodId),
+    getNsId(addresses,                   est.shippingAddressId),
+    getNsId(addresses,                   est.billingAddressId),
+    getNsId(estimateStatuses,            est.statusId),
+    getNsId(closedLostReasons,           est.closedLostReasonId),
+    getNsId(clientPursuitAlternatives,   est.clientPursuitAlternativeId),
   ]);
 
   // Resolve NS IDs for all product developers in parallel
@@ -157,6 +162,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
 
   // 3. Phase 1 payload — header fields only
   const payload: Record<string, unknown> = {
+    mode,
     subsidiaryNSId      : subsidiaryNsId,
     customerNSId        : customerNsId,
     customerContactNSId : contactNsId,
@@ -191,8 +197,13 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
     artSetupRequestNS   : est.artSetupRequest ?? false,
     pkgDeckRequestNS    : est.pkgDeckRequest ?? false,
     pkgArtSetupRequestNS: est.pkgArtSetupRequest ?? false,
-    bibleLinkNS         : est.bibleLink ?? '',
-    memoNS              : est.memo ?? '',
+    bibleLinkNS                  : est.bibleLink ?? '',
+    memoNS                       : est.memo ?? '',
+    statusNSId                   : estimateStatusNsId,
+    closedLostReasonNSId         : closedLostReasonNsId,
+    clientPursuitAlternativeNSId : clientPursuitAltNsId,
+    projectHoldDateNS            : formatNsDate(est.projectHoldDate),
+    notesClosedLostReasonNS      : est.notesClosedLostReason ?? '',
   };
 
   // Phase 2 – Line items
@@ -204,17 +215,18 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
     // Resolve all FK → NS IDs in parallel across all line items (7 lookups per row)
     const lineNsData = await Promise.all(lineItemRows.map(li =>
       Promise.all([
-        getNsId(csItems,              li.itemTypeId),           // [0]
-        getNsId(vendors,              li.vendorId),              // [1]
-        getNsId(currencies,           li.vendorCurrencyId),      // [2]
-        getNsId(factories,            li.factoryId),             // [3]
-        getNsId(productClasses,       li.productClassId),        // [4]
-        getNsId(sustainabilityOptions,li.sustainabilityId),      // [5]
-        getNsId(vendorIncoterms,      li.vendorIncotermsId),     // [6]
-        Promise.resolve(li.shippingGroupId ?? null),              // [7] text label, not a FK lookup
-        getNsId(vendors,              li.shipToVendorId),        // [8]
-        getNsId(vendorAddresses,      li.shipToVendorAddrId),    // [9]
-        getNsId(componentKitItems,    li.componentKitItemId),    // [10]
+        getNsId(csItems,              li.itemTypeId),            // [0]
+        getNsId(vendors,              li.vendorId),               // [1]
+        getNsId(currencies,           li.vendorCurrencyId),       // [2]
+        getNsId(factories,            li.factoryId),              // [3]
+        getNsId(productClasses,       li.productClassId),         // [4]
+        getNsId(sustainabilityOptions,li.sustainabilityId),       // [5]
+        getNsId(vendorIncoterms,      li.vendorIncotermsId),      // [6]
+        Promise.resolve(li.shippingGroupId ?? null),               // [7] text label, not a FK lookup
+        getNsId(vendors,              li.shipToVendorId),         // [8]
+        getNsId(vendorAddresses,      li.shipToVendorAddrId),     // [9]
+        getNsId(componentKitItems,    li.componentKitItemId),     // [10]
+        getNsId(productClassesEu,     li.productClassEuId),       // [11]
       ])
     ));
 
@@ -241,8 +253,10 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
         itemTypeNsId, vendorNsId, vendorCurrencyNsId, factoryNsId,
         productClassNsId, sustainabilityNsId, vendorIncotermsNsId,
         shippingGroupNsId, shipToVendorNsId, shipToVendorAddrNsId,
-        componentKitItemNsId,
+        componentKitItemNsId, productClassEuNsId,
       ] = lineNsData[i];
+
+      const isEu = li.countryOfDest === 'EU';
 
       const isComponent = li.parentLineItemId !== null;
 
@@ -277,7 +291,8 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
       otherCostPctNS         : toNum(li.otherCostPct),
       paddingPctNS           : toNum(li.paddingPct),
 
-      productClassIdNSId     : productClassNsId ? Number(productClassNsId) : '',
+      productClassIdNSId     : !isEu && productClassNsId ? Number(productClassNsId) : '',
+      productClassEuIdNSId   : isEu && productClassEuNsId ? Number(productClassEuNsId) : '',
       sustainabilityIdNSId   : toNsNum(sustainabilityNsId),
       htsCodeNS              : li.htsCode ?? '',
       countryOfDestNSId      : li.countryOfDest ?? '',
@@ -307,8 +322,8 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
         previousLineIDNS      : li.previousLineId ?? null,
         additionalFeeInfoNS   : li.additionalFeeInfo ?? '',
         countryOriginNSId     : li.countryOrigin ?? '',
-        classNSId             : productClassNsId ? Number(productClassNsId) : null,
-        classItemNSId         : productClassNsId ? Number(productClassNsId) : null,
+        classNSId             : isEu ? (productClassEuNsId ? Number(productClassEuNsId) : null) : (productClassNsId ? Number(productClassNsId) : null),
+        classItemNSId         : isEu ? (productClassEuNsId ? Number(productClassEuNsId) : null) : (productClassNsId ? Number(productClassNsId) : null),
         vendorSKUNS           : li.vendorSku ?? '',
         shippingInstructionNS : li.shippingInstruction ?? '',
         paddingAmountNS       : toNum(li.paddingAmount),
