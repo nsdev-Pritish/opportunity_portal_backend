@@ -3,6 +3,7 @@ import { getDb } from '../config/database.js';
 import { estimateLineItems } from '../db/schema/index.js';
 import { NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { syncEstimateToNetsuite } from './netsuiteSync.service.js';
 
 export async function listLineItems(estimateId: number) {
   return getDb().select().from(estimateLineItems)
@@ -23,6 +24,7 @@ export async function addLineItem(estimateId: number, data: Record<string, unkno
   const lineNumber = await getNextLineNumber(estimateId);
   const [item] = await db.insert(estimateLineItems)
     .values({ ...data, estimateId, lineNumber } as any).returning();
+  syncEstimateToNetsuite(estimateId, 'update').catch(() => {/* already logged + recorded */});
   return item;
 }
 
@@ -63,11 +65,12 @@ export async function bulkInsertLineItems(estimateId: number, items: Record<stri
     });
     
     const duration = Date.now() - startTime;
-    logger.info({ estimateId, inserted: result.inserted, durationMs: duration }, 
+    logger.info({ estimateId, inserted: result.inserted, durationMs: duration },
       'Bulk line item insert completed successfully');
-    
+
+    syncEstimateToNetsuite(estimateId, 'update').catch(() => {/* already logged + recorded */});
     return result;
-    
+
   } catch (error) {
     const duration = Date.now() - startTime;
     logger.error({ estimateId, itemCount: items.length, durationMs: duration, error }, 
@@ -83,6 +86,7 @@ export async function updateLineItem(id: number, estimateId: number, data: Recor
     .where(and(eq(estimateLineItems.id, id), eq(estimateLineItems.estimateId, estimateId)))
     .returning();
   if (!updated) throw new NotFoundError('LineItem', id);
+  syncEstimateToNetsuite(estimateId, 'update').catch(() => {/* already logged + recorded */});
   return updated;
 }
 
@@ -90,5 +94,6 @@ export async function deleteLineItem(id: number, estimateId: number) {
   const db = getDb();
   await db.update(estimateLineItems).set({ exclude: true, updatedAt: new Date() })
     .where(and(eq(estimateLineItems.id, id), eq(estimateLineItems.estimateId, estimateId)));
+  syncEstimateToNetsuite(estimateId, 'update').catch(() => {/* already logged + recorded */});
   return { id, excluded: true };
 }

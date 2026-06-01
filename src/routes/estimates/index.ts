@@ -41,6 +41,7 @@ import {
 // data. This schema is reused for both top-level items and their components.
 const ComponentSchema = z.object({
   // ── Line header ────────────────────────────────────────────────────────────
+  id: z.number().int().positive().optional(),
   itemTypeId: z.number().int().positive().optional(),
   shortDescription: z.string().max(500).optional(),
   vendorId: z.number().int().positive().optional(),

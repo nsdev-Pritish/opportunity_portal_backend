@@ -332,7 +332,7 @@ export async function getEstimate(id: number) {
   };
 }
 
-// ── Internal: two-pass insert (parents → components) ─────────────────────────
+// ── Internal: two-pass insert for CREATE (parents → components) ──────────────
 
 async function insertLineItemsWithComponents(
   tx: any,
@@ -341,7 +341,6 @@ async function insertLineItemsWithComponents(
 ): Promise<{ parents: any[]; components: any[] }> {
   if (items.length === 0) return { parents: [], components: [] };
 
-  // Pass 1: insert parent rows
   const parentValues = items.map((item, i) => {
     const { components: _c, ...rest } = item;
     return { ...rest, estimateId, lineNumber: i + 1, parentLineItemId: null, sortOrder: i };
@@ -355,8 +354,6 @@ async function insertLineItemsWithComponents(
     parents.push(...rows);
   }
 
-  // Pass 2: insert components referencing their parent's DB id
-  // Continue lineNumber sequence after parents to satisfy the unique (estimateId, lineNumber) constraint
   let lineCounter = parentValues.length + 1;
   const componentValues: any[] = [];
   for (let i = 0; i < items.length; i++) {
@@ -378,6 +375,64 @@ async function insertLineItemsWithComponents(
       .values(componentValues.slice(i, i + CHUNK) as any)
       .returning();
     components.push(...rows);
+  }
+
+  return { parents, components };
+}
+
+// ── Internal: upsert for UPDATE ───────────────────────────────────────────────
+// Strategy: delete all existing rows first (clears lineNumber slots), then
+// re-insert every row. Rows whose `id` was in the DB get that same `id` back
+// (PostgreSQL allows explicit serial inserts), so the frontend's references stay
+// stable. Rows without a known `id` (new additions) get auto-assigned IDs.
+
+async function upsertLineItemsWithComponents(
+  tx: any,
+  estimateId: number,
+  items: RawLineItem[],
+): Promise<{ parents: any[]; components: any[] }> {
+  if (items.length === 0) {
+    await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, estimateId));
+    return { parents: [], components: [] };
+  }
+
+  // Collect existing IDs so we know which incoming ids are real vs made-up
+  const existing = await tx
+    .select({ id: estimateLineItems.id })
+    .from(estimateLineItems)
+    .where(eq(estimateLineItems.estimateId, estimateId));
+  const existingIds = new Set<number>(existing.map((r: any) => r.id));
+
+  // Delete all existing rows — clears lineNumber unique constraint slots
+  await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, estimateId));
+
+  // Pass 1: insert parent rows (preserve original id if it was a real DB row)
+  const parents: any[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const { components: _comps, id: itemId, ...data } = items[i] as any;
+    const idOverride = itemId && existingIds.has(itemId) ? { id: itemId } : {};
+
+    const [inserted] = await tx.insert(estimateLineItems)
+      .values({ ...idOverride, ...data, estimateId, lineNumber: i + 1, sortOrder: i, parentLineItemId: null } as any)
+      .returning();
+    parents.push(inserted);
+  }
+
+  // Pass 2: insert component rows (preserve original id if it was a real DB row)
+  const components: any[] = [];
+  let lineCounter = items.length + 1;
+  for (let i = 0; i < items.length; i++) {
+    const comps = (items[i] as any).components ?? [];
+    for (let j = 0; j < comps.length; j++) {
+      const { id: compId, ...compData } = comps[j] as any;
+      const idOverride = compId && existingIds.has(compId) ? { id: compId } : {};
+
+      const [inserted] = await tx.insert(estimateLineItems)
+        .values({ ...idOverride, ...compData, estimateId, lineNumber: lineCounter, sortOrder: j, parentLineItemId: parents[i].id } as any)
+        .returning();
+      components.push(inserted);
+      lineCounter++;
+    }
   }
 
   return { parents, components };
@@ -453,8 +508,7 @@ export async function updateEstimateWithItems(
     // Step 2 – Line items
     let allLineItems: any[];
     if (newLineItems !== undefined) {
-      await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, id));
-      const { parents, components } = await insertLineItemsWithComponents(tx, id, newLineItems);
+      const { parents, components } = await upsertLineItemsWithComponents(tx, id, newLineItems);
       allLineItems = [...parents, ...components];
     } else {
       allLineItems = await tx.select()
