@@ -527,6 +527,9 @@ export const estimates = pgTable('estimates', {
   projectHoldDate: date('project_hold_date'),
   notesClosedLostReason: text('notes_closed_lost_reason'),
 
+  // OTB conversion
+  otbConvertedAt: timestamp('otb_converted_at', { withTimezone: true }),
+
   // Additional
   sampleOnlyOrder: boolean('sample_only_order').default(false),
   reOrder: boolean('re_order').default(false),
@@ -551,6 +554,25 @@ export const estimates = pgTable('estimates', {
   syncIdx: index('estimates_sync_idx').on(t.syncStatus),
   updatedIdx: index('estimates_updated_idx').on(t.updatedAt),
   statusIdx: index('estimates_status_idx').on(t.status),
+}));
+
+// ══════════════════════════════════════════════════════════════════
+//  ESTIMATE QUOTES (one per OTB conversion)
+// ══════════════════════════════════════════════════════════════════
+
+export const estimateQuotes = pgTable('estimate_quotes', {
+  id                     : serial('id').primaryKey(),
+  estimateId             : integer('estimate_id').references(() => estimates.id, { onDelete: 'cascade' }).notNull(),
+  quoteNetsuiteInternalId: varchar('quote_netsuite_internal_id', { length: 50 }),
+  quoteDocumentNumber    : varchar('quote_document_number', { length: 100 }),
+  status                 : varchar('status', { length: 20 }).default('active').notNull(), // 'active' | 'replaced'
+  syncStatus             : syncStatusEnum('sync_status').default('pending').notNull(),
+  syncError              : text('sync_error'),
+  syncedAt               : timestamp('synced_at', { withTimezone: true }),
+  createdAt              : timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt              : timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  estimateIdx: index('eq_estimate_idx').on(t.estimateId),
 }));
 
 // ══════════════════════════════════════════════════════════════════

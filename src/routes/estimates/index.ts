@@ -34,6 +34,8 @@ import {
   searchEstimatesAdvanced,
   listFailedSyncs,
   resyncEstimate,
+  convertEstimateToOtb,
+  listEstimateQuotes,
 } from '../../services/estimate.service.js';
 
 // ── Component schema — all detail fields shared by both item levels ──────────
@@ -325,6 +327,21 @@ export default async function estimateRoutes(app: FastifyInstance) {
   // POST /api/v1/estimates/:id/resync — manually re-trigger NS sync
   app.post<{ Params: { id: string } }>('/:id/resync', async (req) =>
     resyncEstimate(parseInt(req.params.id)),
+  );
+
+  // POST /api/v1/estimates/:id/convert-to-otb — convert estimate to Quote in NS
+  //   { "target": "new" }      → create a NEW quote covering the whole estimate
+  //   { "target": "existing" } → add newly-added lines to the EXISTING quote
+  app.post<{ Params: { id: string }; Body: unknown }>('/:id/convert-to-otb', async (req) => {
+    const body = z.object({
+      target: z.enum(['new', 'existing']).optional(),
+    }).parse(stripEmpty(req.body ?? {}));
+    return convertEstimateToOtb(parseInt(req.params.id), body);
+  });
+
+  // GET /api/v1/estimates/:id/quotes — list all quotes for an estimate
+  app.get<{ Params: { id: string } }>('/:id/quotes', async (req) =>
+    listEstimateQuotes(parseInt(req.params.id)),
   );
 
   // GET /api/v1/estimates/:id — full estimate with line items

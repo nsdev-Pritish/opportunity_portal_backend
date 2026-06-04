@@ -2,7 +2,7 @@ import { eq, and, desc, asc, like, ilike, or, count, isNull, gte, lte, inArray, 
 import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '../config/database.js';
 import {
-  estimates, estimateLineItems, estimateFreightGroups,
+  estimates, estimateLineItems, estimateFreightGroups, estimateQuotes,
   customers, departments, businessVerticals, accountManagers,
   likelyToClose, opsPartners, productDevelopers,
 } from '../db/schema/index.js';
@@ -588,6 +588,115 @@ export async function resyncEstimate(id: number) {
   syncEstimateToNetsuite(id, mode).catch(() => {/* already logged + recorded inside */});
 
   return { id, syncStatus: 'pending', message: `NS sync triggered (mode: ${mode})` };
+}
+
+// ── Convert to OTB (creates a Quote in NetSuite) ─────────────────────────────
+
+export async function convertEstimateToOtb(
+  id     : number,
+  opts?  : { target?: 'new' | 'existing' },
+) {
+  const db = getDb();
+
+  // 1. Verify estimate exists, is active, and has been synced to NS
+  const [est] = await db
+    .select({ id: estimates.id, status: estimates.status, isActive: estimates.isActive, netsuiteInternalId: estimates.netsuiteInternalId })
+    .from(estimates)
+    .where(and(eq(estimates.id, id), eq(estimates.isActive, true)))
+    .limit(1);
+  if (!est) throw new NotFoundError('Estimate', String(id));
+  if (!est.netsuiteInternalId) {
+    throw new Error('Estimate has not been synced to NetSuite yet. Save the estimate first before converting to OTB.');
+  }
+
+  const target = opts?.target ?? 'new';
+
+  // ── Option B: add newly-added lines to the EXISTING quote ───────────────────
+  if (target === 'existing') {
+    // Only the unconverted (newly added) line items go to the existing quote
+    const unconverted = await db
+      .select({ id: estimateLineItems.id })
+      .from(estimateLineItems)
+      .where(and(eq(estimateLineItems.estimateId, id), eq(estimateLineItems.converted, false)));
+    const targetIds = unconverted.map(r => r.id);
+    if (targetIds.length === 0) {
+      return { id, message: 'No new line items to add to the existing quote' };
+    }
+
+    // Find the latest active quote that already exists in NetSuite
+    const [activeQuote] = await db
+      .select()
+      .from(estimateQuotes)
+      .where(and(eq(estimateQuotes.estimateId, id), eq(estimateQuotes.status as any, 'active')))
+      .orderBy(desc(estimateQuotes.createdAt))
+      .limit(1);
+
+    if (!activeQuote || !activeQuote.quoteNetsuiteInternalId) {
+      throw new Error('No existing quote found for this estimate. Create a new quote first.');
+    }
+
+    await db.update(estimates)
+      .set({ status: 'otb', syncStatus: 'pending', otbConvertedAt: new Date(), updatedAt: new Date() } as any)
+      .where(eq(estimates.id, id));
+
+    syncEstimateToNetsuite(id, 'convertToExisting', {
+      quoteId    : activeQuote.id,                       // portal quote row to refresh
+      quoteNsId  : activeQuote.quoteNetsuiteInternalId,  // NS quote id sent in payload
+      lineItemIds: targetIds,                            // lines to mark converted=true
+    }).catch(() => {/* already logged + recorded */});
+
+    return {
+      id,
+      quoteId        : activeQuote.id,
+      mode           : 'convertToExisting',
+      targetLineItems: targetIds.length,
+      syncStatus     : 'pending',
+      message        : `Adding ${targetIds.length} line item(s) to existing quote ${activeQuote.quoteDocumentNumber ?? activeQuote.quoteNetsuiteInternalId}`,
+    };
+  }
+
+  // ── Option A: create a SEPARATE new quote for the newly-added lines ──────────
+  // Only unconverted (newly added) lines are quoted. Previous quotes stay active,
+  // so an estimate can hold multiple active quotes (one per batch of lines).
+  const unconverted = await db
+    .select({ id: estimateLineItems.id })
+    .from(estimateLineItems)
+    .where(and(eq(estimateLineItems.estimateId, id), eq(estimateLineItems.converted, false)));
+  const targetIds = unconverted.map(r => r.id);
+  if (targetIds.length === 0) {
+    return { id, message: 'No new line items to quote' };
+  }
+
+  // New quote row for this conversion (previous quotes are left active)
+  const [newQuote] = await db.insert(estimateQuotes)
+    .values({ estimateId: id, syncStatus: 'pending' } as any)
+    .returning();
+
+  await db.update(estimates)
+    .set({ status: 'otb', syncStatus: 'pending', otbConvertedAt: new Date(), updatedAt: new Date() } as any)
+    .where(eq(estimates.id, id));
+
+  syncEstimateToNetsuite(id, 'convert', { quoteId: newQuote.id, lineItemIds: targetIds })
+    .catch(() => {/* already logged + recorded */});
+
+  return {
+    id,
+    quoteId        : newQuote.id,
+    mode           : 'convert',
+    targetLineItems: targetIds.length,
+    syncStatus     : 'pending',
+    message        : `New quote triggered for ${targetIds.length} line item(s)`,
+  };
+}
+
+// ── List quotes for an estimate ──────────────────────────────────────────────
+
+export async function listEstimateQuotes(estimateId: number) {
+  return getDb()
+    .select()
+    .from(estimateQuotes)
+    .where(eq(estimateQuotes.estimateId, estimateId))
+    .orderBy(desc(estimateQuotes.createdAt));
 }
 
 // ── Deactivate ───────────────────────────────────────────────────────────────

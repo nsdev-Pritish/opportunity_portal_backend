@@ -79,3 +79,5 @@ temp/
 *.cert
 secrets/
 credentials/
+prism-convert-to-otb.postman_collection.json
+prism-netsuite-estimate-sync.postman_collection.json

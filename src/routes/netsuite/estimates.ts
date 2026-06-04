@@ -4,6 +4,7 @@
  *
  *  POST   /api/v1/netsuite/estimates                → create estimate (without line items)
  *  POST   /api/v1/netsuite/estimates/with-items     → create estimate WITH line items (atomic)
+ *  POST   /api/v1/netsuite/estimates/sync           → UPSERT estimate + line items (with components)
  *  PUT    /api/v1/netsuite/estimates/:nsId          → update estimate
  *  DELETE /api/v1/netsuite/estimates/:nsId          → deactivate estimate
  *  GET    /api/v1/netsuite/estimates                → list estimates
@@ -14,7 +15,7 @@
  */
 
 import { FastifyInstance } from 'fastify';
-import { eq, desc, asc } from 'drizzle-orm';
+import { eq, desc, asc, and, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../config/database.js';
 import {
@@ -23,6 +24,8 @@ import {
   departments, salesChannels, businessVerticals, businessTypes,
   employees, hkPartners, opsPartners, compliancePartners,
   clientIncoterms, clientShippingMethods, addresses,
+  csItems, vendors, factories, productClasses, productClassesEu,
+  sustainabilityOptions, vendorIncoterms, vendorAddresses, componentKitItems,
 } from '../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
@@ -43,6 +46,7 @@ async function resolveNsId(table: any, nsId: string | undefined | null): Promise
 const CreateEstimateSchema = z.object({
   // Required
   netsuiteInternalId   : z.string().min(1),  // NS internalId of this estimate
+  documentNumber       : z.string().max(100).optional().nullable(), // NS transaction id e.g. "EST-0042"
   projectName          : z.string().min(1).max(255),
   customerNsId         : z.string().min(1),  // NS internalId of the customer
 
@@ -137,6 +141,74 @@ const LineItemSchema = z.object({
 const CreateEstimateWithItemsSchema = z.object({
   estimate  : CreateEstimateSchema,
   lineItems : z.array(LineItemSchema).max(400).optional(), // up to 400 line items
+});
+
+// ─── SYNC schemas (inbound from NetSuite, NS internal IDs everywhere) ─────────
+// Used by POST /sync — upsert estimate + line items (with optional components).
+// Every reference field is an NS internalId string; we reverse-map to portal ids.
+
+const SyncLineItemSchema = z.object({
+  netsuiteInternalId   : z.string().optional().nullable(), // NS line id — used to match existing line
+  itemTypeNsId         : z.string().optional().nullable(), // → cs_items
+  componentKitItemNsId : z.string().optional().nullable(), // → component_kit_items (for components)
+  shortDescription     : z.string().max(500).optional().nullable(),
+  description          : z.string().optional().nullable(),
+  vendorNsId           : z.string().optional().nullable(), // → vendors
+  quantity             : z.string().optional().nullable(),
+  sellPricePerUnit     : z.string().optional().nullable(),
+  skuMarginPct         : z.string().optional().nullable(),
+  salesAmount          : z.string().optional().nullable(),
+  pickupExwFob         : z.string().optional().nullable(),
+  oceanDdp             : z.string().optional().nullable(),
+  airDdp               : z.string().optional().nullable(),
+  exclude              : z.boolean().optional(),
+  factoryNsId          : z.string().optional().nullable(), // → factories
+  vendorCurrencyNsId   : z.string().optional().nullable(), // → currencies
+  factoryCostPerUnit   : z.string().optional().nullable(),
+  packingCostPerUnit   : z.string().optional().nullable(),
+  sampleFees           : z.string().optional().nullable(),
+  otherPerUnit         : z.string().optional().nullable(),
+  freightPerUnit       : z.string().optional().nullable(),
+  dutyPct              : z.string().optional().nullable(),
+  tariffPct            : z.string().optional().nullable(),
+  tariffMuPct          : z.string().optional().nullable(),
+  otherCostPct         : z.string().optional().nullable(),
+  paddingPct           : z.string().optional().nullable(),
+  usdFactoryCost       : z.string().optional().nullable(),
+  landedCostPerUnit    : z.string().optional().nullable(),
+  extendedLandedCost   : z.string().optional().nullable(),
+  productClassNsId     : z.string().optional().nullable(), // → product_classes
+  productClassEuNsId   : z.string().optional().nullable(), // → product_classes_eu
+  sustainabilityNsId   : z.string().optional().nullable(), // → sustainability_options
+  htsCode              : z.string().max(20).optional().nullable(),
+  countryOfOrigin      : z.string().max(100).optional().nullable(),
+  countryOfDest        : z.enum(['US','EU']).optional(),
+  unitsPerCarton       : z.number().int().optional().nullable(),
+  dimLCm               : z.string().optional().nullable(),
+  dimWCm               : z.string().optional().nullable(),
+  dimHCm               : z.string().optional().nullable(),
+  weightKgPerCarton    : z.string().optional().nullable(),
+  cbmPerCarton         : z.string().optional().nullable(),
+  totalCartons         : z.number().int().optional().nullable(),
+  totalCbm             : z.string().optional().nullable(),
+  chargeableWeightKg   : z.string().optional().nullable(),
+  shippingGroupId      : z.string().max(255).optional().nullable(),
+  exFactoryDate        : z.string().optional().nullable(),
+  vendorIncotermsNsId  : z.string().optional().nullable(), // → vendor_incoterms
+  shipToVendorNsId     : z.string().optional().nullable(), // → vendors
+  shipToVendorAddrNsId : z.string().optional().nullable(), // → vendor_addresses
+  notes                : z.string().optional().nullable(),
+  selected             : z.boolean().optional(),
+});
+
+// Parent line item carries an optional nested components array
+const SyncLineItemWithComponentsSchema = SyncLineItemSchema.extend({
+  components: z.array(SyncLineItemSchema).max(50).optional(),
+});
+
+const SyncEstimateSchema = z.object({
+  estimate  : CreateEstimateSchema,
+  lineItems : z.array(SyncLineItemWithComponentsSchema).max(400).optional(),
 });
 
 // ─── Route handlers ───────────────────────────────────────────────
@@ -334,6 +406,99 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
     }
   });
 
+  // ── POST /api/v1/netsuite/estimates/sync ───────────────────────
+  // Full upsert of an estimate + line items (with optional components).
+  // Called by NetSuite after an estimate is created/edited in NS.
+  //
+  // - Estimate is matched by netsuiteInternalId → updated if found, else created.
+  // - documentNumber from NS is stored on the estimate.
+  // - Each line item is matched by its NS line internal id → updated, else inserted.
+  //   Lines that exist in the DB but are NOT in the payload are deleted.
+  // - Components are nested under their parent line via `components: [...]`.
+  //
+  // Example body:
+  // {
+  //   "estimate": {
+  //     "netsuiteInternalId": "404146",
+  //     "documentNumber": "EST-0042",
+  //     "projectName": "Holiday Kit",
+  //     "customerNsId": "1627",
+  //     "departmentNsId": "51"
+  //   },
+  //   "lineItems": [
+  //     {
+  //       "netsuiteInternalId": "67001",
+  //       "itemTypeNsId": "25",
+  //       "shortDescription": "Tumbler Gift Set",
+  //       "quantity": "3000",
+  //       "components": [
+  //         { "netsuiteInternalId": "67002", "componentKitItemNsId": "1", "shortDescription": "Tumbler Body" }
+  //       ]
+  //     },
+  //     { "netsuiteInternalId": "67005", "itemTypeNsId": "4", "shortDescription": "Tote Bag" }
+  //   ]
+  // }
+  app.post<{ Body: unknown }>('/sync', async (req, reply) => {
+    const { estimate: estData, lineItems } = SyncEstimateSchema.parse(req.body);
+    const db = getDb();
+    const startTime = Date.now();
+
+    logger.info({ netsuiteId: estData.netsuiteInternalId, lineItemCount: lineItems?.length ?? 0 },
+      'Syncing estimate from NetSuite (upsert)');
+
+    const result = await db.transaction(async (tx) => {
+      // 1. Resolve customer (required)
+      const customerId = await resolveNsId(customers, estData.customerNsId);
+      if (!customerId) {
+        throw new ValidationError(
+          `Customer with NS internalId '${estData.customerNsId}' not found. Push the customer first.`,
+        );
+      }
+
+      // 2. Upsert the estimate header by netsuiteInternalId
+      const [existing] = await tx.select({ id: estimates.id }).from(estimates)
+        .where(eq(estimates.netsuiteInternalId, estData.netsuiteInternalId)).limit(1);
+
+      let estimateId: number;
+      let action: 'created' | 'updated';
+      const values = await buildEstimateValues(estData, customerId);
+
+      if (existing) {
+        await tx.update(estimates).set({ ...values, updatedAt: new Date() } as any)
+          .where(eq(estimates.id, existing.id));
+        estimateId = existing.id;
+        action = 'updated';
+      } else {
+        const [created] = await tx.insert(estimates).values(values as any).returning({ id: estimates.id });
+        estimateId = created.id;
+        action = 'created';
+      }
+
+      // 3. Upsert line items (parents first, then components)
+      const lineResult = await upsertNsLineItems(tx, estimateId, lineItems ?? []);
+
+      return { estimateId, action, ...lineResult };
+    });
+
+    logger.info({
+      netsuiteId: estData.netsuiteInternalId,
+      estimateId: result.estimateId,
+      action    : result.action,
+      parents   : result.parentCount,
+      components : result.componentCount,
+      deleted   : result.deletedCount,
+      durationMs: Date.now() - startTime,
+    }, 'Estimate synced from NetSuite');
+
+    return reply.status(action200(result.action)).send({
+      portalId          : result.estimateId,
+      netsuiteInternalId: estData.netsuiteInternalId,
+      documentNumber    : estData.documentNumber ?? null,
+      _action           : result.action,
+      lineItems         : { parents: result.parentCount, components: result.componentCount, deleted: result.deletedCount },
+    });
+  });
+
   // ── PUT /api/v1/netsuite/estimates/:nsId ───────────────────────
   // Update an existing estimate. Only fields in the body are changed.
   //
@@ -369,6 +534,7 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
 async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, customerId: number) {
   return {
     netsuiteInternalId   : body.netsuiteInternalId,
+    documentNumber       : body.documentNumber,
     projectName          : body.projectName,
     customerId,
     customerContactId    : await resolveNsId(contacts,           body.customerContactNsId),
@@ -411,7 +577,7 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
   const updates: Record<string, unknown> = { updatedAt: new Date() };
 
   // Scalar fields — only set if present in body
-  const scalars = ['projectName','customerPo','expectedCloseDate','promiseDate',
+  const scalars = ['documentNumber','projectName','customerPo','expectedCloseDate','promiseDate',
     'projectedTotalAmt','estimatedQty','deckRequest','artSetupRequest',
     'pkgDeckRequest','pkgArtSetupRequest','sampleOnlyOrder','reOrder','bibleLink','memo'];
   for (const k of scalars) {
@@ -445,4 +611,140 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
   const [updated] = await db.update(estimates).set(updates)
     .where(eq(estimates.id, portalId)).returning();
   return updated;
+}
+
+// ─── SYNC helpers ─────────────────────────────────────────────────
+
+function action200(action: 'created' | 'updated'): number {
+  return action === 'created' ? 201 : 200;
+}
+
+// Convert an inbound NS line item (NS internalIds) → portal DB values (portal FK ids)
+async function resolveLineItemValues(item: z.infer<typeof SyncLineItemSchema>) {
+  const [
+    itemTypeId, vendorId, factoryId, vendorCurrencyId,
+    productClassId, productClassEuId, sustainabilityId,
+    vendorIncotermsId, shipToVendorId, shipToVendorAddrId, componentKitItemId,
+  ] = await Promise.all([
+    resolveNsId(csItems,               item.itemTypeNsId),
+    resolveNsId(vendors,               item.vendorNsId),
+    resolveNsId(factories,             item.factoryNsId),
+    resolveNsId(currencies,            item.vendorCurrencyNsId),
+    resolveNsId(productClasses,        item.productClassNsId),
+    resolveNsId(productClassesEu,      item.productClassEuNsId),
+    resolveNsId(sustainabilityOptions, item.sustainabilityNsId),
+    resolveNsId(vendorIncoterms,       item.vendorIncotermsNsId),
+    resolveNsId(vendors,               item.shipToVendorNsId),
+    resolveNsId(vendorAddresses,       item.shipToVendorAddrNsId),
+    resolveNsId(componentKitItems,     item.componentKitItemNsId),
+  ]);
+
+  return {
+    netsuiteInternalId : item.netsuiteInternalId ?? null,
+    itemTypeId, vendorId, factoryId, vendorCurrencyId,
+    productClassId, productClassEuId, sustainabilityId,
+    vendorIncotermsId, shipToVendorId, shipToVendorAddrId, componentKitItemId,
+    shortDescription   : item.shortDescription ?? null,
+    description        : item.description ?? null,
+    quantity           : item.quantity ?? null,
+    sellPricePerUnit   : item.sellPricePerUnit ?? null,
+    skuMarginPct       : item.skuMarginPct ?? null,
+    salesAmount        : item.salesAmount ?? null,
+    pickupExwFob       : item.pickupExwFob ?? null,
+    oceanDdp           : item.oceanDdp ?? null,
+    airDdp             : item.airDdp ?? null,
+    exclude            : item.exclude ?? false,
+    factoryCostPerUnit : item.factoryCostPerUnit ?? null,
+    packingCostPerUnit : item.packingCostPerUnit ?? null,
+    sampleFees         : item.sampleFees ?? null,
+    otherPerUnit       : item.otherPerUnit ?? null,
+    freightPerUnit     : item.freightPerUnit ?? null,
+    dutyPct            : item.dutyPct ?? null,
+    tariffPct          : item.tariffPct ?? null,
+    tariffMuPct        : item.tariffMuPct ?? null,
+    otherCostPct       : item.otherCostPct ?? null,
+    paddingPct         : item.paddingPct ?? null,
+    usdFactoryCost     : item.usdFactoryCost ?? null,
+    landedCostPerUnit  : item.landedCostPerUnit ?? null,
+    extendedLandedCost : item.extendedLandedCost ?? null,
+    htsCode            : item.htsCode ?? null,
+    countryOfOrigin    : item.countryOfOrigin ?? null,
+    countryOfDest      : item.countryOfDest ?? 'US',
+    unitsPerCarton     : item.unitsPerCarton ?? null,
+    dimLCm             : item.dimLCm ?? null,
+    dimWCm             : item.dimWCm ?? null,
+    dimHCm             : item.dimHCm ?? null,
+    weightKgPerCarton  : item.weightKgPerCarton ?? null,
+    cbmPerCarton       : item.cbmPerCarton ?? null,
+    totalCartons       : item.totalCartons ?? null,
+    totalCbm           : item.totalCbm ?? null,
+    chargeableWeightKg : item.chargeableWeightKg ?? null,
+    shippingGroupId    : item.shippingGroupId ?? null,
+    exFactoryDate      : item.exFactoryDate ?? null,
+    notes              : item.notes ?? null,
+    selected           : item.selected ?? true,
+    syncStatus         : 'synced' as const,
+    syncedAt           : new Date(),
+  };
+}
+
+// Upsert all line items for an estimate, matching by NS line internal id.
+// Strategy: delete all existing rows (clears lineNumber slots), then re-insert.
+// Rows whose NS id matched an existing row keep that same portal id; new NS lines
+// get fresh ids; existing rows absent from the payload are dropped.
+async function upsertNsLineItems(
+  tx: any,
+  estimateId: number,
+  items: Array<z.infer<typeof SyncLineItemWithComponentsSchema>>,
+) {
+  const existing = await tx
+    .select({ id: estimateLineItems.id, nsId: estimateLineItems.netsuiteInternalId })
+    .from(estimateLineItems)
+    .where(eq(estimateLineItems.estimateId, estimateId));
+
+  const nsToPortalId = new Map<string, number>();
+  for (const r of existing) { if (r.nsId) nsToPortalId.set(r.nsId, r.id); }
+
+  // Delete all — avoids (estimateId, lineNumber) unique-constraint collisions
+  await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, estimateId));
+
+  if (items.length === 0) {
+    return { parentCount: 0, componentCount: 0, deletedCount: existing.length };
+  }
+
+  let matched = 0;
+  let lineCounter = 1;
+
+  // Pass 1: parents
+  const parentIds: number[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const { components: _comps, ...rest } = items[i] as any;
+    const vals = await resolveLineItemValues(rest);
+    const portalId = vals.netsuiteInternalId ? nsToPortalId.get(vals.netsuiteInternalId) : undefined;
+    if (portalId) matched++;
+    const [row] = await tx.insert(estimateLineItems)
+      .values({ ...(portalId ? { id: portalId } : {}), ...vals, estimateId, lineNumber: lineCounter++, sortOrder: i, parentLineItemId: null } as any)
+      .returning({ id: estimateLineItems.id });
+    parentIds.push(row.id);
+  }
+
+  // Pass 2: components (nested under their parent)
+  let componentCount = 0;
+  for (let i = 0; i < items.length; i++) {
+    const comps = (items[i] as any).components ?? [];
+    for (let j = 0; j < comps.length; j++) {
+      const vals = await resolveLineItemValues(comps[j]);
+      const portalId = vals.netsuiteInternalId ? nsToPortalId.get(vals.netsuiteInternalId) : undefined;
+      if (portalId) matched++;
+      await tx.insert(estimateLineItems)
+        .values({ ...(portalId ? { id: portalId } : {}), ...vals, estimateId, lineNumber: lineCounter++, sortOrder: j, parentLineItemId: parentIds[i] } as any);
+      componentCount++;
+    }
+  }
+
+  return {
+    parentCount  : items.length,
+    componentCount,
+    deletedCount : Math.max(0, existing.length - matched),
+  };
 }

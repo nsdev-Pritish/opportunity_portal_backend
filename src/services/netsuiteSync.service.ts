@@ -14,10 +14,10 @@
  */
 
 import crypto from 'crypto';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, inArray } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import {
-  estimates, estimateLineItems,
+  estimates, estimateLineItems, estimateQuotes,
   subsidiaries, customers, contacts, currencies, projectNames, projectTypes, likelyToClose,
   departments, salesChannels, businessVerticals, businessTypes,
   accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
@@ -114,7 +114,7 @@ async function getNsId(table: any, portalId: number | null | undefined): Promise
 
 // ── Build the suitelet payload ─────────────────────────────────────────────────
 
-async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
+async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'convert', lineItemIds?: number[]) {
   const db = getDb();
 
   // 1. Fetch estimate header
@@ -207,9 +207,13 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
     notesClosedLostReasonNS      : est.notesClosedLostReason ?? '',
   };
 
-  // Phase 2 – Line items
+  // Phase 2 – Line items (for 'convert' mode only the target lineItemIds are sent)
   const lineItemRows = await db.select().from(estimateLineItems)
-    .where(eq(estimateLineItems.estimateId, estimateId))
+    .where(
+      lineItemIds && lineItemIds.length > 0
+        ? inArray(estimateLineItems.id, lineItemIds)
+        : eq(estimateLineItems.estimateId, estimateId)
+    )
     .orderBy(estimateLineItems.lineNumber);
 
   if (lineItemRows.length > 0) {
@@ -355,8 +359,9 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update') {
 // ── Public entry point ────────────────────────────────────────────────────────
 
 export async function syncEstimateToNetsuite(
-  estimateId: number,
-  mode: 'create' | 'update' = 'create',
+  estimateId : number,
+  mode       : 'create' | 'update' | 'convert' | 'convertToExisting' = 'create',
+  opts?      : { quoteId?: number; quoteNsId?: string; lineItemIds?: number[] },
 ): Promise<void> {
   if (!env.NS_SUITELET_URL) {
     logger.debug({ estimateId }, 'NS_SUITELET_URL not configured — skipping NS sync');
@@ -364,9 +369,24 @@ export async function syncEstimateToNetsuite(
   }
 
   const db = getDb();
+  const isConvert = mode === 'convert' || mode === 'convertToExisting';
 
   try {
-    const payload = await buildNsPayload(estimateId, mode);
+    // Convert payloads (per NetSuite contract):
+    //   New quote        → { mode: 'convert',           oppId }
+    //   Add to existing  → { mode: 'convertToExisting', oppId, quoteId }
+    let payload: Record<string, unknown>;
+    if (isConvert) {
+      const [est] = await db.select({ netsuiteInternalId: estimates.netsuiteInternalId })
+        .from(estimates).where(eq(estimates.id, estimateId)).limit(1);
+      const oppId = est?.netsuiteInternalId ?? '';
+
+      payload = mode === 'convertToExisting'
+        ? { mode: 'convertToExisting', oppId, quoteId: opts?.quoteNsId ?? '' }
+        : { mode: 'convert', oppId };
+    } else {
+      payload = await buildNsPayload(estimateId, mode, opts?.lineItemIds);
+    }
 
     // Append mode param — handle URLs that already carry query params (e.g. ?script=&deploy=)
     const url = env.NS_SUITELET_URL.includes('?')
@@ -396,12 +416,15 @@ export async function syncEstimateToNetsuite(
       throw new Error(`NS suitelet responded ${res.status}: ${body}`);
     }
 
-    // NS response: { id: "12345", tranId: "EST-0042", lineIds: { "1": "67890", "2": "67891" } }
+    // NS response for create/update: { id, tranId, lineIds }
+    // NS response for convert:       { id, quoteId, quoteTranId, lineIds }
     const nsResp = await res.json() as {
       id?            : string;
       internalId?    : string;
       tranId?        : string;
       documentNumber?: string;
+      quoteId?       : string;
+      quoteTranId?   : string;
       lineIds?       : (string | number)[] | Record<string, string | number>;
     };
 
@@ -410,35 +433,74 @@ export async function syncEstimateToNetsuite(
 
     logger.info({
       estimateId,
+      mode,
       rawResponse    : nsResp,
       nsInternalId   : nsInternalId   ?? null,
       documentNumber : documentNumber ?? null,
-      hasInternalId  : !!nsInternalId,
-      hasDocumentNum : !!documentNumber,
+      quoteId        : nsResp.quoteId    ?? null,
+      quoteTranId    : nsResp.quoteTranId ?? null,
     }, 'NetSuite suitelet response received');
 
-    await db.update(estimates)
-      .set({
-        netsuiteInternalId: nsInternalId   ?? undefined,
-        documentNumber    : documentNumber ?? undefined,
-        syncStatus        : 'synced',
-        syncError         : null,
-        syncedAt          : new Date(),
-      } as any)
-      .where(eq(estimates.id, estimateId));
+    // ── For create / update: update the estimate row ──────────────────────────
+    if (!isConvert) {
+      await db.update(estimates)
+        .set({
+          netsuiteInternalId: nsInternalId   ?? undefined,
+          documentNumber    : documentNumber ?? undefined,
+          syncStatus        : 'synced',
+          syncError         : null,
+          syncedAt          : new Date(),
+        } as any)
+        .where(eq(estimates.id, estimateId));
+    }
 
-    // Store NS line IDs back to each line item.
-    // lineIds may be a 0-based array ["id1","id2",...] or a 1-based object {"1":"id1","2":"id2",...}.
-    if (nsResp.lineIds && typeof nsResp.lineIds === 'object') {
-      const lineRows = await db
-        .select({ id: estimateLineItems.id })
-        .from(estimateLineItems)
-        .where(eq(estimateLineItems.estimateId, estimateId))
-        .orderBy(asc(estimateLineItems.lineNumber));
+    // ── For convert / convertToExisting: save quote IDs + mark lines converted ─
+    if (isConvert && opts?.quoteId) {
+      // NS convert response uses { internalId, documentNumber } for the new Quote.
+      // Fall back to quoteId/quoteTranId in case the suitelet uses those names.
+      const quoteNsId   = nsResp.internalId    ?? nsResp.quoteId;
+      const quoteDocNum = nsResp.documentNumber ?? nsResp.quoteTranId;
+
+      await db.update(estimateQuotes)
+        .set({
+          quoteNetsuiteInternalId: quoteNsId   ?? undefined,
+          quoteDocumentNumber    : quoteDocNum ?? undefined,
+          syncStatus             : 'synced',
+          syncError              : null,
+          syncedAt               : new Date(),
+          updatedAt              : new Date(),
+        } as any)
+        .where(eq(estimateQuotes.id, opts.quoteId));
+
+      // Mark all quoted line items as converted
+      const targetIds = opts.lineItemIds ?? [];
+      if (targetIds.length > 0) {
+        await db.update(estimateLineItems)
+          .set({ converted: true } as any)
+          .where(inArray(estimateLineItems.id, targetIds));
+      }
+
+      // Also mark the estimate as synced
+      await db.update(estimates)
+        .set({ syncStatus: 'synced', syncError: null, syncedAt: new Date() } as any)
+        .where(eq(estimates.id, estimateId));
+    }
+
+    // ── Store NS line IDs back to each line item ──────────────────────────────
+    // Skip for convert modes — those lineIds belong to the Quote, not the estimate
+    // line items, so stamping them would corrupt the estimate line NS ids.
+    if (!isConvert && nsResp.lineIds && typeof nsResp.lineIds === 'object') {
+      const lineRows = opts?.lineItemIds && opts.lineItemIds.length > 0
+        ? await db.select({ id: estimateLineItems.id }).from(estimateLineItems)
+            .where(inArray(estimateLineItems.id, opts.lineItemIds))
+            .orderBy(asc(estimateLineItems.lineNumber))
+        : await db.select({ id: estimateLineItems.id }).from(estimateLineItems)
+            .where(eq(estimateLineItems.estimateId, estimateId))
+            .orderBy(asc(estimateLineItems.lineNumber));
 
       const lineIdsArray = Array.isArray(nsResp.lineIds)
-        ? nsResp.lineIds                                                      // 0-based array → use index directly
-        : Object.entries(nsResp.lineIds)                                      // 1-based object → convert to 0-based
+        ? nsResp.lineIds
+        : Object.entries(nsResp.lineIds)
             .reduce<(string | number)[]>((acc, [k, v]) => { acc[parseInt(k, 10) - 1] = v; return acc; }, []);
 
       await Promise.all(
@@ -454,15 +516,21 @@ export async function syncEstimateToNetsuite(
       logger.info({ estimateId, lineCount: lineRows.length, lineIds: nsResp.lineIds }, 'Line item NS IDs stored');
     }
 
-    logger.info({ estimateId, nsInternalId, documentNumber }, 'Estimate synced to NetSuite successfully');
+    logger.info({ estimateId, mode, nsInternalId, documentNumber, quoteId: nsResp.quoteId }, 'Estimate synced to NetSuite successfully');
 
   } catch (err: any) {
     const message = err?.message ?? String(err);
     logger.error({ estimateId, mode, error: message }, 'NetSuite sync failed');
 
-    // Mark as failed — portal create/update still succeeds even when NS is down
     await db.update(estimates)
       .set({ syncStatus: 'failed', syncError: message } as any)
       .where(eq(estimates.id, estimateId));
+
+    // For convert modes also mark the quote row as failed
+    if (isConvert && opts?.quoteId) {
+      await db.update(estimateQuotes)
+        .set({ syncStatus: 'failed', syncError: message, updatedAt: new Date() } as any)
+        .where(eq(estimateQuotes.id, opts.quoteId));
+    }
   }
 }
