@@ -27,7 +27,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(helmet, { contentSecurityPolicy: false });
-  await app.register(cors, { origin: process.env.CORS_ORIGIN ?? true, credentials: true });
+  await app.register(cors, {
+    origin: process.env.CORS_ORIGIN ?? true,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  });
   await app.register(rateLimit, {
     global: true, max: 200, timeWindow: 60_000,
     redis: getRedis(),
