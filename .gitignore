@@ -81,3 +81,4 @@ secrets/
 credentials/
 prism-convert-to-otb.postman_collection.json
 prism-netsuite-estimate-sync.postman_collection.json
+postman/soft-delete.postman_collection.json

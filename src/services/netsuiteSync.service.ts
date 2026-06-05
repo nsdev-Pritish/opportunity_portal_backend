@@ -14,7 +14,7 @@
  */
 
 import crypto from 'crypto';
-import { eq, asc, inArray } from 'drizzle-orm';
+import { eq, and, asc, inArray } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import {
   estimates, estimateLineItems, estimateQuotes,
@@ -532,5 +532,111 @@ export async function syncEstimateToNetsuite(
         .set({ syncStatus: 'failed', syncError: message, updatedAt: new Date() } as any)
         .where(eq(estimateQuotes.id, opts.quoteId));
     }
+  }
+}
+
+// ── Delete-mode sync: deactivate soft-deleted line items in NetSuite ────────────
+//
+// Called after a line item (or a whole estimate) is soft-deleted in the DB. Sends
+// ONLY the lines whose is_active was set to false, each carrying its NetSuite line
+// internal id, so the suitelet can deactivate them. Payload shape:
+//
+//   { mode: 'delete', internalId: <estimate NS id>, lines: { "1": { lineId, active: false } } }
+//
+//   internalId → estimates.netsuite_internal_id
+//   lineId     → estimate_line_items.netsuite_internal_id
+//
+// Lines never synced to NetSuite (no netsuite_internal_id) are skipped — there is
+// nothing to deactivate there. If the estimate itself was never synced, the whole
+// call is skipped.
+export async function deactivateLinesInNetsuite(
+  estimateId: number,
+  opts?: { lineItemIds?: number[] },
+): Promise<void> {
+  if (!env.NS_SUITELET_URL) {
+    logger.debug({ estimateId }, 'NS_SUITELET_URL not configured — skipping NS delete sync');
+    return;
+  }
+
+  const db = getDb();
+  const mode = 'delete';
+
+  try {
+    // The estimate must exist in NetSuite, otherwise there is nothing to deactivate there.
+    const [est] = await db.select({ netsuiteInternalId: estimates.netsuiteInternalId })
+      .from(estimates).where(eq(estimates.id, estimateId)).limit(1);
+    const internalId = est?.netsuiteInternalId ?? '';
+    if (!internalId) {
+      logger.info({ estimateId }, 'Estimate not in NetSuite yet — nothing to deactivate');
+      return;
+    }
+
+    // Pull the soft-deleted lines: the specific ids when given (single line-item delete),
+    // otherwise every inactive line of the estimate (whole-estimate delete).
+    const ids = opts?.lineItemIds ?? [];
+    const rows = await db.select({
+        id      : estimateLineItems.id,
+        lineNsId: estimateLineItems.netsuiteInternalId,
+      })
+      .from(estimateLineItems)
+      .where(
+        ids.length > 0
+          ? and(inArray(estimateLineItems.id, ids), eq(estimateLineItems.isActive, false))
+          : and(eq(estimateLineItems.estimateId, estimateId), eq(estimateLineItems.isActive, false)),
+      )
+      .orderBy(asc(estimateLineItems.lineNumber));
+
+    // Only lines that exist in NetSuite (have a line internal id) can be deactivated there.
+    const deletable = rows.filter(r => r.lineNsId);
+    if (deletable.length === 0) {
+      logger.info({ estimateId }, 'No NetSuite-synced soft-deleted lines to deactivate — skipping');
+      return;
+    }
+
+    // 1-based keys to match the NS suitelet convention; send only active:false lines.
+    const lines: Record<string, { lineId: string; active: boolean }> = {};
+    deletable.forEach((r, i) => {
+      lines[String(i + 1)] = { lineId: String(r.lineNsId), active: false };
+    });
+
+    const payload = { mode, internalId, lines };
+
+    const url = env.NS_SUITELET_URL.includes('?')
+      ? `${env.NS_SUITELET_URL}&mode=${mode}`
+      : `${env.NS_SUITELET_URL}?mode=${mode}`;
+
+    const authHeader = buildOAuthHeader('POST', url);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (authHeader) headers['Authorization'] = authHeader;
+
+    logger.info({ estimateId, mode, url, internalId, lineCount: deletable.length },
+      'Posting delete to NetSuite suitelet');
+
+    const res = await fetch(url, {
+      method : 'POST',
+      headers,
+      body   : JSON.stringify(payload),
+      signal : AbortSignal.timeout(60_000),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`NS suitelet responded ${res.status}: ${body}`);
+    }
+
+    // NS confirmed deactivation — mark those lines synced.
+    await db.update(estimateLineItems)
+      .set({ syncStatus: 'synced', syncError: null, syncedAt: new Date() } as any)
+      .where(inArray(estimateLineItems.id, deletable.map(r => r.id)));
+
+    logger.info({ estimateId, mode, lineCount: deletable.length },
+      'NetSuite line deactivation synced successfully');
+
+  } catch (err: any) {
+    const message = err?.message ?? String(err);
+    logger.error({ estimateId, mode, error: message }, 'NetSuite delete sync failed');
+    await db.update(estimates)
+      .set({ syncStatus: 'failed', syncError: message } as any)
+      .where(eq(estimates.id, estimateId));
   }
 }

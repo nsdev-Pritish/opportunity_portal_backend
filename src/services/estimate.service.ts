@@ -9,7 +9,7 @@ import {
 import { cacheDel, CacheKeys } from '../utils/cache.js';
 import { NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import { syncEstimateToNetsuite } from './netsuiteSync.service.js';
+import { syncEstimateToNetsuite, deactivateLinesInNetsuite } from './netsuiteSync.service.js';
 
 type RawLineItem = Record<string, unknown> & { components?: Record<string, unknown>[] };
 
@@ -193,7 +193,10 @@ export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
   if (estimateIds.length > 0) {
     const allLineItems = await db.select()
       .from(estimateLineItems)
-      .where(inArray(estimateLineItems.estimateId, estimateIds))
+      .where(and(
+        inArray(estimateLineItems.estimateId, estimateIds),
+        eq(estimateLineItems.isActive, true),
+      ))
       .orderBy(asc(estimateLineItems.estimateId), asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder));
 
     // Nest components under their parent, group by estimateId
@@ -304,7 +307,10 @@ export async function getEstimate(id: number) {
   const [allLineItemRows, freightGroups] = await Promise.all([
     db.select()
       .from(estimateLineItems)
-      .where(eq(estimateLineItems.estimateId, id))
+      .where(and(
+        eq(estimateLineItems.estimateId, id),
+        eq(estimateLineItems.isActive, true),
+      ))
       .orderBy(asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder)),
     db.select()
       .from(estimateFreightGroups)
@@ -391,20 +397,29 @@ async function upsertLineItemsWithComponents(
   estimateId: number,
   items: RawLineItem[],
 ): Promise<{ parents: any[]; components: any[] }> {
+  // Only ACTIVE rows take part in the replace. Soft-deleted rows (is_active = false) are
+  // left untouched so their row + netsuite_internal_id survive for later NetSuite deactivation.
+  const activeOnly = and(
+    eq(estimateLineItems.estimateId, estimateId),
+    eq(estimateLineItems.isActive, true),
+  );
+
   if (items.length === 0) {
-    await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, estimateId));
+    await tx.delete(estimateLineItems).where(activeOnly);
     return { parents: [], components: [] };
   }
 
-  // Collect existing IDs so we know which incoming ids are real vs made-up
+  // Collect existing ACTIVE ids so we know which incoming ids are real vs made-up.
+  // (Soft-deleted ids are excluded so a preserved id can never collide with a retained row.)
   const existing = await tx
     .select({ id: estimateLineItems.id })
     .from(estimateLineItems)
-    .where(eq(estimateLineItems.estimateId, estimateId));
+    .where(activeOnly);
   const existingIds = new Set<number>(existing.map((r: any) => r.id));
 
-  // Delete all existing rows — clears lineNumber unique constraint slots
-  await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, estimateId));
+  // Delete the active rows only — clears their lineNumber slots (partial unique index means
+  // retained soft-deleted rows don't block reuse). Soft-deleted rows are kept.
+  await tx.delete(estimateLineItems).where(activeOnly);
 
   // Pass 1: insert parent rows (preserve original id if it was a real DB row)
   const parents: any[] = [];
@@ -513,7 +528,10 @@ export async function updateEstimateWithItems(
     } else {
       allLineItems = await tx.select()
         .from(estimateLineItems)
-        .where(eq(estimateLineItems.estimateId, id))
+        .where(and(
+          eq(estimateLineItems.estimateId, id),
+          eq(estimateLineItems.isActive, true),
+        ))
         .orderBy(asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder));
     }
 
@@ -703,9 +721,19 @@ export async function listEstimateQuotes(estimateId: number) {
 
 export async function deactivateEstimate(id: number) {
   const db = getDb();
-  await db.update(estimates)
-    .set({ isActive: false, updatedAt: new Date() })
-    .where(eq(estimates.id, id));
+  await db.transaction(async (tx) => {
+    // Soft-delete the estimate header...
+    await tx.update(estimates)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(estimates.id, id));
+    // ...and cascade to every line item (parents + components) so their rows +
+    // netsuite_internal_ids are retained for later NetSuite deactivation.
+    await tx.update(estimateLineItems)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(estimateLineItems.estimateId, id));
+  });
   await cacheDel(CacheKeys.estimate(id));
+  // Push the deactivation to NetSuite (delete mode) for every line of this estimate.
+  deactivateLinesInNetsuite(id).catch(() => {/* already logged + recorded */});
   return { id, isActive: false };
 }

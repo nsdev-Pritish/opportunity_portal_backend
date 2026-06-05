@@ -668,6 +668,9 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   freightNotes:         text('freight_notes'),
   excludeFromPrint:     boolean('exclude_from_print').default(false),
 
+  // Soft delete: false = "deleted" (hidden from reads, row retained for NetSuite deactivation)
+  isActive:             boolean('is_active').default(true).notNull(),
+
   // Parent–child relationship (Quote Kit Item → Component Kit Items)
   parentLineItemId: integer('parent_line_item_id').references((): AnyPgColumn => estimateLineItems.id, { onDelete: 'cascade' }),
   sortOrder: integer('sort_order').notNull().default(0),
@@ -682,7 +685,9 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   estimateIdx: index('eli_estimate_idx').on(t.estimateId),
   syncIdx: index('eli_sync_idx').on(t.syncStatus),
   vendorIdx: index('eli_vendor_idx').on(t.vendorId),
-  lineNumberIdx: uniqueIndex('eli_line_number_idx').on(t.estimateId, t.lineNumber),
+  // Partial: only active rows must have a unique line number. Soft-deleted rows keep
+  // their old line_number but are excluded so a re-inserted active row can reuse it.
+  lineNumberIdx: uniqueIndex('eli_line_number_idx').on(t.estimateId, t.lineNumber).where(sql`${t.isActive} = true`),
   parentIdx: index('eli_parent_idx').on(t.parentLineItemId),
 }));
 

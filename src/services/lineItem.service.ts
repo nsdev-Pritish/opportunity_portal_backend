@@ -1,13 +1,16 @@
-import { eq, and, asc, desc } from 'drizzle-orm';
+import { eq, and, or, asc, desc } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import { estimateLineItems } from '../db/schema/index.js';
 import { NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import { syncEstimateToNetsuite } from './netsuiteSync.service.js';
+import { syncEstimateToNetsuite, deactivateLinesInNetsuite } from './netsuiteSync.service.js';
 
 export async function listLineItems(estimateId: number) {
   return getDb().select().from(estimateLineItems)
-    .where(eq(estimateLineItems.estimateId, estimateId))
+    .where(and(
+      eq(estimateLineItems.estimateId, estimateId),
+      eq(estimateLineItems.isActive, true),
+    ))
     .orderBy(asc(estimateLineItems.lineNumber));
 }
 
@@ -92,8 +95,19 @@ export async function updateLineItem(id: number, estimateId: number, data: Recor
 
 export async function deleteLineItem(id: number, estimateId: number) {
   const db = getDb();
-  await db.update(estimateLineItems).set({ exclude: true, updatedAt: new Date() })
-    .where(and(eq(estimateLineItems.id, id), eq(estimateLineItems.estimateId, estimateId)));
-  syncEstimateToNetsuite(estimateId, 'update').catch(() => {/* already logged + recorded */});
-  return { id, excluded: true };
+  // Soft delete: flip is_active to false instead of removing the row. The row (and its
+  // netsuite_internal_id) is retained so a future NetSuite call can deactivate the line.
+  // Cascade to component children of a kit parent — onDelete:'cascade' only fires on a
+  // hard delete, so we soft-delete the children explicitly here.
+  const affected = await db.update(estimateLineItems)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(and(
+      eq(estimateLineItems.estimateId, estimateId),
+      or(eq(estimateLineItems.id, id), eq(estimateLineItems.parentLineItemId, id)),
+    ))
+    .returning({ id: estimateLineItems.id });
+  // Push the deactivation to NetSuite (delete mode) for just these lines.
+  deactivateLinesInNetsuite(estimateId, { lineItemIds: affected.map((r) => r.id) })
+    .catch(() => {/* already logged + recorded */});
+  return { id, isActive: false };
 }
