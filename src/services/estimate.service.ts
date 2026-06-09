@@ -386,19 +386,31 @@ async function insertLineItemsWithComponents(
   return { parents, components };
 }
 
-// ── Internal: upsert for UPDATE ───────────────────────────────────────────────
-// Strategy: delete all existing rows first (clears lineNumber slots), then
-// re-insert every row. Rows whose `id` was in the DB get that same `id` back
-// (PostgreSQL allows explicit serial inserts), so the frontend's references stay
-// stable. Rows without a known `id` (new additions) get auto-assigned IDs.
+// ── Internal: in-place diff upsert for UPDATE ─────────────────────────────────
+// Instead of deleting + re-inserting every line, we diff the incoming lines against
+// the existing ACTIVE rows and apply the minimum changes:
+//   • matched line  → UPDATE in place (row id + netsuite_internal_id are NEVER touched,
+//                     so the NS line id survives and NetSuite updates the same line)
+//   • new line      → INSERT
+//   • removed line  → DELETE (parent delete cascades to its components)
+//
+// Matching, per incoming line: 1) by `id` when the payload carries a known id;
+// 2) otherwise by POSITION — the Nth incoming parent maps to the Nth old parent, and
+// each parent's Nth component maps to that old parent's Nth component. Position matching
+// assumes the frontend keeps line order and appends new lines at the end; a UI that
+// REORDERS lines must send each line's real `id` to stay correct.
+//
+// lineNumber is unique per estimate among active rows, so before renumbering we shift the
+// survivors' lineNumber out of the target range to avoid transient unique-index collisions.
+const LINE_NUMBER_PARK = 1_000_000;
 
 async function upsertLineItemsWithComponents(
   tx: any,
   estimateId: number,
   items: RawLineItem[],
 ): Promise<{ parents: any[]; components: any[] }> {
-  // Only ACTIVE rows take part in the replace. Soft-deleted rows (is_active = false) are
-  // left untouched so their row + netsuite_internal_id survive for later NetSuite deactivation.
+  // Only ACTIVE rows take part in the diff. Soft-deleted rows (is_active = false) are left
+  // untouched so their row + netsuite_internal_id survive for later NetSuite deactivation.
   const activeOnly = and(
     eq(estimateLineItems.estimateId, estimateId),
     eq(estimateLineItems.isActive, true),
@@ -409,45 +421,135 @@ async function upsertLineItemsWithComponents(
     return { parents: [], components: [] };
   }
 
-  // Collect existing ACTIVE ids so we know which incoming ids are real vs made-up.
-  // (Soft-deleted ids are excluded so a preserved id can never collide with a retained row.)
+  // Snapshot existing ACTIVE rows (ids + ordering) so we can match incoming lines to them.
   const existing = await tx
-    .select({ id: estimateLineItems.id })
+    .select({
+      id              : estimateLineItems.id,
+      lineNumber      : estimateLineItems.lineNumber,
+      parentLineItemId: estimateLineItems.parentLineItemId,
+    })
     .from(estimateLineItems)
     .where(activeOnly);
   const existingIds = new Set<number>(existing.map((r: any) => r.id));
 
-  // Delete the active rows only — clears their lineNumber slots (partial unique index means
-  // retained soft-deleted rows don't block reuse). Soft-deleted rows are kept.
-  await tx.delete(estimateLineItems).where(activeOnly);
+  // Old parents in order + each old parent's components in order, for position matching.
+  const oldParents: any[] = existing
+    .filter((r: any) => r.parentLineItemId === null)
+    .sort((a: any, b: any) => a.lineNumber - b.lineNumber);
+  const oldCompsByParent = new Map<number, any[]>();
+  for (const r of existing as any[]) {
+    if (r.parentLineItemId !== null) {
+      const arr = oldCompsByParent.get(r.parentLineItemId) ?? [];
+      arr.push(r);
+      oldCompsByParent.set(r.parentLineItemId, arr);
+    }
+  }
+  for (const arr of oldCompsByParent.values()) arr.sort((a, b) => a.lineNumber - b.lineNumber);
 
-  // Pass 1: insert parent rows (preserve original id if it was a real DB row)
-  const parents: any[] = [];
-  for (let i = 0; i < items.length; i++) {
-    const { components: _comps, id: itemId, ...data } = items[i] as any;
-    const idOverride = itemId && existingIds.has(itemId) ? { id: itemId } : {};
-
-    const [inserted] = await tx.insert(estimateLineItems)
-      .values({ ...idOverride, ...data, estimateId, lineNumber: i + 1, sortOrder: i, parentLineItemId: null } as any)
-      .returning();
-    parents.push(inserted);
+  // ── Phase 1: build the match plan (no DB writes yet) ────────────────────────
+  // `used` prevents two incoming lines from claiming the same old row. Seed it with every
+  // explicit id-match so position matching can never steal an id-matched row.
+  const used = new Set<number>();
+  for (const it of items as any[]) {
+    if (it.id && existingIds.has(it.id)) used.add(it.id);
+    for (const c of (it.components ?? [])) if (c.id && existingIds.has(c.id)) used.add(c.id);
   }
 
-  // Pass 2: insert component rows (preserve original id if it was a real DB row)
+  type Plan = { oldId: number | null; data: Record<string, unknown> };
+  const parentPlan: (Plan & { components: any[] })[] = [];
+  for (const item of items as any[]) {
+    const { components, id: itemId, ...data } = item;
+    let oldId: number | null = null;
+    if (itemId && existingIds.has(itemId)) {
+      oldId = itemId;                                   // explicit id-match (already in `used`)
+    } else {
+      const cand = oldParents[parentPlan.length];       // position match by parent index
+      if (cand && !used.has(cand.id)) { oldId = cand.id; used.add(cand.id); }
+    }
+    parentPlan.push({ oldId, data, components: components ?? [] });
+  }
+
+  const compPlan: (Plan & { parentIdx: number; sortOrder: number })[] = [];
+  parentPlan.forEach((p, parentIdx) => {
+    const oldComps = p.oldId != null ? (oldCompsByParent.get(p.oldId) ?? []) : [];
+    p.components.forEach((comp: any, j: number) => {
+      const { id: compId, ...data } = comp;
+      let oldId: number | null = null;
+      if (compId && existingIds.has(compId)) {
+        oldId = compId;
+      } else {
+        const cand = oldComps[j];
+        if (cand && !used.has(cand.id)) { oldId = cand.id; used.add(cand.id); }
+      }
+      compPlan.push({ oldId, data, parentIdx, sortOrder: j });
+    });
+  });
+
+  const keptIds = new Set<number>([...parentPlan, ...compPlan].filter(p => p.oldId != null).map(p => p.oldId!));
+
+  logger.info({
+    estimateId,
+    existingActiveIds: [...existingIds],
+    incomingParentIds: (items as any[]).map(it => it.id ?? null),
+    kept             : [...keptIds],
+    toDelete         : existing.filter((r: any) => !keptIds.has(r.id)).map((r: any) => r.id),
+  }, 'upsertLineItems: in-place diff (update kept, insert new, delete removed)');
+
+  // ── Phase 2: delete removed lines ───────────────────────────────────────────
+  // (Deleting a removed parent cascades to its components.)
+  const toDelete = existing.filter((r: any) => !keptIds.has(r.id)).map((r: any) => r.id);
+  if (toDelete.length > 0) {
+    await tx.delete(estimateLineItems).where(inArray(estimateLineItems.id, toDelete));
+  }
+
+  // ── Phase 3: park survivors' lineNumber out of the target range ─────────────
+  // Avoids transient collisions on the (estimateId, lineNumber) partial-unique index while
+  // we renumber kept rows into their new 1..N slots.
+  if (keptIds.size > 0) {
+    await tx.update(estimateLineItems)
+      .set({ lineNumber: sql`${estimateLineItems.lineNumber} + ${LINE_NUMBER_PARK}` })
+      .where(activeOnly);
+  }
+
+  // ── Phase 4: parents — UPDATE kept rows in place, INSERT new ones ───────────
+  const parents: any[] = [];
+  const parentFinalId: number[] = [];
+  for (let i = 0; i < parentPlan.length; i++) {
+    const p = parentPlan[i];
+    const common = { lineNumber: i + 1, sortOrder: i, parentLineItemId: null };
+    let row: any;
+    if (p.oldId != null) {
+      [row] = await tx.update(estimateLineItems)
+        .set({ ...p.data, ...common, updatedAt: new Date() } as any)
+        .where(eq(estimateLineItems.id, p.oldId))
+        .returning();
+    } else {
+      [row] = await tx.insert(estimateLineItems)
+        .values({ ...p.data, ...common, estimateId } as any)
+        .returning();
+    }
+    parents.push(row);
+    parentFinalId[i] = row.id;
+  }
+
+  // ── Phase 5: components — UPDATE kept rows in place, INSERT new ones ─────────
   const components: any[] = [];
   let lineCounter = items.length + 1;
-  for (let i = 0; i < items.length; i++) {
-    const comps = (items[i] as any).components ?? [];
-    for (let j = 0; j < comps.length; j++) {
-      const { id: compId, ...compData } = comps[j] as any;
-      const idOverride = compId && existingIds.has(compId) ? { id: compId } : {};
-
-      const [inserted] = await tx.insert(estimateLineItems)
-        .values({ ...idOverride, ...compData, estimateId, lineNumber: lineCounter, sortOrder: j, parentLineItemId: parents[i].id } as any)
+  for (const c of compPlan) {
+    const common = { lineNumber: lineCounter, sortOrder: c.sortOrder, parentLineItemId: parentFinalId[c.parentIdx] };
+    let row: any;
+    if (c.oldId != null) {
+      [row] = await tx.update(estimateLineItems)
+        .set({ ...c.data, ...common, updatedAt: new Date() } as any)
+        .where(eq(estimateLineItems.id, c.oldId))
         .returning();
-      components.push(inserted);
-      lineCounter++;
+    } else {
+      [row] = await tx.insert(estimateLineItems)
+        .values({ ...c.data, ...common, estimateId } as any)
+        .returning();
     }
+    components.push(row);
+    lineCounter++;
   }
 
   return { parents, components };

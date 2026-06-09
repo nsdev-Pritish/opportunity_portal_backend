@@ -266,6 +266,8 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
       const isComponent = li.parentLineItemId !== null;
 
       lines[String(i + 1)] = {
+        // NS line internal id for already-synced lines; omitted for brand-new lines
+        ...(li.netsuiteInternalId ? { lineId: li.netsuiteInternalId } : {}),
          itemTypeIdNSId         : isComponent ? toNsNum(componentKitItemNsId) : toNsNum(itemTypeNsId),
       shortDescriptionNS     : li.shortDescription ?? '',
       descriptionNS          : li.description ?? '',
@@ -490,30 +492,50 @@ export async function syncEstimateToNetsuite(
     // Skip for convert modes — those lineIds belong to the Quote, not the estimate
     // line items, so stamping them would corrupt the estimate line NS ids.
     if (!isConvert && nsResp.lineIds && typeof nsResp.lineIds === 'object') {
-      const lineRows = opts?.lineItemIds && opts.lineItemIds.length > 0
-        ? await db.select({ id: estimateLineItems.id }).from(estimateLineItems)
-            .where(inArray(estimateLineItems.id, opts.lineItemIds))
-            .orderBy(asc(estimateLineItems.lineNumber))
-        : await db.select({ id: estimateLineItems.id }).from(estimateLineItems)
-            .where(eq(estimateLineItems.estimateId, estimateId))
-            .orderBy(asc(estimateLineItems.lineNumber));
+      // All lines of the estimate (active + soft-deleted), so we know which NS ids are already
+      // held. We never select by lineItemIds here — convert modes (the only caller that passes
+      // them) are excluded above.
+      const lineRows = await db.select({
+          id                : estimateLineItems.id,
+          netsuiteInternalId: estimateLineItems.netsuiteInternalId,
+          isActive          : estimateLineItems.isActive,
+        }).from(estimateLineItems)
+        .where(eq(estimateLineItems.estimateId, estimateId))
+        .orderBy(asc(estimateLineItems.lineNumber));
 
-      const lineIdsArray = Array.isArray(nsResp.lineIds)
+      // NS line ids it returned, in the order NS provided them.
+      const returnedIds = (Array.isArray(nsResp.lineIds)
         ? nsResp.lineIds
-        : Object.entries(nsResp.lineIds)
-            .reduce<(string | number)[]>((acc, [k, v]) => { acc[parseInt(k, 10) - 1] = v; return acc; }, []);
+        : Object.entries(nsResp.lineIds).sort(([a], [b]) => parseInt(a, 10) - parseInt(b, 10)).map(([, v]) => v)
+      ).map(v => String(v)).filter(Boolean);
 
-      await Promise.all(
-        lineIdsArray.map((nsLineId, idx) => {
-          const portalLineId = lineRows[idx]?.id;
-          if (!portalLineId || !nsLineId) return Promise.resolve();
-          return db.update(estimateLineItems)
-            .set({ netsuiteInternalId: String(nsLineId) } as any)
-            .where(eq(estimateLineItems.id, portalLineId));
-        }),
-      );
+      // Existing lines already hold their NS id (we sent it; NetSuite keeps it) — leave them
+      // alone so adding a line never renumbers the others. Only assign the *fresh* returned ids
+      // (not held by any current line) to the *new* lines (active rows with no NS id yet).
+      const heldIds  = new Set(lineRows.map(r => r.netsuiteInternalId).filter(Boolean));
+      const freshIds = returnedIds.filter(id => !heldIds.has(id));
+      const newLines = lineRows.filter(r => r.isActive && !r.netsuiteInternalId);
 
-      logger.info({ estimateId, lineCount: lineRows.length, lineIds: nsResp.lineIds }, 'Line item NS IDs stored');
+      if (freshIds.length !== newLines.length) {
+        logger.warn({ estimateId, newLineCount: newLines.length, freshIdCount: freshIds.length, returnedIds, heldIds: [...heldIds] },
+          'NS returned a different number of new line ids than new lines — some may stay unsynced');
+      }
+
+      const assignments = newLines
+        .map((row, i) => ({ portalLineId: row.id, nsLineId: freshIds[i] }))
+        .filter(a => !!a.nsLineId);
+
+      if (assignments.length > 0) {
+        await db.transaction(async (tx) => {
+          for (const a of assignments) {
+            await tx.update(estimateLineItems)
+              .set({ netsuiteInternalId: a.nsLineId } as any)
+              .where(eq(estimateLineItems.id, a.portalLineId));
+          }
+        });
+      }
+
+      logger.info({ estimateId, newLines: newLines.length, assigned: assignments.length, lineIds: nsResp.lineIds }, 'New line NS IDs stored');
     }
 
     logger.info({ estimateId, mode, nsInternalId, documentNumber, quoteId: nsResp.quoteId }, 'Estimate synced to NetSuite successfully');
