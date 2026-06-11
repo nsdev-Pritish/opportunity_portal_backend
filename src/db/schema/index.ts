@@ -599,6 +599,7 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   exclude: boolean('exclude').default(false),
 
   // Purchase Information
+  image: jsonb('image').$type<{ name: string; url: string; size: number; type: string }>(),
   description: text('description'),
   factoryId: integer('factory_id').references(() => factories.id),
   vendorCurrencyId: integer('vendor_currency_id').references(() => currencies.id),

@@ -82,3 +82,7 @@ credentials/
 prism-convert-to-otb.postman_collection.json
 prism-netsuite-estimate-sync.postman_collection.json
 postman/soft-delete.postman_collection.json
+postman/Estimates.postman_collection.json
+postman/File_Upload_Attachments.postman_collection.json
+postman/estimate_attachments.postman_collection.json
+postman/line_item_image_upload.postman_collection.json

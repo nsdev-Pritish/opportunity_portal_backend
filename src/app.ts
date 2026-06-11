@@ -1,6 +1,7 @@
 import Fastify, { FastifyInstance, FastifyError } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
@@ -16,6 +17,7 @@ import masterRoutes   from './routes/master/index.js';
 import estimateRoutes from './routes/estimates/index.js';
 import lineItemRoutes from './routes/estimates/lineItems.js';
 import nsRoutes       from './routes/netsuite/index.js';
+import uploadRoutes   from './routes/upload/index.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ 
@@ -26,6 +28,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     bodyLimit: 5 * 1024 * 1024, // 5MB max payload size for bulk line items
   });
 
+  await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } }); // 50 MB cap
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(cors, {
     origin: process.env.CORS_ORIGIN ?? true,
@@ -62,6 +65,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
     { prefix: '/api/v1/estimates/:estimateId/line-items' },
   );
+
+  // ── File upload (JWT auth) ────────────────────────────────────
+  await app.register(uploadRoutes, { prefix: '/api/v1/upload' });
 
   // ── NetSuite-facing routes (X-API-Key auth) ───────────────────
   await app.register(nsRoutes, { prefix: '/api/v1/netsuite' });
