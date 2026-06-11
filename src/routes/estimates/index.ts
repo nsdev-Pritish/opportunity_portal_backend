@@ -1,5 +1,7 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { uploadToR2 } from '../../services/r2.service.js';
+import { AppError } from '../../utils/errors.js';
 
 // Recursively convert "" / null to undefined so Zod number fields accept blank frontend values
 function stripEmpty(val: unknown): unknown {
@@ -213,6 +215,33 @@ const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
 //   freightGroups: z.array(FreightGroupSchema).max(50).optional(),
 // });
 
+// ── Multipart helper ─────────────────────────────────────────────────────────
+// Parses a multipart/form-data request into a plain object.
+// Expects:  data (Text) = JSON string of estimate fields
+//           file (File, optional, repeatable) = attachments to upload to R2
+async function parseMultipartEstimate(req: FastifyRequest): Promise<Record<string, unknown>> {
+  const parts = req.parts();
+  let raw: Record<string, unknown> = {};
+  const uploaded: Array<{ name: string; url: string; size: number; type: string }> = [];
+
+  for await (const part of parts) {
+    if (part.type === 'file') {
+      const buf = await part.toBuffer();
+      if (buf.length === 0) continue;
+      uploaded.push(await uploadToR2(buf, part.filename ?? 'file', part.mimetype));
+    } else if (part.fieldname === 'data') {
+      try { raw = JSON.parse(part.value as string); }
+      catch { throw new AppError('Invalid JSON in "data" field', 400, 'INVALID_JSON'); }
+    }
+  }
+
+  if (uploaded.length > 0) {
+    const existing = Array.isArray(raw.attachments) ? (raw.attachments as unknown[]) : [];
+    raw.attachments = [...existing, ...uploaded];
+  }
+  return raw;
+}
+
 // ── Routes ──────────────────────────────────────────────────────────────────
 
 export default async function estimateRoutes(app: FastifyInstance) {
@@ -230,9 +259,12 @@ export default async function estimateRoutes(app: FastifyInstance) {
     }),
   );
 
-  // POST /api/v1/estimates — Phase 2: header + optional line items
+  // POST /api/v1/estimates — accepts JSON or multipart/form-data (data field + file fields)
   app.post<{ Body: unknown }>('/', async (req, reply) => {
-    const { lineItems, ...headerData } = CreateEstimateSchema.parse(stripEmpty(normalizeBody(req.body)));
+    const raw = req.headers['content-type']?.startsWith('multipart/form-data')
+      ? await parseMultipartEstimate(req)
+      : req.body as Record<string, unknown>;
+    const { lineItems, ...headerData } = CreateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
     const result = await createEstimateWithItems(headerData, lineItems ?? [], []);
     return reply.status(201).send(result);
   });
@@ -349,9 +381,12 @@ export default async function estimateRoutes(app: FastifyInstance) {
     getEstimate(parseInt(req.params.id)),
   );
 
-  // PATCH /api/v1/estimates/:id — Phase 2: header + optional line items
+  // PATCH /api/v1/estimates/:id — accepts JSON or multipart/form-data
   app.patch<{ Params: { id: string }; Body: unknown }>('/:id', async (req) => {
-    const { lineItems, ...headerData } = UpdateEstimateSchema.parse(stripEmpty(normalizeBody(req.body)));
+    const raw = req.headers['content-type']?.startsWith('multipart/form-data')
+      ? await parseMultipartEstimate(req)
+      : req.body as Record<string, unknown>;
+    const { lineItems, ...headerData } = UpdateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
     return updateEstimateWithItems(parseInt(req.params.id), headerData, lineItems);
   });
 

@@ -205,6 +205,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     clientPursuitAlternativeNSId : clientPursuitAltNsId,
     projectHoldDateNS            : formatNsDate(est.projectHoldDate),
     notesClosedLostReasonNS      : est.notesClosedLostReason ?? '',
+    attachmentsNS                : Array.isArray(est.attachments) ? est.attachments : [],
   };
 
   // Phase 2 – Line items (for 'convert' mode only the target lineItemIds are sent)

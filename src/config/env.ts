@@ -33,6 +33,13 @@ const envSchema = z.object({
 
   CACHE_TTL_DROPDOWN: z.coerce.number().default(300),
   CACHE_TTL_ESTIMATE: z.coerce.number().default(120),
+
+  // ── Cloudflare R2 Storage ──
+  R2_ACCOUNT_ID: z.string().min(1),
+  R2_ACCESS_KEY_ID: z.string().min(1),
+  R2_SECRET_ACCESS_KEY: z.string().min(1),
+  R2_BUCKET_NAME: z.string().min(1),
+  R2_PUBLIC_URL: z.string().url(),
 });
 
 const parsed = envSchema.safeParse(process.env);
