@@ -59,6 +59,7 @@ const ComponentSchema = z.object({
   exclude: z.boolean().optional(),
 
   // ── Purchase Information ───────────────────────────────────────────────────
+  image: z.object({ name: z.string(), url: z.string().url(), size: z.number(), type: z.string() }).optional(),
   description: z.string().optional(),
   factoryId: z.number().int().positive().optional(),
   vendorCurrencyId: z.number().int().positive().optional(),
@@ -223,15 +224,23 @@ async function parseMultipartEstimate(req: FastifyRequest): Promise<Record<strin
   const parts = req.parts();
   let raw: Record<string, unknown> = {};
   const uploaded: Array<{ name: string; url: string; size: number; type: string }> = [];
+  let lineItemImage: { name: string; url: string; size: number; type: string } | null = null;
+  let lineItemImageId: number | null = null;
 
   for await (const part of parts) {
     if (part.type === 'file') {
       const buf = await part.toBuffer();
       if (buf.length === 0) continue;
-      uploaded.push(await uploadToR2(buf, part.filename ?? 'file', part.mimetype));
+      if (part.fieldname === 'lineItemImage') {
+        lineItemImage = await uploadToR2(buf, part.filename ?? 'file', part.mimetype);
+      } else {
+        uploaded.push(await uploadToR2(buf, part.filename ?? 'file', part.mimetype));
+      }
     } else if (part.fieldname === 'data') {
       try { raw = JSON.parse(part.value as string); }
       catch { throw new AppError('Invalid JSON in "data" field', 400, 'INVALID_JSON'); }
+    } else if (part.fieldname === 'lineItemImageId') {
+      lineItemImageId = parseInt(part.value as string);
     }
   }
 
@@ -239,6 +248,19 @@ async function parseMultipartEstimate(req: FastifyRequest): Promise<Record<strin
     const existing = Array.isArray(raw.attachments) ? (raw.attachments as unknown[]) : [];
     raw.attachments = [...existing, ...uploaded];
   }
+
+  if (lineItemImage && lineItemImageId) {
+    const lineItems = Array.isArray(raw.lineItems) ? (raw.lineItems as Record<string, unknown>[]) : [];
+    const li = lineItems.find(item => Number(item.id) === lineItemImageId);
+    if (li) {
+      li.image = lineItemImage;
+    } else {
+      // line item not in body yet — create a minimal entry so the image gets saved
+      lineItems.push({ id: lineItemImageId, image: lineItemImage });
+      raw.lineItems = lineItems;
+    }
+  }
+
   return raw;
 }
 
