@@ -106,19 +106,23 @@ export async function receiveQuoteFromNetsuite(payload: ReceiveQuotePayload) {
 
 /**
  * Returns every Quote recorded for a single Estimate, plus a count.
- * Looked up by the Estimate's NetSuite internal ID (same key NetSuite POSTs with).
+ * Looked up by the Estimate's Portal primary key (estimates.id).
  */
-export async function getQuotesForEstimate(estimateInternalId: string) {
+export async function getQuotesForEstimate(estimateId: number) {
   const db = getDb();
 
-  // Locate the portal Estimate by NS internal ID
+  // Locate the portal Estimate by its primary key
   const [estimate] = await db
-    .select({ id: estimates.id, documentNumber: estimates.documentNumber })
+    .select({
+      id                : estimates.id,
+      netsuiteInternalId: estimates.netsuiteInternalId,
+      documentNumber    : estimates.documentNumber,
+    })
     .from(estimates)
-    .where(eq(estimates.netsuiteInternalId, estimateInternalId))
+    .where(eq(estimates.id, estimateId))
     .limit(1);
 
-  if (!estimate) throw new NotFoundError('Estimate', estimateInternalId);
+  if (!estimate) throw new NotFoundError('Estimate', String(estimateId));
 
   const quotes = await db
     .select({
@@ -133,7 +137,8 @@ export async function getQuotesForEstimate(estimateInternalId: string) {
     .orderBy(desc(estimateQuotes.createdAt));
 
   return {
-    estimateInternalId,
+    estimateId            : estimate.id,
+    estimateInternalId    : estimate.netsuiteInternalId,
     estimateDocumentNumber: estimate.documentNumber,
     quoteCount            : quotes.length,
     quotes,

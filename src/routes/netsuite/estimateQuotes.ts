@@ -66,16 +66,19 @@ export default async function estimateQuoteNsRoutes(app: FastifyInstance) {
   });
 
   /**
-   * GET /api/v1/netsuite/estimate-quotes/:estimateInternalId
+   * GET /api/v1/netsuite/estimate-quotes/:estimateId
    *
-   * Returns how many quotes exist for a given estimate (by NS internal ID),
+   * Returns how many quotes exist for a given estimate (by Portal primary key),
    * along with the quotes themselves.
    *
-   * Example: GET /api/v1/netsuite/estimate-quotes/409451
-   * Response: { estimateInternalId, estimateDocumentNumber, quoteCount, quotes: [...] }
+   * Example: GET /api/v1/netsuite/estimate-quotes/126
+   * Response: { estimateId, estimateInternalId, estimateDocumentNumber, quoteCount, quotes: [...] }
    */
-  app.get<{ Params: { estimateInternalId: string } }>(
-    '/:estimateInternalId',
-    async (req) => getQuotesForEstimate(req.params.estimateInternalId),
+  app.get<{ Params: { estimateId: string } }>(
+    '/:estimateId',
+    async (req) => {
+      const estimateId = z.coerce.number().int().positive().parse(req.params.estimateId);
+      return getQuotesForEstimate(estimateId);
+    },
   );
 }
