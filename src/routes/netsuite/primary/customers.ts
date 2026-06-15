@@ -23,6 +23,7 @@ const CreateCustomerSchema = z.object({
   netsuiteInternalId     : z.string().min(1),   // NS internalId — required
   subsidiaryNetsuiteId   : z.string().min(1),   // NS internalId of the subsidiary
   name                   : z.string().min(1).max(255),
+  parentCompany          : z.string().max(255).optional().nullable(),
   contactName            : z.string().max(255).optional().nullable(),
   email                  : z.string().max(255).optional().nullable(),
   phone                  : z.string().max(50).optional().nullable(),
@@ -33,6 +34,7 @@ const CreateCustomerSchema = z.object({
 const UpdateCustomerSchema = z.object({
   subsidiaryNetsuiteId   : z.string().min(1).optional(), // NS internalId of the subsidiary
   name                   : z.string().min(1).max(255).optional(),
+  parentCompany          : z.string().max(255).optional().nullable(),
   contactName            : z.string().max(255).optional().nullable(),
   email                  : z.string().max(255).optional().nullable(),
   phone                  : z.string().max(50).optional().nullable(),
@@ -107,8 +109,9 @@ export default async function customerRoutes(app: FastifyInstance) {
       const [updated] = await db
         .update(customers)
         .set({ 
-          subsidiaryId: subsidiary.id, 
-          name: body.name, 
+          subsidiaryId: subsidiary.id,
+          name: body.name,
+          parentCompany: body.parentCompany,
           contactName: body.contactName,
           email: body.email, 
           phone: body.phone,
@@ -128,6 +131,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         netsuiteInternalId : body.netsuiteInternalId,
         subsidiaryId       : subsidiary.id, // Use the local database ID
         name               : body.name,
+        parentCompany      : body.parentCompany,
         contactName        : body.contactName,
         email              : body.email,
         phone              : body.phone,
@@ -182,6 +186,7 @@ export default async function customerRoutes(app: FastifyInstance) {
     };
     if (subsidiaryId !== undefined) updateData.subsidiaryId = subsidiaryId;
     if (body.name !== undefined) updateData.name = body.name;
+    if (body.parentCompany !== undefined) updateData.parentCompany = body.parentCompany;
     if (body.contactName !== undefined) updateData.contactName = body.contactName;
     if (body.email !== undefined) updateData.email = body.email;
     if (body.phone !== undefined) updateData.phone = body.phone;

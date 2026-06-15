@@ -90,6 +90,7 @@ export const customers = pgTable('customers', {
   id: serial('id').primaryKey(),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
   name: varchar('name', { length: 255 }).notNull(),
+  parentCompany: varchar('parent_company', { length: 255 }),
   contactName: varchar('contact_name', { length: 255 }),
   email: varchar('email', { length: 255 }),
   phone: varchar('phone', { length: 50 }),
