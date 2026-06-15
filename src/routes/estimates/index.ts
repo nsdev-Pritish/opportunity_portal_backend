@@ -39,6 +39,7 @@ import {
   convertEstimateToOtb,
   listEstimateQuotes,
 } from '../../services/estimate.service.js';
+import { createEstimateAndConvertToOtb } from '../../services/otbConvert.service.js';
 
 // ── Component schema — all detail fields shared by both item levels ──────────
 // Components (Component Kit Items) carry purchase/landed/classification/packing
@@ -288,6 +289,16 @@ export default async function estimateRoutes(app: FastifyInstance) {
       : req.body as Record<string, unknown>;
     const { lineItems, ...headerData } = CreateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
     const result = await createEstimateWithItems(headerData, lineItems ?? [], []);
+    return reply.status(201).send(result);
+  });
+
+  // POST /api/v1/estimates/convert-to-otb — create a brand-new estimate AND convert it to a Quote.
+  // Body = same shape as POST / (header + lineItems). Runs synchronously: creates locally,
+  // syncs the estimate to NS, then creates the quote in NS, returning both with their NS ids.
+  // Can take up to ~2 min (two sequential 60s NS calls).
+  app.post<{ Body: unknown }>('/convert-to-otb', async (req, reply) => {
+    const { lineItems, ...headerData } = CreateEstimateSchema.parse(stripEmpty(normalizeBody(req.body)));
+    const result = await createEstimateAndConvertToOtb(headerData, lineItems ?? [], []);
     return reply.status(201).send(result);
   });
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   listActiveRecords, getRecord, createRecord, updateRecord, setActiveStatus, getAllDropdowns,
 } from '../../services/masterData.service.js';
+import { getAllEstimateQuoteMappings } from '../../services/estimateQuote.service.js';
 import { type MasterEntityKey, MASTER_TABLES } from '../../db/schema/index.js';
 import { ValidationError } from '../../utils/errors.js';
 
@@ -42,6 +43,9 @@ export default async function masterRoutes(app: FastifyInstance) {
     };
   });
   app.get('/all-dropdowns', async () => getAllDropdowns());
+
+  // GET /api/v1/master/estimate-quotes — all Estimate ↔ Quote mappings
+  app.get('/estimate-quotes', async () => getAllEstimateQuoteMappings());
 
   // GET /api/v1/master/:entity — list active (dropdown)
   app.get<{ Params: { entity: string }; Querystring: { scopeId?: string } }>(

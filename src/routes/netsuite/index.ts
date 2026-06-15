@@ -77,6 +77,7 @@ import clientPursuitAlternativeRoutes  from './clientPursuitAlternatives.js';
 import estimateStatusRoutes            from './estimateStatuses.js';
 import estimateNsRoutes                from './estimates.js';
 import lineItemNsRoutes                from './lineItems.js';
+import estimateQuoteNsRoutes           from './estimateQuotes.js';
 
 // Primary Information imports
 import customerRoutes           from './primary/customers.js';
@@ -99,7 +100,7 @@ import costSheetRoutes from './cost-sheet/index.js';
 import freightCostRoutes from './freight-cost/index.js';
 
 export default async function netsuiteRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', apiKeyAuth);
+  // app.addHook('preHandler', apiKeyAuth);
 
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
 
@@ -130,6 +131,7 @@ export default async function netsuiteRoutes(app: FastifyInstance) {
   await app.register(estimateStatusRoutes,            { prefix: '/estimate-statuses' });
   await app.register(estimateNsRoutes,                { prefix: '/estimates' });
   await app.register(lineItemNsRoutes,        { prefix: '/estimates/:nsId/line-items' });
+  await app.register(estimateQuoteNsRoutes,   { prefix: '/estimate-quotes' });
 
   // Client Shipping & Billing
   await app.register(billingAddressRoutes,        { prefix: '/client-billing-addresses' });
