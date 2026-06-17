@@ -18,6 +18,9 @@ import estimateRoutes from './routes/estimates/index.js';
 import lineItemRoutes from './routes/estimates/lineItems.js';
 import nsRoutes       from './routes/netsuite/index.js';
 import uploadRoutes   from './routes/upload/index.js';
+import portalProjectNames from './routes/portal/projectNames.js';
+import portalContacts     from './routes/portal/contacts.js';
+import portalAddresses    from './routes/portal/addresses.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ 
@@ -57,7 +60,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(masterRoutes,   { prefix: '/api/v1/master' });
   await app.register(estimateRoutes, { prefix: '/api/v1/estimates' });
   await app.register(
-    async (inst) => {
+    async (inst) => {3
       // TODO(auth): line-item routes are temporarily UNAUTHENTICATED. Re-enable by
       // uncommenting the hook below.
       // inst.addHook('preHandler', inst.authenticate);
@@ -68,6 +71,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // ── File upload (JWT auth) ────────────────────────────────────
   await app.register(uploadRoutes, { prefix: '/api/v1/upload' });
+  await app.register(portalProjectNames, { prefix: '/api/v1/portal/projectNames' });
+  await app.register(portalContacts,     { prefix: '/api/v1/portal/contacts' });
+  await app.register(portalAddresses,    { prefix: '/api/v1/portal/addresses' });
 
   // ── NetSuite-facing routes (X-API-Key auth) ───────────────────
   await app.register(nsRoutes, { prefix: '/api/v1/netsuite' });
