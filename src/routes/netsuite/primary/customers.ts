@@ -13,7 +13,7 @@ import { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../../config/database.js';
-import { customers, subsidiaries } from '../../../db/schema/index.js';
+import { customers, subsidiaries, currencies } from '../../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../../utils/errors.js';
 import { invalidateDropdown } from '../../../utils/cache.js';
 
@@ -29,6 +29,7 @@ const CreateCustomerSchema = z.object({
   phone                  : z.string().max(50).optional().nullable(),
   terms                  : z.string().max(100).optional().nullable(),
   chargebackRoyalties    : z.number().optional().nullable(),
+  currencyNsId           : z.string().optional().nullable(),   // NS internalId of currency
 });
 
 const UpdateCustomerSchema = z.object({
@@ -40,6 +41,7 @@ const UpdateCustomerSchema = z.object({
   phone                  : z.string().max(50).optional().nullable(),
   terms                  : z.string().max(100).optional().nullable(),
   chargebackRoyalties    : z.number().optional().nullable(),
+  currencyNsId           : z.string().optional().nullable(),   // NS internalId of currency
 });
 
 const StatusSchema = z.object({
@@ -98,6 +100,17 @@ export default async function customerRoutes(app: FastifyInstance) {
       throw new ValidationError(`Subsidiary with NetSuite ID ${body.subsidiaryNetsuiteId} not found`);
     }
 
+    // Resolve currency by NetSuite internal ID
+    let currencyId: number | null = null;
+    if (body.currencyNsId) {
+      const [curr] = await db
+        .select({ id: currencies.id })
+        .from(currencies)
+        .where(eq(currencies.netsuiteInternalId, body.currencyNsId))
+        .limit(1);
+      if (curr) currencyId = curr.id;
+    }
+
     // Idempotency: same NS id already exists → update instead of duplicate
     const [existing] = await db
       .select({ id: customers.id })
@@ -108,15 +121,16 @@ export default async function customerRoutes(app: FastifyInstance) {
     if (existing) {
       const [updated] = await db
         .update(customers)
-        .set({ 
+        .set({
           subsidiaryId: subsidiary.id,
           name: body.name,
           parentCompany: body.parentCompany,
           contactName: body.contactName,
-          email: body.email, 
+          email: body.email,
           phone: body.phone,
           terms: body.terms,
           chargebackRoyalties: body.chargebackRoyalties != null ? String(body.chargebackRoyalties) : body.chargebackRoyalties,
+          currencyId,
           updatedAt: new Date()
         })
         .where(eq(customers.id, existing.id))
@@ -137,6 +151,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         phone              : body.phone,
         terms              : body.terms,
         chargebackRoyalties: body.chargebackRoyalties != null ? String(body.chargebackRoyalties) : body.chargebackRoyalties,
+        currencyId,
         source             : 'netsuite',
         syncStatus         : 'synced',
         syncedAt           : new Date(),
@@ -171,6 +186,21 @@ export default async function customerRoutes(app: FastifyInstance) {
       subsidiaryId = subsidiary.id;
     }
 
+    // Resolve currency by NetSuite internal ID if provided
+    let currencyId: number | null | undefined = undefined;
+    if (body.currencyNsId !== undefined) {
+      if (body.currencyNsId) {
+        const [curr] = await db
+          .select({ id: currencies.id })
+          .from(currencies)
+          .where(eq(currencies.netsuiteInternalId, body.currencyNsId))
+          .limit(1);
+        currencyId = curr ? curr.id : null;
+      } else {
+        currencyId = null;
+      }
+    }
+
     const [existing] = await db
       .select({ id: customers.id })
       .from(customers)
@@ -192,6 +222,7 @@ export default async function customerRoutes(app: FastifyInstance) {
     if (body.phone !== undefined) updateData.phone = body.phone;
     if (body.terms !== undefined) updateData.terms = body.terms;
     if (body.chargebackRoyalties !== undefined) updateData.chargebackRoyalties = body.chargebackRoyalties != null ? String(body.chargebackRoyalties) : null;
+    if (currencyId !== undefined) updateData.currencyId = currencyId;
 
     const [updated] = await db
       .update(customers)
