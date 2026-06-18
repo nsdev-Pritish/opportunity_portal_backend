@@ -22,7 +22,8 @@ import {
   estimates, estimateLineItems,
   customers, contacts, currencies, projectTypes, likelyToClose,
   departments, salesChannels, businessVerticals, businessTypes,
-  employees, hkPartners, opsPartners, compliancePartners,
+  accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
+  subsidiaries, estimateStatuses, closedLostReasons, clientPursuitAlternatives,
   clientIncoterms, clientShippingMethods, addresses,
   csItems, vendors, factories, productClasses, productClassesEu,
   sustainabilityOptions, vendorIncoterms, vendorAddresses, componentKitItems,
@@ -51,6 +52,7 @@ const CreateEstimateSchema = z.object({
   customerNsId         : z.string().min(1),  // NS internalId of the customer
 
   // Optional — send NS internalIds for each lookup field
+  subsidiaryNsId       : z.string().optional().nullable(),
   customerContactNsId  : z.string().optional().nullable(),
   customerPo           : z.string().max(100).optional().nullable(),
   projectTypeNsId      : z.string().optional().nullable(),
@@ -68,7 +70,9 @@ const CreateEstimateSchema = z.object({
   businessTypeNsId     : z.string().optional().nullable(),
   compliancePartnerNsId: z.string().optional().nullable(),
   acctManagerNsId      : z.string().optional().nullable(),
+  // Product developers/managers — NS can send one id or many. Accept both.
   productDeveloperNsId : z.string().optional().nullable(),
+  productDeveloperNsIds: z.array(z.string()).optional().nullable(),
   hkPartnerNsId        : z.string().optional().nullable(),
   opsPartner1NsId      : z.string().optional().nullable(),
   opsPartner2NsId      : z.string().optional().nullable(),
@@ -82,6 +86,13 @@ const CreateEstimateSchema = z.object({
   clientShipMethodNsId : z.string().optional().nullable(),
   shippingAddressNsId  : z.string().optional().nullable(),
   billingAddressNsId   : z.string().optional().nullable(),
+
+  // Edit / Update fields (status, win/loss, close-lost)
+  statusNsId                  : z.string().optional().nullable(),
+  closedLostReasonNsId        : z.string().optional().nullable(),
+  clientPursuitAlternativeNsId: z.string().optional().nullable(),
+  notesClosedLostReason       : z.string().optional().nullable(),
+  projectHoldDate             : z.string().optional().nullable(),
 
   // Additional
   sampleOnlyOrder      : z.boolean().optional(),
@@ -268,6 +279,9 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
   //   "memo": "Priority order"
   // }
   app.post<{ Body: unknown }>('/', async (req, reply) => {
+    // Log the RAW inbound body (before Zod strips unknown keys) so we can see the
+    // exact field names NetSuite sends and confirm every value is captured.
+    logger.info({ rawBody: req.body }, '→ NetSuite estimate POST / raw payload');
     const body = CreateEstimateSchema.parse(req.body);
     const db = getDb();
 
@@ -314,6 +328,7 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
   //   ]
   // }
   app.post<{ Body: unknown }>('/with-items', async (req, reply) => {
+    logger.info({ rawBody: req.body }, '→ NetSuite estimate /with-items raw payload');
     const { estimate: estimateData, lineItems } = CreateEstimateWithItemsSchema.parse(req.body);
     const db = getDb();
     const startTime = Date.now();
@@ -439,6 +454,9 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
   //   ]
   // }
   app.post<{ Body: unknown }>('/sync', async (req, reply) => {
+    // Log the RAW inbound body (before Zod strips unknown keys) so we can see the
+    // exact field names NetSuite sends and confirm every value is captured.
+    logger.info({ rawBody: req.body }, '→ NetSuite estimate /sync raw payload');
     const { estimate: estData, lineItems } = SyncEstimateSchema.parse(req.body);
     const db = getDb();
     const startTime = Date.now();
@@ -537,6 +555,7 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     documentNumber       : body.documentNumber,
     projectName          : body.projectName,
     customerId,
+    subsidiaryId         : await resolveNsId(subsidiaries,       body.subsidiaryNsId),
     customerContactId    : await resolveNsId(contacts,           body.customerContactNsId),
     customerPo           : body.customerPo,
     projectTypeId        : await resolveNsId(projectTypes,       body.projectTypeNsId),
@@ -551,8 +570,8 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     businessVerticalId   : await resolveNsId(businessVerticals,  body.businessVerticalNsId),
     businessTypeId       : await resolveNsId(businessTypes,      body.businessTypeNsId),
     compliancePartnerId  : await resolveNsId(compliancePartners, body.compliancePartnerNsId),
-    acctManagerId        : await resolveNsId(employees,          body.acctManagerNsId),
-    productDeveloperId   : await resolveNsId(employees,          body.productDeveloperNsId),
+    acctManagerId        : await resolveNsId(accountManagers,    body.acctManagerNsId),
+    productDeveloperIds  : await resolveProductDeveloperIds(body),
     hkPartnerId          : await resolveNsId(hkPartners,         body.hkPartnerNsId),
     opsPartner1Id        : await resolveNsId(opsPartners,        body.opsPartner1NsId),
     opsPartner2Id        : await resolveNsId(opsPartners,        body.opsPartner2NsId),
@@ -564,12 +583,29 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     clientShipMethodId   : await resolveNsId(clientShippingMethods, body.clientShipMethodNsId),
     shippingAddressId    : await resolveNsId(addresses,          body.shippingAddressNsId),
     billingAddressId     : await resolveNsId(addresses,          body.billingAddressNsId),
+    statusId                   : await resolveNsId(estimateStatuses,           body.statusNsId),
+    closedLostReasonId         : await resolveNsId(closedLostReasons,          body.closedLostReasonNsId),
+    clientPursuitAlternativeId : await resolveNsId(clientPursuitAlternatives,  body.clientPursuitAlternativeNsId),
+    notesClosedLostReason      : body.notesClosedLostReason,
+    projectHoldDate            : body.projectHoldDate,
     sampleOnlyOrder      : body.sampleOnlyOrder ?? false,
     reOrder              : body.reOrder         ?? false,
     bibleLink            : body.bibleLink,
     memo                 : body.memo,
     source               : 'netsuite' as const,
   };
+}
+
+// Product developers are stored as an integer[] of portal ids. NetSuite may send
+// either a single `productDeveloperNsId` or an array `productDeveloperNsIds`.
+async function resolveProductDeveloperIds(
+  body: { productDeveloperNsId?: string | null; productDeveloperNsIds?: string[] | null },
+): Promise<number[]> {
+  const nsIds = body.productDeveloperNsIds?.length
+    ? body.productDeveloperNsIds
+    : (body.productDeveloperNsId ? [body.productDeveloperNsId] : []);
+  const resolved = await Promise.all(nsIds.map(nsId => resolveNsId(productDevelopers, nsId)));
+  return resolved.filter((id): id is number => id !== null);
 }
 
 async function applyEstimateUpdate(portalId: number, body: Record<string, unknown>) {
@@ -579,7 +615,8 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
   // Scalar fields — only set if present in body
   const scalars = ['documentNumber','projectName','customerPo','expectedCloseDate','promiseDate',
     'projectedTotalAmt','estimatedQty','deckRequest','artSetupRequest',
-    'pkgDeckRequest','pkgArtSetupRequest','sampleOnlyOrder','reOrder','bibleLink','memo'];
+    'pkgDeckRequest','pkgArtSetupRequest','sampleOnlyOrder','reOrder','bibleLink','memo',
+    'notesClosedLostReason','projectHoldDate'];
   for (const k of scalars) {
     if (k in body) updates[k] = body[k];
   }
@@ -587,12 +624,12 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
   // FK fields — resolve *NsId → portal id
   const fkMap: Array<[any, string, string]> = [
     [customers,          'customerNsId',          'customerId'],
+    [subsidiaries,       'subsidiaryNsId',         'subsidiaryId'],
     [departments,        'departmentNsId',         'departmentId'],
     [salesChannels,      'salesChannelNsId',       'salesChannelId'],
     [businessVerticals,  'businessVerticalNsId',   'businessVerticalId'],
     [businessTypes,      'businessTypeNsId',       'businessTypeId'],
-    [employees,          'acctManagerNsId',        'acctManagerId'],
-    [employees,          'productDeveloperNsId',   'productDeveloperId'],
+    [accountManagers,    'acctManagerNsId',        'acctManagerId'],
     [currencies,         'sellCurrencyNsId',       'sellCurrencyId'],
     [clientIncoterms,       'clientIncotermsNsId',    'clientIncotermsId'],
     [clientShippingMethods, 'clientShipMethodNsId',   'clientShipMethodId'],
@@ -600,12 +637,20 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
     [hkPartners,         'hkPartnerNsId',          'hkPartnerId'],
     [opsPartners,        'opsPartner1NsId',        'opsPartner1Id'],
     [opsPartners,        'opsPartner2NsId',        'opsPartner2Id'],
+    [estimateStatuses,           'statusNsId',                   'statusId'],
+    [closedLostReasons,          'closedLostReasonNsId',         'closedLostReasonId'],
+    [clientPursuitAlternatives,  'clientPursuitAlternativeNsId', 'clientPursuitAlternativeId'],
   ];
   for (const [table, nsKey, dbKey] of fkMap) {
     if (nsKey in body) {
       const resolved = await resolveNsId(table, body[nsKey] as string);
       if (resolved) updates[dbKey] = resolved;
     }
+  }
+
+  // Product developers — integer[] column; NS sends a single id or an array.
+  if ('productDeveloperNsIds' in body || 'productDeveloperNsId' in body) {
+    updates.productDeveloperIds = await resolveProductDeveloperIds(body as any);
   }
 
   const [updated] = await db.update(estimates).set(updates)
