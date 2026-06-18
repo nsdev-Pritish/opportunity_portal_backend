@@ -14,6 +14,7 @@ import { projectNames, projectTypes } from '../../db/schema/index.js';
 import { invalidateDropdown, cacheAside, CacheKeys } from '../../utils/cache.js';
 import { ValidationError } from '../../utils/errors.js';
 import { env } from '../../config/env.js';
+import { syncProjectNameToNetsuite } from '../../services/portalNetsuiteSync.service.js';
 
 const CreateProjectNameBody = z.object({
     name: z.string().min(1, 'Project name is required').max(255),
@@ -91,8 +92,16 @@ export default async function portalProjectNameRoutes(app: FastifyInstance) {
 
         await invalidateDropdown('project_names');
 
+        // Push to NetSuite and store the returned internal id back on the row.
+        // Non-throwing: if NS is down/unconfigured the record stays syncStatus='pending'.
+        const ns = await syncProjectNameToNetsuite(created.id);
+        await invalidateDropdown('project_names');
+
         return reply.status(201).send({
             ...created,
+            netsuiteInternalId: ns.netsuiteInternalId ?? created.netsuiteInternalId,
+            syncStatus: ns.syncStatus,
+            syncError: ns.syncError,
             projectTypeName: projectType.name,
         });
     });

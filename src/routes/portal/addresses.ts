@@ -14,6 +14,10 @@ import { getDb } from '../../config/database.js';
 import { addresses, customers } from '../../db/schema/index.js';
 import { invalidateDropdown } from '../../utils/cache.js';
 import { ValidationError } from '../../utils/errors.js';
+import {
+  syncShippingAddressToNetsuite,
+  syncBillingAddressToNetsuite,
+} from '../../services/portalNetsuiteSync.service.js';
 
 const CreateAddressBody = z.object({
   customerId: z.number({ required_error: 'Customer is required' }).int().positive(),
@@ -65,7 +69,20 @@ async function createAddress(body: z.infer<typeof CreateAddressBody>, type: 'shi
 
   await invalidateDropdown('addresses');
 
-  return { ...created, customerName: customer.name };
+  // Push to NetSuite and store the returned internal id back on the row.
+  // Non-throwing: if NS is down/unconfigured the record stays syncStatus='pending'.
+  const ns = type === 'billing'
+    ? await syncBillingAddressToNetsuite(created.id)
+    : await syncShippingAddressToNetsuite(created.id);
+  await invalidateDropdown('addresses');
+
+  return {
+    ...created,
+    netsuiteInternalId: ns.netsuiteInternalId ?? created.netsuiteInternalId,
+    syncStatus: ns.syncStatus,
+    syncError: ns.syncError,
+    customerName: customer.name,
+  };
 }
 
 async function listAddresses(customerId: number | undefined, type: 'shipping' | 'billing') {

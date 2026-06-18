@@ -12,6 +12,7 @@ import { getDb } from '../../config/database.js';
 import { contacts, customers } from '../../db/schema/index.js';
 import { invalidateDropdown } from '../../utils/cache.js';
 import { ValidationError } from '../../utils/errors.js';
+import { syncContactToNetsuite } from '../../services/portalNetsuiteSync.service.js';
 
 const CreateContactBody = z.object({
   customerId: z.number({ required_error: 'Customer is required' }).int().positive(),
@@ -95,8 +96,16 @@ export default async function portalContactRoutes(app: FastifyInstance) {
 
     await invalidateDropdown('contacts');
 
+    // Push to NetSuite and store the returned internal id back on the row.
+    // Non-throwing: if NS is down/unconfigured the record stays syncStatus='pending'.
+    const ns = await syncContactToNetsuite(created.id);
+    await invalidateDropdown('contacts');
+
     return reply.status(201).send({
       ...created,
+      netsuiteInternalId: ns.netsuiteInternalId ?? created.netsuiteInternalId,
+      syncStatus: ns.syncStatus,
+      syncError: ns.syncError,
       customerName: customer.name,
     });
   });
