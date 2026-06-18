@@ -12,6 +12,7 @@
  * {
  *   "netsuiteInternalId": "202",
  *   "customerNetsuiteId": "1234",
+ *   "label": "Warehouse",
  *   "companyName": "Acme Corp Warehouse",
  *   "attention": "Receiving Dept",
  *   "addressee": "Acme Corporation",
@@ -38,6 +39,7 @@ const ADDRESS_TYPE = 'shipping';
 const CreateSchema = z.object({
   netsuiteInternalId : z.string().min(1),
   customerNetsuiteId : z.string().min(1),
+  label              : z.string().max(100).optional().nullable(),
   companyName        : z.string().max(255).optional().nullable(),
   attention          : z.string().max(255).optional().nullable(),
   addressee          : z.string().max(255).optional().nullable(),
@@ -63,6 +65,7 @@ export default async function shippingAddressRoutes(app: FastifyInstance) {
         id                 : addresses.id,
         netsuiteInternalId : addresses.netsuiteInternalId,
         type               : addresses.type,
+        label              : addresses.label,
         companyName        : addresses.companyName,
         customerId         : customers.netsuiteInternalId,
         country            : addresses.country,
@@ -95,6 +98,7 @@ export default async function shippingAddressRoutes(app: FastifyInstance) {
         id                 : addresses.id,
         netsuiteInternalId : addresses.netsuiteInternalId,
         type               : addresses.type,
+        label              : addresses.label,
         companyName        : addresses.companyName,
         customerId         : customers.netsuiteInternalId,
         country            : addresses.country,
@@ -148,6 +152,7 @@ export default async function shippingAddressRoutes(app: FastifyInstance) {
       const [upd] = await db.update(addresses)
         .set({
           customerId  : customer.id,
+          label       : body.label,
           companyName : body.companyName,
           attention   : body.attention,
           addressee   : body.addressee,
@@ -173,6 +178,7 @@ export default async function shippingAddressRoutes(app: FastifyInstance) {
         netsuiteInternalId : body.netsuiteInternalId,
         customerId         : customer.id,
         type               : ADDRESS_TYPE,
+        label              : body.label,
         companyName        : body.companyName,
         attention          : body.attention,
         addressee          : body.addressee,

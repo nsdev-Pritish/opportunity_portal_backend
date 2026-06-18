@@ -22,6 +22,7 @@ import {
 const CreateAddressBody = z.object({
   customerId: z.number({ required_error: 'Customer is required' }).int().positive(),
   type: z.enum(['shipping', 'billing']).optional().default('shipping'),
+  label: z.string().max(100).optional().nullable(),
   country: z.string().max(100).optional().nullable(),
   attention: z.string().max(255).optional().nullable(),
   addressee: z.string().max(255).optional().nullable(),
@@ -52,6 +53,7 @@ async function createAddress(body: z.infer<typeof CreateAddressBody>, type: 'shi
     .values({
       customerId: body.customerId,
       type,
+      label: body.label ?? null,
       country: body.country ?? null,
       attention: body.attention ?? null,
       addressee: body.addressee ?? null,
@@ -97,6 +99,7 @@ async function listAddresses(customerId: number | undefined, type: 'shipping' | 
       id: addresses.id,
       customerId: addresses.customerId,
       type: addresses.type,
+      label: addresses.label,
       country: addresses.country,
       attention: addresses.attention,
       addressee: addresses.addressee,
