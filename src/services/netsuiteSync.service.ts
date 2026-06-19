@@ -321,6 +321,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
       shipToVendorIdNSId     : toNsNum(shipToVendorNsId),
       shipToVendorAddrIdNSId : shipToVendorAddrNsId ? Number(shipToVendorAddrNsId) : '',
       notesNS                : li.notes ?? '',
+      imageNS                : li.image ?? null,
 
         // ── Extended line fields ────────────────────────────────────────────
         selectedNS            : li.selected ?? true,
