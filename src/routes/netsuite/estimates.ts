@@ -86,6 +86,8 @@ const CreateEstimateSchema = z.object({
   clientShipMethodNsId : z.string().optional().nullable(),
   shippingAddressNsId  : z.string().optional().nullable(),
   billingAddressNsId   : z.string().optional().nullable(),
+  shipTo               : z.string().optional().nullable(),  // Ship To free-text from NS
+  billTo               : z.string().optional().nullable(),  // Bill To free-text from NS
 
   // Edit / Update fields (status, win/loss, close-lost)
   statusNsId                  : z.string().optional().nullable(),
@@ -583,6 +585,8 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     clientShipMethodId   : await resolveNsId(clientShippingMethods, body.clientShipMethodNsId),
     shippingAddressId    : await resolveNsId(addresses,          body.shippingAddressNsId),
     billingAddressId     : await resolveNsId(addresses,          body.billingAddressNsId),
+    shipTo               : body.shipTo,
+    billTo               : body.billTo,
     statusId                   : await resolveNsId(estimateStatuses,           body.statusNsId),
     closedLostReasonId         : await resolveNsId(closedLostReasons,          body.closedLostReasonNsId),
     clientPursuitAlternativeId : await resolveNsId(clientPursuitAlternatives,  body.clientPursuitAlternativeNsId),
@@ -616,7 +620,7 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
   const scalars = ['documentNumber','projectName','customerPo','expectedCloseDate','promiseDate',
     'projectedTotalAmt','estimatedQty','deckRequest','artSetupRequest',
     'pkgDeckRequest','pkgArtSetupRequest','sampleOnlyOrder','reOrder','bibleLink','memo',
-    'notesClosedLostReason','projectHoldDate'];
+    'notesClosedLostReason','projectHoldDate','shipTo','billTo'];
   for (const k of scalars) {
     if (k in body) updates[k] = body[k];
   }
