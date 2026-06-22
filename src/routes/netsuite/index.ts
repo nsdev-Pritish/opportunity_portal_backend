@@ -75,6 +75,7 @@ import shippingGroupRoutes             from './shippingGroups.js';
 import closedLostReasonRoutes          from './closedLostReasons.js';
 import clientPursuitAlternativeRoutes  from './clientPursuitAlternatives.js';
 import estimateStatusRoutes            from './estimateStatuses.js';
+import obcPodRegionRoutes              from './obcPodRegions.js';
 import estimateNsRoutes                from './estimates.js';
 import lineItemNsRoutes                from './lineItems.js';
 import estimateQuoteNsRoutes           from './estimateQuotes.js';
@@ -129,6 +130,7 @@ export default async function netsuiteRoutes(app: FastifyInstance) {
   await app.register(closedLostReasonRoutes,          { prefix: '/closed-lost-reasons' });
   await app.register(clientPursuitAlternativeRoutes,  { prefix: '/client-pursuit-alternatives' });
   await app.register(estimateStatusRoutes,            { prefix: '/estimate-statuses' });
+  await app.register(obcPodRegionRoutes,              { prefix: '/obc-pod-regions' });
   await app.register(estimateNsRoutes,                { prefix: '/estimates' });
   await app.register(lineItemNsRoutes,        { prefix: '/estimates/:nsId/line-items' });
   await app.register(estimateQuoteNsRoutes,   { prefix: '/estimate-quotes' });

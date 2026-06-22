@@ -86,6 +86,15 @@ export const subsidiaries = pgTable('subsidiaries', {
   codeIdx: uniqueIndex('subsidiaries_code_idx').on(t.code),
 }));
 
+// OBC POD Region — master dropdown synced from NetSuite, referenced by customers.
+export const obcPodRegions = pgTable('obc_pod_regions', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('obc_pod_regions_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
 export const customers = pgTable('customers', {
   id: serial('id').primaryKey(),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
@@ -97,12 +106,14 @@ export const customers = pgTable('customers', {
   terms: varchar('terms', { length: 100 }),
   chargebackRoyalties: numeric('chargeback_royalties'),
   currencyId: integer('currency_id'),
+  podRegionId: integer('pod_region_id').references(() => obcPodRegions.id),
   ...syncCols,
 }, (t) => ({
   nsIdIdx: uniqueIndex('customers_ns_id_idx').on(t.netsuiteInternalId),
   syncIdx: index('customers_sync_idx').on(t.syncStatus),
   nameIdx: index('customers_name_idx').on(t.name),
   subsidiaryIdx: index('customers_subsidiary_idx').on(t.subsidiaryId),
+  podRegionIdx: index('customers_pod_region_idx').on(t.podRegionId),
 }));
 
 export const contacts = pgTable('contacts', {
@@ -784,10 +795,15 @@ export const subsidiariesRelations = relations(subsidiaries, ({ one, many }) => 
 export const customersRelations = relations(customers, ({ one, many }) => ({
   subsidiary: one(subsidiaries, { fields: [customers.subsidiaryId], references: [subsidiaries.id] }),
   currency: one(currencies, { fields: [customers.currencyId], references: [currencies.id] }),
+  podRegion: one(obcPodRegions, { fields: [customers.podRegionId], references: [obcPodRegions.id] }),
   contacts: many(contacts),
   addresses: many(addresses),
   estimates: many(estimates),
   projectNames: many(projectNames),
+}));
+
+export const obcPodRegionsRelations = relations(obcPodRegions, ({ many }) => ({
+  customers: many(customers),
 }));
 
 export const contactsRelations = relations(contacts, ({ one }) => ({
@@ -846,6 +862,7 @@ export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, m
 export const MASTER_TABLES = {
   subsidiaries,
   customers,
+  obc_pod_regions: obcPodRegions,
   contacts,
   addresses,
   currencies,

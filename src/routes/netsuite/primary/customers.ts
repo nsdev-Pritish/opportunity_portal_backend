@@ -13,7 +13,7 @@ import { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../../config/database.js';
-import { customers, subsidiaries, currencies } from '../../../db/schema/index.js';
+import { customers, subsidiaries, currencies, obcPodRegions } from '../../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../../utils/errors.js';
 import { invalidateDropdown } from '../../../utils/cache.js';
 
@@ -30,6 +30,7 @@ const CreateCustomerSchema = z.object({
   terms                  : z.string().max(100).optional().nullable(),
   chargebackRoyalties    : z.number().optional().nullable(),
   currencyNsId           : z.string().optional().nullable(),   // NS internalId of currency
+  podRegionNsId          : z.string().optional().nullable(),   // NS internalId of OBC POD Region
 });
 
 const UpdateCustomerSchema = z.object({
@@ -42,6 +43,7 @@ const UpdateCustomerSchema = z.object({
   terms                  : z.string().max(100).optional().nullable(),
   chargebackRoyalties    : z.number().optional().nullable(),
   currencyNsId           : z.string().optional().nullable(),   // NS internalId of currency
+  podRegionNsId          : z.string().optional().nullable(),   // NS internalId of OBC POD Region
 });
 
 const StatusSchema = z.object({
@@ -111,6 +113,17 @@ export default async function customerRoutes(app: FastifyInstance) {
       if (curr) currencyId = curr.id;
     }
 
+    // Resolve OBC POD Region by NetSuite internal ID
+    let podRegionId: number | null = null;
+    if (body.podRegionNsId) {
+      const [region] = await db
+        .select({ id: obcPodRegions.id })
+        .from(obcPodRegions)
+        .where(eq(obcPodRegions.netsuiteInternalId, body.podRegionNsId))
+        .limit(1);
+      if (region) podRegionId = region.id;
+    }
+
     // Idempotency: same NS id already exists → update instead of duplicate
     const [existing] = await db
       .select({ id: customers.id })
@@ -131,6 +144,7 @@ export default async function customerRoutes(app: FastifyInstance) {
           terms: body.terms,
           chargebackRoyalties: body.chargebackRoyalties != null ? String(body.chargebackRoyalties) : body.chargebackRoyalties,
           currencyId,
+          podRegionId,
           updatedAt: new Date()
         })
         .where(eq(customers.id, existing.id))
@@ -152,6 +166,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         terms              : body.terms,
         chargebackRoyalties: body.chargebackRoyalties != null ? String(body.chargebackRoyalties) : body.chargebackRoyalties,
         currencyId,
+        podRegionId,
         source             : 'netsuite',
         syncStatus         : 'synced',
         syncedAt           : new Date(),
@@ -201,6 +216,21 @@ export default async function customerRoutes(app: FastifyInstance) {
       }
     }
 
+    // Resolve OBC POD Region by NetSuite internal ID if provided
+    let podRegionId: number | null | undefined = undefined;
+    if (body.podRegionNsId !== undefined) {
+      if (body.podRegionNsId) {
+        const [region] = await db
+          .select({ id: obcPodRegions.id })
+          .from(obcPodRegions)
+          .where(eq(obcPodRegions.netsuiteInternalId, body.podRegionNsId))
+          .limit(1);
+        podRegionId = region ? region.id : null;
+      } else {
+        podRegionId = null;
+      }
+    }
+
     const [existing] = await db
       .select({ id: customers.id })
       .from(customers)
@@ -223,6 +253,7 @@ export default async function customerRoutes(app: FastifyInstance) {
     if (body.terms !== undefined) updateData.terms = body.terms;
     if (body.chargebackRoyalties !== undefined) updateData.chargebackRoyalties = body.chargebackRoyalties != null ? String(body.chargebackRoyalties) : null;
     if (currencyId !== undefined) updateData.currencyId = currencyId;
+    if (podRegionId !== undefined) updateData.podRegionId = podRegionId;
 
     const [updated] = await db
       .update(customers)
