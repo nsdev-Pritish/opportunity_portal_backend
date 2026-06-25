@@ -199,23 +199,50 @@ const EstimateHeaderSchema = z.object({
   })).optional(),
 });
 
-// ── Phase 2: Header + line items ─────────────────────────────────────────────
+// ── Freight group schema ──────────────────────────────────────────────────────
+// A freight group bundles a set of line items under one shipping decision. itemIds
+// reference the line items in the group by their 0-based index in the lineItems array
+// of the same request (the only stable key available on create, before DB ids exist).
+// Numeric values are sent as strings to match the rest of the estimate payload.
+const FreightGroupSchema = z.object({
+  groupName:           z.string().max(255).optional(),
+  freightModeSelected: z.enum(['LCL', 'FCL', 'AIR', 'CUSTOM']).optional(),  // Freight Mode Selected
+  itemIds:             z.array(z.number().int().nonnegative()).optional(),  // indices into lineItems
+  numItems:       z.number().int().nonnegative().optional(),
+  totalCartons:   z.number().int().nonnegative().optional(),
+  totalCbm:       z.string().optional(),
+  totalWeight:    z.string().optional(),
+
+  oceanLclTotal:   z.string().optional(),
+  oceanLclPerUnit: z.string().optional(),
+  oceanLclPol:     z.string().max(255).optional(),
+  oceanLclPod:     z.string().max(255).optional(),
+
+  oceanFclTotal:   z.string().optional(),
+  oceanFclPerUnit: z.string().optional(),
+  oceanFclPol:     z.string().max(255).optional(),
+  oceanFclPod:     z.string().max(255).optional(),
+
+  airTotal:   z.string().optional(),
+  airPerUnit: z.string().optional(),
+  airPol:     z.string().max(255).optional(),
+  airPod:     z.string().max(255).optional(),
+
+  customTotal:    z.string().optional(),
+  customPerUnit:  z.string().optional(),
+  customProvider: z.string().max(255).optional(),
+  customNotes:    z.string().optional(),
+});
+
+// ── Header + line items + freight groups ─────────────────────────────────────
 const CreateEstimateSchema = EstimateHeaderSchema.extend({
   lineItems: z.array(LineItemSchema).max(400).optional(),
+  freightGroups: z.array(FreightGroupSchema).max(50).optional(),
 });
 const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
   lineItems: z.array(LineItemSchema).max(400).optional(),
+  freightGroups: z.array(FreightGroupSchema).max(50).optional(),
 });
-
-// Phase 3 – uncomment to add freight groups too (replace Phase 2 schemas above):
-// const CreateEstimateSchema = EstimateHeaderSchema.extend({
-//   lineItems: z.array(LineItemSchema).max(400).optional(),
-//   freightGroups: z.array(FreightGroupSchema).max(50).optional(),
-// });
-// const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
-//   lineItems: z.array(LineItemSchema).max(400).optional(),
-//   freightGroups: z.array(FreightGroupSchema).max(50).optional(),
-// });
 
 // ── Multipart helper ─────────────────────────────────────────────────────────
 // Parses a multipart/form-data request into a plain object.
@@ -287,8 +314,8 @@ export default async function estimateRoutes(app: FastifyInstance) {
     const raw = req.headers['content-type']?.startsWith('multipart/form-data')
       ? await parseMultipartEstimate(req)
       : req.body as Record<string, unknown>;
-    const { lineItems, ...headerData } = CreateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
-    const result = await createEstimateWithItems(headerData, lineItems ?? [], []);
+    const { lineItems, freightGroups, ...headerData } = CreateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
+    const result = await createEstimateWithItems(headerData, lineItems ?? [], freightGroups ?? []);
     return reply.status(201).send(result);
   });
 
@@ -297,8 +324,8 @@ export default async function estimateRoutes(app: FastifyInstance) {
   // syncs the estimate to NS, then creates the quote in NS, returning both with their NS ids.
   // Can take up to ~2 min (two sequential 60s NS calls).
   app.post<{ Body: unknown }>('/convert-to-otb', async (req, reply) => {
-    const { lineItems, ...headerData } = CreateEstimateSchema.parse(stripEmpty(normalizeBody(req.body)));
-    const result = await createEstimateAndConvertToOtb(headerData, lineItems ?? [], []);
+    const { lineItems, freightGroups, ...headerData } = CreateEstimateSchema.parse(stripEmpty(normalizeBody(req.body)));
+    const result = await createEstimateAndConvertToOtb(headerData, lineItems ?? [], freightGroups ?? []);
     return reply.status(201).send(result);
   });
 
@@ -419,8 +446,8 @@ export default async function estimateRoutes(app: FastifyInstance) {
     const raw = req.headers['content-type']?.startsWith('multipart/form-data')
       ? await parseMultipartEstimate(req)
       : req.body as Record<string, unknown>;
-    const { lineItems, ...headerData } = UpdateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
-    return updateEstimateWithItems(parseInt(req.params.id), headerData, lineItems);
+    const { lineItems, freightGroups, ...headerData } = UpdateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
+    return updateEstimateWithItems(parseInt(req.params.id), headerData, lineItems, freightGroups);
   });
 
   // DELETE /api/v1/estimates/:id — soft-delete

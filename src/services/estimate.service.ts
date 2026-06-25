@@ -317,7 +317,7 @@ export async function getEstimate(id: number) {
     db.select()
       .from(estimateFreightGroups)
       .where(eq(estimateFreightGroups.estimateId, id))
-      .orderBy(asc(estimateFreightGroups.sortOrder)),
+      .orderBy(asc(estimateFreightGroups.id)),
   ]);
 
   // Nest components under their parent
@@ -386,6 +386,60 @@ async function insertLineItemsWithComponents(
   }
 
   return { parents, components };
+}
+
+// ── Internal: persist freight groups + line-item back-references ──────────────
+// Replace-all strategy (matches how line items are reconciled): clear this estimate's
+// existing groups + the freight_group_id on its lines, then re-insert the incoming groups.
+//
+// Membership contract: each incoming group.itemIds entry is the 0-based index of a parent
+// line item in the request's lineItems array. We translate those indices to the inserted/
+// updated DB row ids (via `parents`, which is in lineItems order), store the resolved ids on
+// the group, and set freight_group_id on each member line so the link exists both ways.
+async function persistFreightGroups(
+  tx: any,
+  estimateId: number,
+  groups: Record<string, unknown>[] | undefined,
+  parents: any[],
+): Promise<any[]> {
+  // Clear existing links + groups for this estimate (no-op on create).
+  await tx.update(estimateLineItems)
+    .set({ freightGroupId: null })
+    .where(eq(estimateLineItems.estimateId, estimateId));
+  await tx.delete(estimateFreightGroups).where(eq(estimateFreightGroups.estimateId, estimateId));
+
+  if (!groups || groups.length === 0) return [];
+
+  const inserted: any[] = [];
+  for (let idx = 0; idx < groups.length; idx++) {
+    const { itemIds: rawIdx, ...rest } = groups[idx] as Record<string, unknown>;
+
+    // index → DB id; defensively skip out-of-range indices.
+    const memberIds: number[] = Array.isArray(rawIdx)
+      ? (rawIdx as number[])
+          .map((i) => parents[i]?.id)
+          .filter((v): v is number => typeof v === 'number')
+      : [];
+
+    const [group] = await tx.insert(estimateFreightGroups)
+      .values({
+        ...rest,
+        estimateId,
+        groupName: (rest.groupName as string) ?? `Group ${idx + 1}`,
+        itemIds: memberIds,
+        numItems: (rest.numItems as number) ?? memberIds.length,
+        updatedAt: new Date(),
+      } as any)
+      .returning();
+    inserted.push(group);
+
+    if (memberIds.length > 0) {
+      await tx.update(estimateLineItems)
+        .set({ freightGroupId: group.id })
+        .where(inArray(estimateLineItems.id, memberIds));
+    }
+  }
+  return inserted;
 }
 
 // ── Internal: in-place diff upsert for UPDATE ─────────────────────────────────
@@ -577,25 +631,13 @@ export async function createEstimateWithItems(
     // Step 2 – Line items
     const { parents, components } = await insertLineItemsWithComponents(tx, estimate.id, lineItems);
 
-    // Step 3 – Freight groups (Phase 3: uncomment when ready):
-    // const insertedGroups: any[] = [];
-    // if (freightGroups.length > 0) {
-    //   const groupRows = freightGroups.map((g, idx) => ({
-    //     ...g,
-    //     estimateId: estimate.id,
-    //     sortOrder: (g.sortOrder as number) ?? idx + 1,
-    //     groupName: (g.groupName as string) ?? `Group ${idx + 1}`,
-    //   }));
-    //   for (let i = 0; i < groupRows.length; i += CHUNK) {
-    //     const rows = await tx.insert(estimateFreightGroups).values(groupRows.slice(i, i + CHUNK) as any).returning();
-    //     insertedGroups.push(...rows);
-    //   }
-    // }
+    // Step 3 – Freight groups (links resolved against the inserted parents)
+    const insertedGroups = await persistFreightGroups(tx, estimate.id, freightGroups, parents);
 
     const duration = Date.now() - startTime;
-    logger.info({ estimateId: estimate.id, lineItemCount: parents.length + components.length, durationMs: duration }, 'Estimate created');
+    logger.info({ estimateId: estimate.id, lineItemCount: parents.length + components.length, freightGroupCount: insertedGroups.length, durationMs: duration }, 'Estimate created');
 
-    return { estimate, lineItems: [...parents, ...components] };
+    return { estimate, lineItems: [...parents, ...components], freightGroups: insertedGroups };
   }).then((result) => {
     // Fire-and-forget: NS sync errors are caught inside syncEstimateToNetsuite;
     // the portal response must not block on or fail due to NS availability.
@@ -639,23 +681,13 @@ export async function updateEstimateWithItems(
         .orderBy(asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder));
     }
 
-    // Step 3 – Freight groups (Phase 3: uncomment when ready):
-    // if (newFreightGroups !== undefined) {
-    //   await tx.delete(estimateFreightGroups).where(eq(estimateFreightGroups.estimateId, id));
-    //   const freightGroupRows: any[] = [];
-    //   if (newFreightGroups.length > 0) {
-    //     const groupRows = newFreightGroups.map((g, idx) => ({
-    //       ...g, estimateId: id,
-    //       sortOrder: (g.sortOrder as number) ?? idx + 1,
-    //       groupName: (g.groupName as string) ?? `Group ${idx + 1}`,
-    //       updatedAt: new Date(),
-    //     }));
-    //     for (let i = 0; i < groupRows.length; i += CHUNK) {
-    //       const rows = await tx.insert(estimateFreightGroups).values(groupRows.slice(i, i + CHUNK) as any).returning();
-    //       freightGroupRows.push(...rows);
-    //     }
-    //   }
-    // }
+    // Step 3 – Freight groups. Only reconcile when the caller actually sent freightGroups;
+    // a header-only / line-only update leaves existing groups untouched (backward compatible).
+    // Index resolution uses the parent line items in lineNumber order.
+    if (newFreightGroups !== undefined) {
+      const parents = allLineItems.filter((r: any) => r.parentLineItemId === null);
+      await persistFreightGroups(tx, id, newFreightGroups, parents);
+    }
 
     return { estimate: updated, lineItems: allLineItems };
   });

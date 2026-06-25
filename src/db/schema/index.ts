@@ -20,6 +20,7 @@ export const estimateStatusEnum = pgEnum('estimate_status', [
   'draft', 'submitted', 'approved', 'otb', 'closed_won', 'closed_lost',
 ]);
 
+
 export const countryOfDestEnum = pgEnum('country_of_dest', ['US', 'EU']);
 
 // ─── Helper: standard sync columns ────────────────────────────────────────
@@ -681,6 +682,11 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   freightNotes:         text('freight_notes'),
   excludeFromPrint:     boolean('exclude_from_print').default(false),
 
+  // Freight: back-reference to the freight group this line belongs to (group → many lines,
+  // line → one group). All active freight logic now lives on estimate_freight_groups; the
+  // legacy freight_* columns above are retained for backward compatibility but no longer used.
+  freightGroupId: integer('freight_group_id').references((): AnyPgColumn => estimateFreightGroups.id, { onDelete: 'set null' }),
+
   // Soft delete: false = "deleted" (hidden from reads, row retained for NetSuite deactivation)
   isActive:             boolean('is_active').default(true).notNull(),
 
@@ -712,37 +718,50 @@ export const estimateFreightGroups = pgTable('estimate_freight_groups', {
   id: serial('id').primaryKey(),
   estimateId: integer('estimate_id').references(() => estimates.id, { onDelete: 'cascade' }).notNull(),
   groupName: varchar('group_name', { length: 255 }).notNull().default('Group 1'),
-  sortOrder: integer('sort_order').notNull().default(1),
 
-  // The chosen freight option for this group (LCL | FCL | AIR | CUSTOM)
-  chosenType: varchar('chosen_type', { length: 20 }),
+  // Freight Mode Selected for this group (LCL | FCL | AIR | CUSTOM)
+  freightModeSelected: varchar('freight_mode_selected', { length: 20 }),
 
-  // Rate selections for each freight option
-  lclRateId: integer('lcl_rate_id').references(() => lclRates.id),
-  fclRateId: integer('fcl_rate_id').references(() => fclRates.id),
-  airRateId: integer('air_rate_id').references(() => airRates.id),
+  // Membership: ids of the estimate_line_items belonging to this group.
+  itemIds: jsonb('item_ids').$type<number[]>().default([]),
 
-  // Custom Provider fields
-  customProvider: varchar('custom_provider', { length: 255 }),
-  customFreightCost: numeric('custom_freight_cost', { precision: 15, scale: 4 }),
-  customNotes: text('custom_notes'),
-
-  // Port details
-  pol: varchar('pol', { length: 255 }),
-  pod: varchar('pod', { length: 255 }),
-
-  // Computed totals (aggregated from cost-sheet line items assigned to this group)
+  // Aggregated metrics across the group's line items
+  numItems: integer('num_items').default(0),
   totalCartons: integer('total_cartons').default(0),
   totalCbm: numeric('total_cbm', { precision: 10, scale: 3 }),
-  chargeableWeightKg: numeric('chargeable_weight_kg', { precision: 10, scale: 3 }),
-  freightCost: numeric('freight_cost', { precision: 15, scale: 4 }),
-  freightCostPerUnit: numeric('freight_cost_per_unit', { precision: 15, scale: 4 }),
+  totalWeight: numeric('total_weight', { precision: 10, scale: 3 }),
+
+  // Ocean LCL
+  oceanLclTotal:   numeric('ocean_lcl_total',    { precision: 15, scale: 4 }),
+  oceanLclPerUnit: numeric('ocean_lcl_per_unit', { precision: 15, scale: 4 }),
+  oceanLclPol:     varchar('ocean_lcl_pol', { length: 255 }),
+  oceanLclPod:     varchar('ocean_lcl_pod', { length: 255 }),
+
+  // Ocean FCL
+  oceanFclTotal:   numeric('ocean_fcl_total',    { precision: 15, scale: 4 }),
+  oceanFclPerUnit: numeric('ocean_fcl_per_unit', { precision: 15, scale: 4 }),
+  oceanFclPol:     varchar('ocean_fcl_pol', { length: 255 }),
+  oceanFclPod:     varchar('ocean_fcl_pod', { length: 255 }),
+
+  // Air
+  airTotal:   numeric('air_total',    { precision: 15, scale: 4 }),
+  airPerUnit: numeric('air_per_unit', { precision: 15, scale: 4 }),
+  airPol:     varchar('air_pol', { length: 255 }),
+  airPod:     varchar('air_pod', { length: 255 }),
+
+  // Custom provider
+  customTotal:    numeric('custom_total',    { precision: 15, scale: 4 }),
+  customPerUnit:  numeric('custom_per_unit', { precision: 15, scale: 4 }),
+  customProvider: varchar('custom_provider', { length: 255 }),
+  customNotes:    text('custom_notes'),
 
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  // NOTE: the old chosen_type, sort_order and rate-ref columns from the original
+  // estimate_freight_groups table still exist physically in the DB but are intentionally
+  // not mapped here — they are unused by the current freight-group model.
 }, (t) => ({
   estimateIdx: index('efg_estimate_idx').on(t.estimateId),
-  sortIdx: index('efg_sort_idx').on(t.estimateId, t.sortOrder),
 }));
 
 // ══════════════════════════════════════════════════════════════════

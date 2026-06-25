@@ -8,9 +8,9 @@
  * Called automatically from estimate.service.ts after create / update.
  * Safe to call even when NS_SUITELET_URL is not configured — it will skip silently.
  *
- * Phase 1: header-level fields only.
- * Phase 2: uncomment the line-items section when ready.
- * Phase 3: uncomment the freight-groups section when ready.
+ * Phase 1: header-level fields.
+ * Phase 2: line items.
+ * Phase 3: freight groups (payload.freightGroups), built from estimate_freight_groups.
  */
 
 import crypto from 'crypto';
@@ -25,8 +25,7 @@ import {
   csItems, vendors, sustainabilityOptions, productClasses, productClassesEu, vendorIncoterms, factories,
   vendorAddresses, componentKitItems,
   closedLostReasons, clientPursuitAlternatives, estimateStatuses,
-  // Phase 3 – uncomment when freight groups are added:
-  // estimateFreightGroups, lclRates, fclRates, airRates,
+  estimateFreightGroups,
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -351,11 +350,48 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     payload.lines = lines;
   }
 
-  // Phase 3 – Freight groups (uncomment when ready):
-  // const freightGroups = await db.select().from(estimateFreightGroups)
-  //   .where(eq(estimateFreightGroups.estimateId, estimateId))
-  //   .orderBy(estimateFreightGroups.sortOrder);
-  // payload.freightGroups = freightGroups.map(g => ({ ... }));
+  // Phase 3 – Freight groups. itemIds (stored as line-item DB ids) are translated to the
+  // 1-based payload line numbers used in `payload.lines`, so NetSuite can resolve membership.
+  const freightGroupRows = await db.select().from(estimateFreightGroups)
+    .where(eq(estimateFreightGroups.estimateId, estimateId))
+    .orderBy(asc(estimateFreightGroups.id));
+
+  if (freightGroupRows.length > 0) {
+    const dbIdToLineNum = new Map<number, number>();
+    for (let i = 0; i < lineItemRows.length; i++) dbIdToLineNum.set(lineItemRows[i].id, i + 1);
+
+    payload.freightGroups = freightGroupRows.map(g => ({
+      groupNameNS      : g.groupName ?? '',
+      freightModeNS    : g.freightModeSelected ?? '',
+      itemLinesNS      : (g.itemIds ?? [])
+        .map(id => dbIdToLineNum.get(id))
+        .filter((n): n is number => typeof n === 'number'),
+      numItemsNS       : g.numItems ?? null,
+      totalCartonsNS   : g.totalCartons ?? null,
+      totalCbmNS       : toNum(g.totalCbm),
+      totalWeightNS    : toNum(g.totalWeight),
+
+      oceanLclTotalNS  : toNum(g.oceanLclTotal),
+      oceanLclPerUnitNS: toNum(g.oceanLclPerUnit),
+      oceanLclPOLNS    : g.oceanLclPol ?? '',
+      oceanLclPODNS    : g.oceanLclPod ?? '',
+
+      oceanFclTotalNS  : toNum(g.oceanFclTotal),
+      oceanFclPerUnitNS: toNum(g.oceanFclPerUnit),
+      oceanFclPOLNS    : g.oceanFclPol ?? '',
+      oceanFclPODNS    : g.oceanFclPod ?? '',
+
+      airTotalNS       : toNum(g.airTotal),
+      airPerUnitNS     : toNum(g.airPerUnit),
+      airPOLNS         : g.airPol ?? '',
+      airPODNS         : g.airPod ?? '',
+
+      customTotalNS    : toNum(g.customTotal),
+      customPerUnitNS  : toNum(g.customPerUnit),
+      customProviderNS : g.customProvider ?? '',
+      customNotesNS    : g.customNotes ?? '',
+    }));
+  }
 
   return payload;
 }

@@ -29,6 +29,7 @@ import {
   csItems, vendors, sustainabilityOptions, productClasses, productClassesEu, vendorIncoterms, factories,
   vendorAddresses, componentKitItems,
   closedLostReasons, clientPursuitAlternatives, estimateStatuses,
+  estimateFreightGroups,
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -86,6 +87,39 @@ async function otbInsertLineItems(
   }
 
   return { parents, components };
+}
+
+// ── Freight groups (own copy; OTB create is always a fresh estimate) ──────────
+// group.itemIds carry 0-based indices into the lineItems array; translate to the inserted
+// parent DB ids, store them on the group, and set freight_group_id on each member line.
+async function otbInsertFreightGroups(
+  tx: any,
+  estimateId: number,
+  groups: Record<string, unknown>[],
+  parents: any[],
+): Promise<void> {
+  if (!groups || groups.length === 0) return;
+  for (let idx = 0; idx < groups.length; idx++) {
+    const { itemIds: rawIdx, ...rest } = groups[idx] as Record<string, unknown>;
+    const memberIds: number[] = Array.isArray(rawIdx)
+      ? (rawIdx as number[]).map(i => parents[i]?.id).filter((v): v is number => typeof v === 'number')
+      : [];
+    const [group] = await tx.insert(estimateFreightGroups)
+      .values({
+        ...rest,
+        estimateId,
+        groupName: (rest.groupName as string) ?? `Group ${idx + 1}`,
+        itemIds: memberIds,
+        numItems: (rest.numItems as number) ?? memberIds.length,
+        updatedAt: new Date(),
+      } as any)
+      .returning();
+    if (memberIds.length > 0) {
+      await tx.update(estimateLineItems)
+        .set({ freightGroupId: group.id })
+        .where(inArray(estimateLineItems.id, memberIds));
+    }
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -389,6 +423,48 @@ async function otbBuildCreatePayload(estimateId: number) {
     payload.lines = lines;
   }
 
+  // Freight groups — itemIds (line-item DB ids) → 1-based payload line numbers.
+  const freightGroupRows = await db.select().from(estimateFreightGroups)
+    .where(eq(estimateFreightGroups.estimateId, estimateId))
+    .orderBy(estimateFreightGroups.id);
+
+  if (freightGroupRows.length > 0) {
+    const dbIdToLineNum = new Map<number, number>();
+    for (let i = 0; i < lineItemRows.length; i++) dbIdToLineNum.set(lineItemRows[i].id, i + 1);
+
+    payload.freightGroups = freightGroupRows.map(g => ({
+      groupNameNS      : g.groupName ?? '',
+      freightModeNS    : g.freightModeSelected ?? '',
+      itemLinesNS      : (g.itemIds ?? [])
+        .map(id => dbIdToLineNum.get(id))
+        .filter((n): n is number => typeof n === 'number'),
+      numItemsNS       : g.numItems ?? null,
+      totalCartonsNS   : g.totalCartons ?? null,
+      totalCbmNS       : otbToNum(g.totalCbm),
+      totalWeightNS    : otbToNum(g.totalWeight),
+
+      oceanLclTotalNS  : otbToNum(g.oceanLclTotal),
+      oceanLclPerUnitNS: otbToNum(g.oceanLclPerUnit),
+      oceanLclPOLNS    : g.oceanLclPol ?? '',
+      oceanLclPODNS    : g.oceanLclPod ?? '',
+
+      oceanFclTotalNS  : otbToNum(g.oceanFclTotal),
+      oceanFclPerUnitNS: otbToNum(g.oceanFclPerUnit),
+      oceanFclPOLNS    : g.oceanFclPol ?? '',
+      oceanFclPODNS    : g.oceanFclPod ?? '',
+
+      airTotalNS       : otbToNum(g.airTotal),
+      airPerUnitNS     : otbToNum(g.airPerUnit),
+      airPOLNS         : g.airPol ?? '',
+      airPODNS         : g.airPod ?? '',
+
+      customTotalNS    : otbToNum(g.customTotal),
+      customPerUnitNS  : otbToNum(g.customPerUnit),
+      customProviderNS : g.customProvider ?? '',
+      customNotesNS    : g.customNotes ?? '',
+    }));
+  }
+
   return payload;
 }
 
@@ -587,18 +663,19 @@ async function otbSyncConvert(estimateId: number, quoteId: number, lineItemIds: 
 export async function createEstimateAndConvertToOtb(
   headerData: Record<string, unknown>,
   lineItems: RawLineItem[],
-  _freightGroups: Record<string, unknown>[] = [],
+  freightGroups: Record<string, unknown>[] = [],
 ) {
   const db = getDb();
   const startTime = Date.now();
   logger.info('OTB: creating estimate + converting to quote');
 
-  // 1. Insert estimate + line items atomically
+  // 1. Insert estimate + line items (+ freight groups) atomically
   const { estimate, lineItems: lines } = await db.transaction(async (tx) => {
     const [estimate] = await tx.insert(estimates)
       .values({ ...headerData, source: 'portal', syncStatus: 'pending' } as any)
       .returning();
     const { parents, components } = await otbInsertLineItems(tx, estimate.id, lineItems);
+    await otbInsertFreightGroups(tx, estimate.id, freightGroups, parents);
     return { estimate, lineItems: [...parents, ...components] };
   });
   logger.info({ estimateId: estimate.id, lineItemCount: lines.length, durationMs: Date.now() - startTime }, 'OTB: estimate created locally');
