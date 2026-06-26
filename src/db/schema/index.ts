@@ -719,7 +719,7 @@ export const estimateFreightGroups = pgTable('estimate_freight_groups', {
   estimateId: integer('estimate_id').references(() => estimates.id, { onDelete: 'cascade' }).notNull(),
   groupName: varchar('group_name', { length: 255 }).notNull().default('Group 1'),
 
-  // Freight Mode Selected for this group (LCL | FCL | AIR | CUSTOM)
+  // Freight Mode Selected for this group (OCEAN_LCL | OCEAN_FCL | AIR | CUSTOM)
   freightModeSelected: varchar('freight_mode_selected', { length: 20 }),
 
   // Membership: ids of the estimate_line_items belonging to this group.
@@ -762,6 +762,67 @@ export const estimateFreightGroups = pgTable('estimate_freight_groups', {
   // not mapped here — they are unused by the current freight-group model.
 }, (t) => ({
   estimateIdx: index('efg_estimate_idx').on(t.estimateId),
+}));
+
+// ══════════════════════════════════════════════════════════════════
+//  ESTIMATE + QUOTE SAVED SEARCH (mirror of the NetSuite saved search)
+//  One row per estimate/quote record returned by the NS saved search.
+//  Columns that map to a master table store the FK id (not the text);
+//  the text is resolvable by joining to that master table.
+//  Populated in future by a NetSuite sync; for now just the structure.
+// ══════════════════════════════════════════════════════════════════
+
+export const estimateQuoteSearch = pgTable('estimate_quote_search', {
+  id: serial('id').primaryKey(),
+
+  // Document Number — plain text from NS (e.g. "EST0008946")
+  documentNumber: varchar('document_number', { length: 100 }),
+
+  // Department → departments
+  departmentId: integer('department_id').references(() => departments.id),
+
+  // Customer hierarchy → customers (Name / Consolidated Customer / Top Level Parent)
+  customerId: integer('customer_id').references(() => customers.id),
+  consolidatedCustomerId: integer('consolidated_customer_id').references(() => customers.id),
+  topLevelParentId: integer('top_level_parent_id').references(() => customers.id),
+
+  // Status → estimate_statuses
+  statusId: integer('status_id').references(() => estimateStatuses.id),
+
+  // Dates
+  tranDate: date('tran_date'),                          // "Date"
+  expectedCloseDate: date('expected_close_date'),       // "Expected Close"
+  promisedDeliveryDate: date('promised_delivery_date'), // "Promised Delivery Date"
+
+  // Amounts
+  projectedTotal: numeric('projected_total', { precision: 15, scale: 2 }),
+  exchangeRate: numeric('exchange_rate', { precision: 15, scale: 6 }),
+
+  // Currency → currencies
+  currencyId: integer('currency_id').references(() => currencies.id),
+
+  // Subsidiary → subsidiaries
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
+
+  // Project Name → project_names
+  projectNameId: integer('project_name_id').references(() => projectNames.id),
+
+  // Business Vertical → business_verticals
+  businessVerticalId: integer('business_vertical_id').references(() => businessVerticals.id),
+
+  // Sales Rep → account_managers (same mapping the estimates table uses; employees is empty)
+  salesRepId: integer('sales_rep_id').references(() => accountManagers.id),
+
+  // Likely To Close → likely_to_close
+  likelyToCloseId: integer('likely_to_close_id').references(() => likelyToClose.id),
+
+  ...syncCols, // netsuiteInternalId ("Internal ID"), source, syncStatus, timestamps, …
+}, (t) => ({
+  nsIdIdx:     uniqueIndex('eqs_ns_id_idx').on(t.netsuiteInternalId),
+  syncIdx:     index('eqs_sync_idx').on(t.syncStatus),
+  customerIdx: index('eqs_customer_idx').on(t.customerId),
+  statusIdx:   index('eqs_status_idx').on(t.statusId),
+  docNumIdx:   index('eqs_doc_num_idx').on(t.documentNumber),
 }));
 
 // ══════════════════════════════════════════════════════════════════
@@ -874,6 +935,20 @@ export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, m
   productClass: one(productClasses, { fields: [estimateLineItems.productClassId], references: [productClasses.id] }),
   productClassEu: one(productClassesEu, { fields: [estimateLineItems.productClassEuId], references: [productClassesEu.id] }),
   componentKitItem: one(componentKitItems, { fields: [estimateLineItems.componentKitItemId], references: [componentKitItems.id] }),
+}));
+
+export const estimateQuoteSearchRelations = relations(estimateQuoteSearch, ({ one }) => ({
+  department:           one(departments,       { fields: [estimateQuoteSearch.departmentId],         references: [departments.id] }),
+  customer:             one(customers,         { fields: [estimateQuoteSearch.customerId],           references: [customers.id] }),
+  consolidatedCustomer: one(customers,         { fields: [estimateQuoteSearch.consolidatedCustomerId], references: [customers.id] }),
+  topLevelParent:       one(customers,         { fields: [estimateQuoteSearch.topLevelParentId],     references: [customers.id] }),
+  status:               one(estimateStatuses,  { fields: [estimateQuoteSearch.statusId],             references: [estimateStatuses.id] }),
+  currency:             one(currencies,        { fields: [estimateQuoteSearch.currencyId],           references: [currencies.id] }),
+  subsidiary:           one(subsidiaries,      { fields: [estimateQuoteSearch.subsidiaryId],         references: [subsidiaries.id] }),
+  projectName:          one(projectNames,      { fields: [estimateQuoteSearch.projectNameId],        references: [projectNames.id] }),
+  businessVertical:     one(businessVerticals, { fields: [estimateQuoteSearch.businessVerticalId],   references: [businessVerticals.id] }),
+  salesRep:             one(accountManagers,   { fields: [estimateQuoteSearch.salesRepId],           references: [accountManagers.id] }),
+  likelyToClose:        one(likelyToClose,     { fields: [estimateQuoteSearch.likelyToCloseId],      references: [likelyToClose.id] }),
 }));
 
 // ─── Export all tables as a map for generic service ───────────────
