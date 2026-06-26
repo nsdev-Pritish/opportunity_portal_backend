@@ -187,18 +187,25 @@ export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
       .where(whereClause),
   ]);
 
-  // Fetch all line items for the returned estimates in one batch query
+  // Fetch all line items + freight groups for the returned estimates in batch queries
   const estimateIds = rows.map(r => r.id);
   let lineItemsByEstimate: Record<number, any[]> = {};
+  let freightGroupsByEstimate: Record<number, any[]> = {};
 
   if (estimateIds.length > 0) {
-    const allLineItems = await db.select()
-      .from(estimateLineItems)
-      .where(and(
-        inArray(estimateLineItems.estimateId, estimateIds),
-        eq(estimateLineItems.isActive, true),
-      ))
-      .orderBy(asc(estimateLineItems.estimateId), asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder));
+    const [allLineItems, allFreightGroups] = await Promise.all([
+      db.select()
+        .from(estimateLineItems)
+        .where(and(
+          inArray(estimateLineItems.estimateId, estimateIds),
+          eq(estimateLineItems.isActive, true),
+        ))
+        .orderBy(asc(estimateLineItems.estimateId), asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder)),
+      db.select()
+        .from(estimateFreightGroups)
+        .where(inArray(estimateFreightGroups.estimateId, estimateIds))
+        .orderBy(asc(estimateFreightGroups.estimateId), asc(estimateFreightGroups.id)),
+    ]);
 
     // Nest components under their parent, group by estimateId
     for (const li of allLineItems) {
@@ -213,9 +220,18 @@ export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
         if (parent) parent.components.push(li);
       }
     }
+
+    // Group freight groups by estimateId
+    for (const g of allFreightGroups) {
+      (freightGroupsByEstimate[g.estimateId] ??= []).push(g);
+    }
   }
 
-  const data = rows.map(r => ({ ...r, lineItems: lineItemsByEstimate[r.id] ?? [] }));
+  const data = rows.map(r => ({
+    ...r,
+    lineItems: lineItemsByEstimate[r.id] ?? [],
+    freightGroups: freightGroupsByEstimate[r.id] ?? [],
+  }));
 
   return { data, pagination: { page: opts.page, limit: opts.limit, total: Number(total) } };
 }
