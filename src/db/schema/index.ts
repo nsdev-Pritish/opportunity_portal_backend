@@ -826,6 +826,88 @@ export const estimateQuoteSearch = pgTable('estimate_quote_search', {
 }));
 
 // ══════════════════════════════════════════════════════════════════
+//  SALES ORDER SAVED SEARCH (mirror of the NetSuite saved search)
+//  Same column set as estimate_quote_search; FK ids for mastered columns.
+// ══════════════════════════════════════════════════════════════════
+
+export const salesOrderSearch = pgTable('sales_order_search', {
+  id: serial('id').primaryKey(),
+
+  documentNumber: varchar('document_number', { length: 100 }),
+
+  departmentId: integer('department_id').references(() => departments.id),
+
+  customerId: integer('customer_id').references(() => customers.id),
+  consolidatedCustomerId: integer('consolidated_customer_id').references(() => customers.id),
+  topLevelParentId: integer('top_level_parent_id').references(() => customers.id),
+
+  statusId: integer('status_id').references(() => estimateStatuses.id),
+
+  tranDate: date('tran_date'),
+  expectedCloseDate: date('expected_close_date'),
+  promisedDeliveryDate: date('promised_delivery_date'),
+
+  projectedTotal: numeric('projected_total', { precision: 15, scale: 2 }),
+  exchangeRate: numeric('exchange_rate', { precision: 15, scale: 6 }),
+
+  currencyId: integer('currency_id').references(() => currencies.id),
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
+  projectNameId: integer('project_name_id').references(() => projectNames.id),
+  businessVerticalId: integer('business_vertical_id').references(() => businessVerticals.id),
+  salesRepId: integer('sales_rep_id').references(() => accountManagers.id),
+  likelyToCloseId: integer('likely_to_close_id').references(() => likelyToClose.id),
+
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx:     uniqueIndex('sos_ns_id_idx').on(t.netsuiteInternalId),
+  syncIdx:     index('sos_sync_idx').on(t.syncStatus),
+  customerIdx: index('sos_customer_idx').on(t.customerId),
+  statusIdx:   index('sos_status_idx').on(t.statusId),
+  docNumIdx:   index('sos_doc_num_idx').on(t.documentNumber),
+}));
+
+// ══════════════════════════════════════════════════════════════════
+//  INVOICE SAVED SEARCH (mirror of the NetSuite saved search)
+//  Same column set as estimate_quote_search; FK ids for mastered columns.
+// ══════════════════════════════════════════════════════════════════
+
+export const invoiceSearch = pgTable('invoice_search', {
+  id: serial('id').primaryKey(),
+
+  documentNumber: varchar('document_number', { length: 100 }),
+
+  departmentId: integer('department_id').references(() => departments.id),
+
+  customerId: integer('customer_id').references(() => customers.id),
+  consolidatedCustomerId: integer('consolidated_customer_id').references(() => customers.id),
+  topLevelParentId: integer('top_level_parent_id').references(() => customers.id),
+
+  statusId: integer('status_id').references(() => estimateStatuses.id),
+
+  tranDate: date('tran_date'),
+  expectedCloseDate: date('expected_close_date'),
+  promisedDeliveryDate: date('promised_delivery_date'),
+
+  projectedTotal: numeric('projected_total', { precision: 15, scale: 2 }),
+  exchangeRate: numeric('exchange_rate', { precision: 15, scale: 6 }),
+
+  currencyId: integer('currency_id').references(() => currencies.id),
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
+  projectNameId: integer('project_name_id').references(() => projectNames.id),
+  businessVerticalId: integer('business_vertical_id').references(() => businessVerticals.id),
+  salesRepId: integer('sales_rep_id').references(() => accountManagers.id),
+  likelyToCloseId: integer('likely_to_close_id').references(() => likelyToClose.id),
+
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx:     uniqueIndex('invs_ns_id_idx').on(t.netsuiteInternalId),
+  syncIdx:     index('invs_sync_idx').on(t.syncStatus),
+  customerIdx: index('invs_customer_idx').on(t.customerId),
+  statusIdx:   index('invs_status_idx').on(t.statusId),
+  docNumIdx:   index('invs_doc_num_idx').on(t.documentNumber),
+}));
+
+// ══════════════════════════════════════════════════════════════════
 //  SYNC LOGS & CONFLICTS
 // ══════════════════════════════════════════════════════════════════
 
@@ -949,6 +1031,34 @@ export const estimateQuoteSearchRelations = relations(estimateQuoteSearch, ({ on
   businessVertical:     one(businessVerticals, { fields: [estimateQuoteSearch.businessVerticalId],   references: [businessVerticals.id] }),
   salesRep:             one(accountManagers,   { fields: [estimateQuoteSearch.salesRepId],           references: [accountManagers.id] }),
   likelyToClose:        one(likelyToClose,     { fields: [estimateQuoteSearch.likelyToCloseId],      references: [likelyToClose.id] }),
+}));
+
+export const salesOrderSearchRelations = relations(salesOrderSearch, ({ one }) => ({
+  department:           one(departments,       { fields: [salesOrderSearch.departmentId],         references: [departments.id] }),
+  customer:             one(customers,         { fields: [salesOrderSearch.customerId],           references: [customers.id] }),
+  consolidatedCustomer: one(customers,         { fields: [salesOrderSearch.consolidatedCustomerId], references: [customers.id] }),
+  topLevelParent:       one(customers,         { fields: [salesOrderSearch.topLevelParentId],     references: [customers.id] }),
+  status:               one(estimateStatuses,  { fields: [salesOrderSearch.statusId],             references: [estimateStatuses.id] }),
+  currency:             one(currencies,        { fields: [salesOrderSearch.currencyId],           references: [currencies.id] }),
+  subsidiary:           one(subsidiaries,      { fields: [salesOrderSearch.subsidiaryId],         references: [subsidiaries.id] }),
+  projectName:          one(projectNames,      { fields: [salesOrderSearch.projectNameId],        references: [projectNames.id] }),
+  businessVertical:     one(businessVerticals, { fields: [salesOrderSearch.businessVerticalId],   references: [businessVerticals.id] }),
+  salesRep:             one(accountManagers,   { fields: [salesOrderSearch.salesRepId],           references: [accountManagers.id] }),
+  likelyToClose:        one(likelyToClose,     { fields: [salesOrderSearch.likelyToCloseId],      references: [likelyToClose.id] }),
+}));
+
+export const invoiceSearchRelations = relations(invoiceSearch, ({ one }) => ({
+  department:           one(departments,       { fields: [invoiceSearch.departmentId],         references: [departments.id] }),
+  customer:             one(customers,         { fields: [invoiceSearch.customerId],           references: [customers.id] }),
+  consolidatedCustomer: one(customers,         { fields: [invoiceSearch.consolidatedCustomerId], references: [customers.id] }),
+  topLevelParent:       one(customers,         { fields: [invoiceSearch.topLevelParentId],     references: [customers.id] }),
+  status:               one(estimateStatuses,  { fields: [invoiceSearch.statusId],             references: [estimateStatuses.id] }),
+  currency:             one(currencies,        { fields: [invoiceSearch.currencyId],           references: [currencies.id] }),
+  subsidiary:           one(subsidiaries,      { fields: [invoiceSearch.subsidiaryId],         references: [subsidiaries.id] }),
+  projectName:          one(projectNames,      { fields: [invoiceSearch.projectNameId],        references: [projectNames.id] }),
+  businessVertical:     one(businessVerticals, { fields: [invoiceSearch.businessVerticalId],   references: [businessVerticals.id] }),
+  salesRep:             one(accountManagers,   { fields: [invoiceSearch.salesRepId],           references: [accountManagers.id] }),
+  likelyToClose:        one(likelyToClose,     { fields: [invoiceSearch.likelyToCloseId],      references: [likelyToClose.id] }),
 }));
 
 // ─── Export all tables as a map for generic service ───────────────
