@@ -101,6 +101,9 @@ export const customers = pgTable('customers', {
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
   name: varchar('name', { length: 255 }).notNull(),
   parentCompany: varchar('parent_company', { length: 255 }),
+  salesRep: varchar('sales_rep', { length: 255 }),            // Sales Rep name (from NetSuite) — for display / fallback matching
+  salesRepNsId: varchar('sales_rep_ns_id', { length: 50 }),   // Sales Rep NS internal id (as received from NetSuite)
+  salesRepId: integer('sales_rep_id').references(() => accountManagers.id), // resolved local account_managers.id → drives Acct Manager
   contactName: varchar('contact_name', { length: 255 }),
   email: varchar('email', { length: 255 }),
   phone: varchar('phone', { length: 50 }),
@@ -115,6 +118,7 @@ export const customers = pgTable('customers', {
   nameIdx: index('customers_name_idx').on(t.name),
   subsidiaryIdx: index('customers_subsidiary_idx').on(t.subsidiaryId),
   podRegionIdx: index('customers_pod_region_idx').on(t.podRegionId),
+  salesRepIdx: index('customers_sales_rep_idx').on(t.salesRepId),
 }));
 
 export const contacts = pgTable('contacts', {
@@ -601,6 +605,7 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   // Line Header
   itemTypeId: integer('item_type_id').references(() => csItems.id),
   shortDescription: varchar('short_description', { length: 500 }),
+  color: varchar('color', { length: 20 }),  // hex color e.g. "#FFAA00", stored when saving the item
   vendorId: integer('vendor_id').references(() => vendors.id),
   quantity: numeric('quantity', { precision: 12, scale: 4 }).default('0'),
   sellPricePerUnit: numeric('sell_price_per_unit', { precision: 15, scale: 4 }).default('0'),
@@ -958,6 +963,7 @@ export const customersRelations = relations(customers, ({ one, many }) => ({
   subsidiary: one(subsidiaries, { fields: [customers.subsidiaryId], references: [subsidiaries.id] }),
   currency: one(currencies, { fields: [customers.currencyId], references: [currencies.id] }),
   podRegion: one(obcPodRegions, { fields: [customers.podRegionId], references: [obcPodRegions.id] }),
+  salesRepManager: one(accountManagers, { fields: [customers.salesRepId], references: [accountManagers.id] }),
   contacts: many(contacts),
   addresses: many(addresses),
   estimates: many(estimates),

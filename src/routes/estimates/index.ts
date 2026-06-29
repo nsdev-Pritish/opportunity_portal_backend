@@ -49,6 +49,7 @@ const ComponentSchema = z.object({
   id: z.number().int().positive().optional(),
   itemTypeId: z.number().int().positive().optional(),
   shortDescription: z.string().max(500).optional(),
+  color: z.string().max(20).optional(),
   vendorId: z.number().int().positive().optional(),
   quantity: z.string().optional(),
   sellPricePerUnit: z.string().optional(),

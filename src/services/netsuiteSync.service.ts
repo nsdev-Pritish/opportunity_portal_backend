@@ -468,8 +468,10 @@ export async function syncEstimateToNetsuite(
       lineIds?       : (string | number)[] | Record<string, string | number>;
     };
 
-    const nsInternalId   = nsResp.id          ?? nsResp.internalId;
-    const documentNumber = nsResp.tranId       ?? nsResp.documentNumber;
+    // Use `||` (not `??`) so empty strings fall through to the next candidate — NetSuite
+    // sometimes returns tranId: "" when the document number is assigned asynchronously.
+    const nsInternalId   = nsResp.id     || nsResp.internalId     || undefined;
+    const documentNumber = nsResp.tranId || nsResp.documentNumber || undefined;
 
     logger.info({
       estimateId,
@@ -481,16 +483,25 @@ export async function syncEstimateToNetsuite(
       quoteTranId    : nsResp.quoteTranId ?? null,
     }, 'NetSuite suitelet response received');
 
+    if (nsInternalId && !documentNumber) {
+      logger.warn({ estimateId, mode, nsInternalId, rawResponse: nsResp },
+        'NetSuite returned an internal id but no document number — leaving existing documentNumber untouched');
+    }
+
     // ── For create / update: update the estimate row ──────────────────────────
     if (!isConvert) {
+      // Only write fields we actually received — never overwrite a saved internal id /
+      // document number with a blank when NetSuite omits it from this response.
+      const setData: Record<string, unknown> = {
+        syncStatus: 'synced',
+        syncError : null,
+        syncedAt  : new Date(),
+      };
+      if (nsInternalId)   setData.netsuiteInternalId = nsInternalId;
+      if (documentNumber) setData.documentNumber     = documentNumber;
+
       await db.update(estimates)
-        .set({
-          netsuiteInternalId: nsInternalId   ?? undefined,
-          documentNumber    : documentNumber ?? undefined,
-          syncStatus        : 'synced',
-          syncError         : null,
-          syncedAt          : new Date(),
-        } as any)
+        .set(setData as any)
         .where(eq(estimates.id, estimateId));
     }
 
@@ -498,18 +509,20 @@ export async function syncEstimateToNetsuite(
     if (isConvert && opts?.quoteId) {
       // NS convert response uses { internalId, documentNumber } for the new Quote.
       // Fall back to quoteId/quoteTranId in case the suitelet uses those names.
-      const quoteNsId   = nsResp.internalId    ?? nsResp.quoteId;
-      const quoteDocNum = nsResp.documentNumber ?? nsResp.quoteTranId;
+      const quoteNsId   = nsResp.internalId     || nsResp.quoteId     || undefined;
+      const quoteDocNum = nsResp.documentNumber || nsResp.quoteTranId || undefined;
+
+      const quoteSet: Record<string, unknown> = {
+        syncStatus: 'synced',
+        syncError : null,
+        syncedAt  : new Date(),
+        updatedAt : new Date(),
+      };
+      if (quoteNsId)   quoteSet.quoteNetsuiteInternalId = quoteNsId;
+      if (quoteDocNum) quoteSet.quoteDocumentNumber     = quoteDocNum;
 
       await db.update(estimateQuotes)
-        .set({
-          quoteNetsuiteInternalId: quoteNsId   ?? undefined,
-          quoteDocumentNumber    : quoteDocNum ?? undefined,
-          syncStatus             : 'synced',
-          syncError              : null,
-          syncedAt               : new Date(),
-          updatedAt              : new Date(),
-        } as any)
+        .set(quoteSet as any)
         .where(eq(estimateQuotes.id, opts.quoteId));
 
       // Mark all quoted line items as converted

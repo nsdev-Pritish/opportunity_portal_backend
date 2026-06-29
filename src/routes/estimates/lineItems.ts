@@ -5,6 +5,7 @@ import { recalculateAndSave } from '../../services/calculation.service.js';
 
 const LineItemSchema = z.object({
   itemTypeId: z.number().int().optional(), shortDescription: z.string().max(500).optional(),
+  color: z.string().max(20).optional(),
   vendorId: z.number().int().optional(), quantity: z.string().optional(),
   sellPricePerUnit: z.string().optional(), description: z.string().optional(),
   factoryId: z.number().int().optional(), vendorCurrencyId: z.number().int().optional(),

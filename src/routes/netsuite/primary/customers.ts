@@ -13,7 +13,7 @@ import { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../../config/database.js';
-import { customers, subsidiaries, currencies, obcPodRegions } from '../../../db/schema/index.js';
+import { customers, subsidiaries, currencies, obcPodRegions, accountManagers } from '../../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../../utils/errors.js';
 import { invalidateDropdown } from '../../../utils/cache.js';
 
@@ -24,6 +24,8 @@ const CreateCustomerSchema = z.object({
   subsidiaryNetsuiteId   : z.string().min(1),   // NS internalId of the subsidiary
   name                   : z.string().min(1).max(255),
   parentCompany          : z.string().max(255).optional().nullable(),
+  salesRep               : z.string().max(255).optional().nullable(),   // Sales Rep name
+  salesRepNsId           : z.string().max(50).optional().nullable(),    // NS internalId of the Sales Rep employee
   contactName            : z.string().max(255).optional().nullable(),
   email                  : z.string().max(255).optional().nullable(),
   phone                  : z.string().max(50).optional().nullable(),
@@ -37,6 +39,8 @@ const UpdateCustomerSchema = z.object({
   subsidiaryNetsuiteId   : z.string().min(1).optional(), // NS internalId of the subsidiary
   name                   : z.string().min(1).max(255).optional(),
   parentCompany          : z.string().max(255).optional().nullable(),
+  salesRep               : z.string().max(255).optional().nullable(),   // Sales Rep name
+  salesRepNsId           : z.string().max(50).optional().nullable(),    // NS internalId of the Sales Rep employee
   contactName            : z.string().max(255).optional().nullable(),
   email                  : z.string().max(255).optional().nullable(),
   phone                  : z.string().max(50).optional().nullable(),
@@ -124,6 +128,18 @@ export default async function customerRoutes(app: FastifyInstance) {
       if (region) podRegionId = region.id;
     }
 
+    // Resolve Sales Rep → local account_managers.id by NetSuite internal ID.
+    // (NetSuite sends the rep's NS id; the UI needs the local id to drive Acct Manager.)
+    let salesRepId: number | null = null;
+    if (body.salesRepNsId) {
+      const [rep] = await db
+        .select({ id: accountManagers.id })
+        .from(accountManagers)
+        .where(eq(accountManagers.netsuiteInternalId, body.salesRepNsId))
+        .limit(1);
+      if (rep) salesRepId = rep.id;
+    }
+
     // Idempotency: same NS id already exists → update instead of duplicate
     const [existing] = await db
       .select({ id: customers.id })
@@ -138,6 +154,9 @@ export default async function customerRoutes(app: FastifyInstance) {
           subsidiaryId: subsidiary.id,
           name: body.name,
           parentCompany: body.parentCompany,
+          salesRep: body.salesRep,
+          salesRepNsId: body.salesRepNsId,
+          salesRepId,
           contactName: body.contactName,
           email: body.email,
           phone: body.phone,
@@ -160,6 +179,9 @@ export default async function customerRoutes(app: FastifyInstance) {
         subsidiaryId       : subsidiary.id, // Use the local database ID
         name               : body.name,
         parentCompany      : body.parentCompany,
+        salesRep           : body.salesRep,
+        salesRepNsId       : body.salesRepNsId,
+        salesRepId,
         contactName        : body.contactName,
         email              : body.email,
         phone              : body.phone,
@@ -231,6 +253,21 @@ export default async function customerRoutes(app: FastifyInstance) {
       }
     }
 
+    // Resolve Sales Rep → local account_managers.id by NetSuite internal ID if provided
+    let salesRepId: number | null | undefined = undefined;
+    if (body.salesRepNsId !== undefined) {
+      if (body.salesRepNsId) {
+        const [rep] = await db
+          .select({ id: accountManagers.id })
+          .from(accountManagers)
+          .where(eq(accountManagers.netsuiteInternalId, body.salesRepNsId))
+          .limit(1);
+        salesRepId = rep ? rep.id : null;
+      } else {
+        salesRepId = null;
+      }
+    }
+
     const [existing] = await db
       .select({ id: customers.id })
       .from(customers)
@@ -247,6 +284,9 @@ export default async function customerRoutes(app: FastifyInstance) {
     if (subsidiaryId !== undefined) updateData.subsidiaryId = subsidiaryId;
     if (body.name !== undefined) updateData.name = body.name;
     if (body.parentCompany !== undefined) updateData.parentCompany = body.parentCompany;
+    if (body.salesRep !== undefined) updateData.salesRep = body.salesRep;
+    if (body.salesRepNsId !== undefined) updateData.salesRepNsId = body.salesRepNsId;
+    if (salesRepId !== undefined) updateData.salesRepId = salesRepId;
     if (body.contactName !== undefined) updateData.contactName = body.contactName;
     if (body.email !== undefined) updateData.email = body.email;
     if (body.phone !== undefined) updateData.phone = body.phone;
