@@ -101,6 +101,15 @@ export default async function portalContactRoutes(app: FastifyInstance) {
     const ns = await syncContactToNetsuite(created.id);
     await invalidateDropdown('contacts');
 
+    // If NetSuite matched an existing contact, the sync deduped to that row and the
+    // just-created duplicate was removed — return the existing record instead.
+    if (ns.id && ns.id !== created.id) {
+      const [existing] = await db.select().from(contacts).where(eq(contacts.id, ns.id)).limit(1);
+      if (existing) {
+        return reply.status(200).send({ ...existing, customerName: customer.name, _deduped: true });
+      }
+    }
+
     return reply.status(201).send({
       ...created,
       netsuiteInternalId: ns.netsuiteInternalId ?? created.netsuiteInternalId,

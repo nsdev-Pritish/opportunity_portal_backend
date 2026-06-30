@@ -78,6 +78,15 @@ async function createAddress(body: z.infer<typeof CreateAddressBody>, type: 'shi
     : await syncShippingAddressToNetsuite(created.id);
   await invalidateDropdown('addresses');
 
+  // If NetSuite matched an existing address, the sync deduped to that row and the
+  // just-created duplicate was removed — return the existing record instead.
+  if (ns.id && ns.id !== created.id) {
+    const [existing] = await db.select().from(addresses).where(eq(addresses.id, ns.id)).limit(1);
+    if (existing) {
+      return { ...existing, customerName: customer.name, _deduped: true };
+    }
+  }
+
   return {
     ...created,
     netsuiteInternalId: ns.netsuiteInternalId ?? created.netsuiteInternalId,

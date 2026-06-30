@@ -8,7 +8,7 @@
 
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, and, sql } from 'drizzle-orm';
 import { getDb } from '../../config/database.js';
 import { projectNames, projectTypes } from '../../db/schema/index.js';
 import { invalidateDropdown, cacheAside, CacheKeys } from '../../utils/cache.js';
@@ -79,6 +79,21 @@ export default async function portalProjectNameRoutes(app: FastifyInstance) {
             throw new ValidationError(`Project type with id '${body.projectTypeId}' not found.`);
         }
 
+        // Don't create a duplicate: if an active project name with this name already exists,
+        // return it instead of inserting + calling NetSuite again (case-insensitive match).
+        const [duplicate] = await db
+            .select()
+            .from(projectNames)
+            .where(and(
+                sql`lower(${projectNames.name}) = lower(${body.name.trim()})`,
+                eq(projectNames.isActive, true),
+            ))
+            .limit(1);
+
+        if (duplicate) {
+            return reply.status(200).send({ ...duplicate, projectTypeName: projectType.name, _existing: true });
+        }
+
         const [created] = await db
             .insert(projectNames)
             .values({
@@ -96,6 +111,15 @@ export default async function portalProjectNameRoutes(app: FastifyInstance) {
         // Non-throwing: if NS is down/unconfigured the record stays syncStatus='pending'.
         const ns = await syncProjectNameToNetsuite(created.id);
         await invalidateDropdown('project_names');
+
+        // If NetSuite matched an existing project name, the sync deduped to that row and the
+        // just-created duplicate was removed — return the existing record instead.
+        if (ns.id && ns.id !== created.id) {
+            const [existing] = await db.select().from(projectNames).where(eq(projectNames.id, ns.id)).limit(1);
+            if (existing) {
+                return reply.status(200).send({ ...existing, projectTypeName: projectType.name, _deduped: true });
+            }
+        }
 
         return reply.status(201).send({
             ...created,

@@ -18,7 +18,7 @@
  * the row already exists in our DB and simply stays unsynced until retried.
  */
 
-import { eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import { addresses, contacts, customers, projectNames, projectTypes } from '../db/schema/index.js';
 import { env } from '../config/env.js';
@@ -38,6 +38,9 @@ interface NsCreateResponse {
 
 /** Outcome handed back to the route so it can enrich its response. */
 export interface PortalSyncResult {
+  // Canonical portal row id. Usually the row the route just created, but when NetSuite
+  // returns the id of an EXISTING record (a duplicate), this is the surviving existing row.
+  id?: number;
   netsuiteInternalId: string | null;
   syncStatus: 'pending' | 'synced' | 'failed';
   syncError: string | null;
@@ -99,9 +102,9 @@ export async function syncProjectNameToNetsuite(projectNameId: number): Promise<
     };
 
     const resp = await postToSuitelet<NsCreateResponse>(payload, mode);
-    return finalize(projectNames, projectNameId, resp, mode);
+    return await finalize(projectNames, projectNameId, resp, mode);
   } catch (err) {
-    return recordFailure(projectNames, projectNameId, err, mode);
+    return await recordFailure(projectNames, projectNameId, err, mode);
   }
 }
 
@@ -146,9 +149,9 @@ async function syncAddressToNetsuite(
     };
 
     const resp = await postToSuitelet<NsCreateResponse>(payload, mode);
-    return finalize(addresses, addressId, resp, mode);
+    return await finalize(addresses, addressId, resp, mode);
   } catch (err) {
-    return recordFailure(addresses, addressId, err, mode);
+    return await recordFailure(addresses, addressId, err, mode);
   }
 }
 
@@ -196,9 +199,9 @@ export async function syncContactToNetsuite(contactId: number): Promise<PortalSy
     };
 
     const resp = await postToSuitelet<NsCreateResponse>(payload, mode);
-    return finalize(contacts, contactId, resp, mode);
+    return await finalize(contacts, contactId, resp, mode);
   } catch (err) {
-    return recordFailure(contacts, contactId, err, mode);
+    return await recordFailure(contacts, contactId, err, mode);
   }
 }
 
@@ -218,22 +221,59 @@ async function finalize(
   if (!nsId) {
     const message = resp.error ?? resp.message ?? 'NetSuite did not return an internal id';
     logger.error({ id, mode, rawResponse: resp }, `NetSuite ${mode} returned no internal id`);
-    return recordFailure(table, id, new Error(message), mode);
+    return await recordFailure(table, id, new Error(message), mode);
   }
 
   const db = getDb();
-  await db.update(table)
-    .set({
-      netsuiteInternalId: nsId,
-      syncStatus: 'synced',
-      syncError: null,
-      syncedAt: new Date(),
-      updatedAt: new Date(),
-    } as any)
-    .where(eq((table as any).id, id));
+
+  // Find another row that already owns this NS id. NetSuite may return the internal id of an
+  // EXISTING record (e.g. it matched by name) instead of creating a new one — in that case the
+  // just-created row is a duplicate. netsuite_internal_id is uniquely indexed, so stamping it
+  // onto the new row would violate the constraint; instead keep the existing row, drop the dup.
+  const findExistingOwner = async (): Promise<number | null> => {
+    const [dup] = await db
+      .select({ id: (table as any).id })
+      .from(table as any)
+      .where(and(eq((table as any).netsuiteInternalId, nsId), ne((table as any).id, id)))
+      .limit(1);
+    return dup?.id ?? null;
+  };
+
+  const existingId = await findExistingOwner();
+  if (existingId) {
+    logger.warn({ id, existingId, mode, netsuiteInternalId: nsId },
+      `NetSuite ${mode} returned internal id ${nsId} already held by row ${existingId} — discarding duplicate row ${id}`);
+    await db.delete(table as any).where(eq((table as any).id, id));
+    return { id: existingId, netsuiteInternalId: nsId, syncStatus: 'synced', syncError: null };
+  }
+
+  try {
+    await db.update(table)
+      .set({
+        netsuiteInternalId: nsId,
+        syncStatus: 'synced',
+        syncError: null,
+        syncedAt: new Date(),
+        updatedAt: new Date(),
+      } as any)
+      .where(eq((table as any).id, id));
+  } catch (err: any) {
+    // Race: a concurrent create claimed the same NS id between our check and this update.
+    const code = err?.cause?.code ?? err?.code;
+    if (code === '23505') {
+      const ownerId = await findExistingOwner();
+      if (ownerId) {
+        logger.warn({ id, existingId: ownerId, mode, netsuiteInternalId: nsId },
+          `NetSuite ${mode} internal id ${nsId} claimed concurrently — discarding duplicate row ${id}`);
+        await db.delete(table as any).where(eq((table as any).id, id));
+        return { id: ownerId, netsuiteInternalId: nsId, syncStatus: 'synced', syncError: null };
+      }
+    }
+    throw err;
+  }
 
   logger.info({ id, mode, netsuiteInternalId: nsId }, `Portal ${mode} synced to NetSuite`);
-  return { netsuiteInternalId: nsId, syncStatus: 'synced', syncError: null };
+  return { id, netsuiteInternalId: nsId, syncStatus: 'synced', syncError: null };
 }
 
 async function recordFailure(
@@ -250,5 +290,5 @@ async function recordFailure(
     .set({ syncStatus: 'failed', syncError: message, updatedAt: new Date() } as any)
     .where(eq((table as any).id, id));
 
-  return { netsuiteInternalId: null, syncStatus: 'failed', syncError: message };
+  return { id, netsuiteInternalId: null, syncStatus: 'failed', syncError: message };
 }
