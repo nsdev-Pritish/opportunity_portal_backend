@@ -226,13 +226,41 @@ export const businessTypes = pgTable('business_types', {
 
 export const employees = pgTable('employees', {
   id: serial('id').primaryKey(),
-  firstName: varchar('first_name', { length: 100 }).notNull(),
-  lastName: varchar('last_name', { length: 100 }).notNull(),
+  employeeId: varchar('employee_id', { length: 100 }),     // NetSuite "Employee ID" (entityId), distinct from internal id
+  firstName: varchar('first_name', { length: 100 }),       // legacy — kept for backward compatibility
+  lastName: varchar('last_name', { length: 100 }),         // legacy — kept for backward compatibility
+  name: varchar('name', { length: 255 }),                  // full display name
+  jobTitle: varchar('job_title', { length: 255 }),
+  developer: boolean('developer').default(false).notNull(),
+  salesRep: boolean('sales_rep').default(false).notNull(),
+  productDeveloper: boolean('product_developer').default(false).notNull(),
   email: varchar('email', { length: 255 }),
-  roles: jsonb('roles').$type<string[]>().default([]),
+  currencyId: integer('currency_id').references(() => currencies.id),
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
+  departmentId: integer('department_id').references(() => departments.id),
+  roles: jsonb('roles').$type<string[]>().default([]),     // legacy — kept for backward compatibility
   ...syncCols,
 }, (t) => ({
   nsIdIdx: uniqueIndex('employees_ns_id_idx').on(t.netsuiteInternalId),
+  subsidiaryIdx: index('employees_subsidiary_idx').on(t.subsidiaryId),
+  departmentIdx: index('employees_department_idx').on(t.departmentId),
+}));
+
+// ─── "List" master dropdowns (NetSuite custom lists) ───────────────
+export const quarters = pgTable('quarters', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('quarters_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const forecastStatuses = pgTable('forecast_statuses', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('forecast_statuses_ns_id_idx').on(t.netsuiteInternalId),
 }));
 
 export const hkPartners = pgTable('hk_partners', {
@@ -999,6 +1027,12 @@ export const vendorsRelations = relations(vendors, ({ many }) => ({
 
 export const factoriesRelations = relations(factories, () => ({}));
 
+export const employeesRelations = relations(employees, ({ one }) => ({
+  currency: one(currencies, { fields: [employees.currencyId], references: [currencies.id] }),
+  subsidiary: one(subsidiaries, { fields: [employees.subsidiaryId], references: [subsidiaries.id] }),
+  department: one(departments, { fields: [employees.departmentId], references: [departments.id] }),
+}));
+
 export const estimatesRelations = relations(estimates, ({ one, many }) => ({
   customer: one(customers, { fields: [estimates.customerId], references: [customers.id] }),
   contact: one(contacts, { fields: [estimates.customerContactId], references: [contacts.id] }),
@@ -1084,6 +1118,8 @@ export const MASTER_TABLES = {
   business_verticals: businessVerticals,
   business_types: businessTypes,
   employees,
+  quarters,
+  forecast_statuses: forecastStatuses,
   hk_partners: hkPartners,
   ops_partners: opsPartners,
   compliance_partners: compliancePartners,
