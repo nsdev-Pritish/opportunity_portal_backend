@@ -828,8 +828,8 @@ export const estimateQuoteSearch = pgTable('estimate_quote_search', {
   promisedDeliveryDate: date('promised_delivery_date'), // "Promised Delivery Date"
 
   // Amounts
-  projectedTotal: numeric('projected_total', { precision: 15, scale: 2 }),
-  exchangeRate: numeric('exchange_rate', { precision: 15, scale: 6 }),
+  projectedTotal: numeric('projected_total'),
+  exchangeRate: numeric('exchange_rate'),
 
   // Currency → currencies
   currencyId: integer('currency_id').references(() => currencies.id),
@@ -880,8 +880,8 @@ export const salesOrderSearch = pgTable('sales_order_search', {
   expectedCloseDate: date('expected_close_date'),
   promisedDeliveryDate: date('promised_delivery_date'),
 
-  projectedTotal: numeric('projected_total', { precision: 15, scale: 2 }),
-  exchangeRate: numeric('exchange_rate', { precision: 15, scale: 6 }),
+  projectedTotal: numeric('projected_total'),
+  exchangeRate: numeric('exchange_rate'),
 
   currencyId: integer('currency_id').references(() => currencies.id),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
@@ -921,8 +921,8 @@ export const invoiceSearch = pgTable('invoice_search', {
   expectedCloseDate: date('expected_close_date'),
   promisedDeliveryDate: date('promised_delivery_date'),
 
-  projectedTotal: numeric('projected_total', { precision: 15, scale: 2 }),
-  exchangeRate: numeric('exchange_rate', { precision: 15, scale: 6 }),
+  projectedTotal: numeric('projected_total'),
+  exchangeRate: numeric('exchange_rate'),
 
   currencyId: integer('currency_id').references(() => currencies.id),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
@@ -938,6 +938,66 @@ export const invoiceSearch = pgTable('invoice_search', {
   customerIdx: index('invs_customer_idx').on(t.customerId),
   statusIdx:   index('invs_status_idx').on(t.statusId),
   docNumIdx:   index('invs_doc_num_idx').on(t.documentNumber),
+}));
+
+// ══════════════════════════════════════════════════════════════════
+//  BUDGET SAVED SEARCH (mirror of the NetSuite budget/forecast saved search)
+//  List/Record fields store the FK id; (FCT) = forecast numeric fields.
+//  FK targets: departments, customers, quarters, forecast_statuses, employees.
+// ══════════════════════════════════════════════════════════════════
+
+export const budgetSearch = pgTable('budget_search', {
+  id: serial('id').primaryKey(),
+
+  // Name — full display name (e.g. "NYU Langone : NYU Patient Journey | 33 | 10/1/2026")
+  name: varchar('name', { length: 500 }),
+
+  // Periods & dates
+  soClosePeriod: date('so_close_period'),       // "SO Close Period"
+  leadTime: varchar('lead_time', { length: 100 }), // "Lead Time" (format unknown — kept as text)
+  revenuePeriod: date('revenue_period'),        // "Revenue Period"
+  movedFromDate: date('moved_from_date'),       // "Moved From Date (FCT)"
+  revenueMovedToPeriod: date('revenue_moved_to_period'), // "Revenue - Moved To Period (FCT)"
+  fiscalYear: integer('fiscal_year'),           // "Fiscal Year"
+
+  // Quarters → quarters  (SO QTR / Revenue QTR)
+  soQtrId: integer('so_qtr_id').references(() => quarters.id),
+  revenueQtrId: integer('revenue_qtr_id').references(() => quarters.id),
+
+  // Amounts / forecast numerics (FCT)
+  budgetAmount: numeric('budget_amount'),
+  dilutionsPct: numeric('dilutions_pct'),
+  dilutionsAmt: numeric('dilutions_amt'),
+  netRevenue: numeric('net_revenue'),
+  projectedGm: numeric('projected_gm'),
+  projectedProfit: numeric('projected_profit'),
+  trueGmGoal: numeric('true_gm_goal'),
+
+  // Forecast Status → forecast_statuses
+  forecastStatusId: integer('forecast_status_id').references(() => forecastStatuses.id),
+  // "2026 Q1 Reforecast" — scenario/forecast label (assumption: free text)
+  forecastScenario: varchar('forecast_scenario', { length: 255 }),
+
+  // Department → departments
+  departmentId: integer('department_id').references(() => departments.id),
+
+  // Customer hierarchy → customers (Parent / Consolidated Customer)
+  parentId: integer('parent_id').references(() => customers.id),
+  consolidatedCustomerId: integer('consolidated_customer_id').references(() => customers.id),
+  // Consolidated Customer (Text Field) — plain text variant
+  consolidatedCustomerText: varchar('consolidated_customer_text', { length: 500 }),
+
+  // Account Manager → employees
+  accountManagerId: integer('account_manager_id').references(() => employees.id),
+
+  ...syncCols, // netsuiteInternalId ("Internal ID"), isActive ("Inactive" inverse), source, syncStatus, …
+}, (t) => ({
+  nsIdIdx:           uniqueIndex('bs_ns_id_idx').on(t.netsuiteInternalId),
+  syncIdx:           index('bs_sync_idx').on(t.syncStatus),
+  parentIdx:         index('bs_parent_idx').on(t.parentId),
+  deptIdx:           index('bs_dept_idx').on(t.departmentId),
+  forecastStatusIdx: index('bs_forecast_status_idx').on(t.forecastStatusId),
+  nameIdx:           index('bs_name_idx').on(t.name),
 }));
 
 // ══════════════════════════════════════════════════════════════════
@@ -1099,6 +1159,16 @@ export const invoiceSearchRelations = relations(invoiceSearch, ({ one }) => ({
   businessVertical:     one(businessVerticals, { fields: [invoiceSearch.businessVerticalId],   references: [businessVerticals.id] }),
   salesRep:             one(accountManagers,   { fields: [invoiceSearch.salesRepId],           references: [accountManagers.id] }),
   likelyToClose:        one(likelyToClose,     { fields: [invoiceSearch.likelyToCloseId],      references: [likelyToClose.id] }),
+}));
+
+export const budgetSearchRelations = relations(budgetSearch, ({ one }) => ({
+  soQtr:                one(quarters,          { fields: [budgetSearch.soQtrId],                 references: [quarters.id] }),
+  revenueQtr:           one(quarters,          { fields: [budgetSearch.revenueQtrId],            references: [quarters.id] }),
+  forecastStatus:       one(forecastStatuses,  { fields: [budgetSearch.forecastStatusId],        references: [forecastStatuses.id] }),
+  department:           one(departments,       { fields: [budgetSearch.departmentId],            references: [departments.id] }),
+  parent:               one(customers,         { fields: [budgetSearch.parentId],                references: [customers.id] }),
+  consolidatedCustomer: one(customers,         { fields: [budgetSearch.consolidatedCustomerId],  references: [customers.id] }),
+  accountManager:       one(employees,         { fields: [budgetSearch.accountManagerId],        references: [employees.id] }),
 }));
 
 // ─── Export all tables as a map for generic service ───────────────
