@@ -17,6 +17,7 @@ import masterRoutes   from './routes/master/index.js';
 import estimateRoutes from './routes/estimates/index.js';
 import lineItemRoutes from './routes/estimates/lineItems.js';
 import estimateQuoteRoutes from './routes/estimateQuotesSearch/index.js';
+import invoiceRoutes from './routes/invoiceSearch/index.js';
 import nsRoutes       from './routes/netsuite/index.js';
 import uploadRoutes   from './routes/upload/index.js';
 import portalProjectNames from './routes/portal/projectNames.js';
@@ -45,7 +46,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     keyGenerator: (req) => (req.headers['x-forwarded-for'] as string) ?? req.ip,
     allowList: (req) =>
       req.url.startsWith('/api/v1/netsuite') ||
-      req.url.startsWith('/api/v1/estimate-quotes'),
+      req.url.startsWith('/api/v1/estimate-quotes') ||
+      req.url.startsWith('/api/v1/invoices'),
   });
 
   await app.register(swagger, {
@@ -72,6 +74,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     { prefix: '/api/v1/estimates/:estimateId/line-items' },
   );
   await app.register(estimateQuoteRoutes, { prefix: '/api/v1/estimate-quotes' });
+  await app.register(invoiceRoutes, { prefix: '/api/v1/invoices' });
 
   // ── File upload (JWT auth) ────────────────────────────────────
   await app.register(uploadRoutes, { prefix: '/api/v1/upload' });
