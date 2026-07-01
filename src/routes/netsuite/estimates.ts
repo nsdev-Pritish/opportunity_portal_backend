@@ -101,6 +101,10 @@ const CreateEstimateSchema = z.object({
   reOrder              : z.boolean().optional(),
   bibleLink            : z.string().optional().nullable(),
   memo                 : z.string().optional().nullable(),
+
+  // Twelve Pays — YES/NO flags (custbody_twelve_pays_import_frt / custbody_twelve_pays_ship_to_cust)
+  twelvePaysImportFrt  : z.enum(['YES', 'NO']).optional().nullable(),
+  twelvePaysShipToCust : z.enum(['YES', 'NO']).optional().nullable(),
 });
 
 // Update allows all the same fields but nothing is required
@@ -596,6 +600,8 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     reOrder              : body.reOrder         ?? false,
     bibleLink            : body.bibleLink,
     memo                 : body.memo,
+    twelvePaysImportFrt  : body.twelvePaysImportFrt,
+    twelvePaysShipToCust : body.twelvePaysShipToCust,
     source               : 'netsuite' as const,
   };
 }
@@ -620,7 +626,8 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
   const scalars = ['documentNumber','projectName','customerPo','expectedCloseDate','promiseDate',
     'projectedTotalAmt','estimatedQty','deckRequest','artSetupRequest',
     'pkgDeckRequest','pkgArtSetupRequest','sampleOnlyOrder','reOrder','bibleLink','memo',
-    'notesClosedLostReason','projectHoldDate','shipTo','billTo'];
+    'notesClosedLostReason','projectHoldDate','shipTo','billTo',
+    'twelvePaysImportFrt','twelvePaysShipToCust'];
   for (const k of scalars) {
     if (k in body) updates[k] = body[k];
   }

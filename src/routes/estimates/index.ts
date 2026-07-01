@@ -192,6 +192,10 @@ const EstimateHeaderSchema = z.object({
   reOrder: z.boolean().optional(),                    // Re-Order checkbox
   bibleLink: z.string().max(1000).optional(),         // Bible Link text
   memo: z.string().optional(),                        // Memo textarea
+
+  // Twelve Pays — YES/NO dropdowns; sync to NetSuite custom body fields
+  twelvePaysImportFrt: z.enum(['YES', 'NO']).optional(),   // custbody_twelve_pays_import_frt
+  twelvePaysShipToCust: z.enum(['YES', 'NO']).optional(),  // custbody_twelve_pays_ship_to_cust
   attachments: z.array(z.object({                     // File upload metadata
     name: z.string(),
     url: z.string(),
