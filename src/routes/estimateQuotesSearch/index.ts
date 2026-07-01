@@ -14,6 +14,7 @@
  */
 
 import { FastifyInstance } from 'fastify';
+import { apiKeyAuth } from '../../middleware/apiKeyAuth.js';
 import {
   EstimateQuoteCreateSchema,
   EstimateQuoteUpdateSchema,
@@ -24,9 +25,10 @@ import {
 } from '../../services/estimateQuotesSearch/estimateQuote.service.js';
 
 export default async function estimateQuoteRoutes(app: FastifyInstance) {
-  // TODO(auth): temporarily UNAUTHENTICATED for testing. Re-enable before production
-  // by uncommenting the hook below.
-  // app.addHook('preHandler', app.authenticate);
+  // Auth: X-API-Key on every request. This is a NetSuite → Portal sync module,
+  // so it is protected the same way as the /api/v1/netsuite/* routes rather than
+  // with the portal JWT.
+  app.addHook('preHandler', apiKeyAuth);
 
   // POST /api/v1/estimate-quotes — create (single object or array)
   app.post<{ Body: unknown }>('/', async (req, reply) => {
