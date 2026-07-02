@@ -820,13 +820,13 @@ export const estimateQuoteSearch = pgTable('estimate_quote_search', {
   // Department → departments
   departmentId: integer('department_id').references(() => departments.id),
 
-  // Customer hierarchy → customers (Name / Consolidated Customer / Top Level Parent)
+  // Customer hierarchy → customers (Name / Top Level Parent are FK; Consolidated Customer is free text)
   customerId: integer('customer_id').references(() => customers.id),
-  consolidatedCustomerId: integer('consolidated_customer_id').references(() => customers.id),
+  consolidatedCustomer: varchar('consolidated_customer', { length: 255 }), // free text (was FK → customers)
   topLevelParentId: integer('top_level_parent_id').references(() => customers.id),
 
-  // Status → estimate_statuses
-  statusId: integer('status_id').references(() => estimateStatuses.id),
+  // Status — free text (was FK → estimate_statuses)
+  status: varchar('status', { length: 255 }),
 
   // Dates
   tranDate: date('tran_date'),                          // "Date"
@@ -860,7 +860,7 @@ export const estimateQuoteSearch = pgTable('estimate_quote_search', {
   nsIdIdx:     uniqueIndex('eqs_ns_id_idx').on(t.netsuiteInternalId),
   syncIdx:     index('eqs_sync_idx').on(t.syncStatus),
   customerIdx: index('eqs_customer_idx').on(t.customerId),
-  statusIdx:   index('eqs_status_idx').on(t.statusId),
+  statusIdx:   index('eqs_status_idx').on(t.status),
   docNumIdx:   index('eqs_doc_num_idx').on(t.documentNumber),
 }));
 
@@ -1128,9 +1128,8 @@ export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, m
 export const estimateQuoteSearchRelations = relations(estimateQuoteSearch, ({ one }) => ({
   department:           one(departments,       { fields: [estimateQuoteSearch.departmentId],         references: [departments.id] }),
   customer:             one(customers,         { fields: [estimateQuoteSearch.customerId],           references: [customers.id] }),
-  consolidatedCustomer: one(customers,         { fields: [estimateQuoteSearch.consolidatedCustomerId], references: [customers.id] }),
+  // consolidatedCustomer and status are now free-text columns (not FKs) — no relations.
   topLevelParent:       one(customers,         { fields: [estimateQuoteSearch.topLevelParentId],     references: [customers.id] }),
-  status:               one(estimateStatuses,  { fields: [estimateQuoteSearch.statusId],             references: [estimateStatuses.id] }),
   currency:             one(currencies,        { fields: [estimateQuoteSearch.currencyId],           references: [currencies.id] }),
   subsidiary:           one(subsidiaries,      { fields: [estimateQuoteSearch.subsidiaryId],         references: [subsidiaries.id] }),
   projectName:          one(projectNames,      { fields: [estimateQuoteSearch.projectNameId],        references: [projectNames.id] }),
