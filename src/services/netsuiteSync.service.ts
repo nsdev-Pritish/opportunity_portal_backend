@@ -199,6 +199,9 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     pkgArtSetupRequestNS: est.pkgArtSetupRequest ?? false,
     bibleLinkNS                  : est.bibleLink ?? '',
     memoNS                       : est.memo ?? '',
+    // Twelve Pays YES/NO flags → custbody_twelve_pays_import_frt / custbody_twelve_pays_ship_to_cust
+    twelvePaysImportFrtNS        : est.twelvePaysImportFrt ?? '',
+    twelvePaysShipToCustNS       : est.twelvePaysShipToCust ?? '',
     statusNSId                   : estimateStatusNsId,
     closedLostReasonNSId         : closedLostReasonNsId,
     clientPursuitAlternativeNSId : clientPursuitAltNsId,

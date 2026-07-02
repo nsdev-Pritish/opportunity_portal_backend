@@ -582,6 +582,12 @@ export const estimates = pgTable('estimates', {
   memo: text('memo'),
   attachments: jsonb('attachments').$type<Array<{ name: string; url: string; size: number; type: string }>>().default([]),
 
+  // Twelve Pays flags — 'YES' | 'NO' (NULL when unset). Sync to NetSuite custom body fields:
+  //   twelvePaysImportFrt  → custbody_twelve_pays_import_frt   (Twelve Pays Import FRT/Duty)
+  //   twelvePaysShipToCust → custbody_twelve_pays_ship_to_cust (Twelve Pays Shipping to Customer)
+  twelvePaysImportFrt: varchar('twelve_pays_import_frt', { length: 3 }),
+  twelvePaysShipToCust: varchar('twelve_pays_ship_to_cust', { length: 3 }),
+
   // Status & Sync
   status: estimateStatusEnum('status').default('draft').notNull(),
   isActive: boolean('is_active').default(true).notNull(),
