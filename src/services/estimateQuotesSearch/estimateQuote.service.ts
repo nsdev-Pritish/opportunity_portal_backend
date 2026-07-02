@@ -18,7 +18,6 @@ import {
   estimateQuoteSearch,
   departments,
   customers,
-  estimateStatuses,
   currencies,
   subsidiaries,
   projectNames,
@@ -42,9 +41,9 @@ export const EstimateQuoteCreateSchema = z.object({
   documentNumber                : z.string().max(100).optional(),
   departmentInternalId          : z.string().max(50).optional(),
   customerInternalId            : z.string().max(50).optional(),
-  consolidatedCustomerInternalId: z.string().max(50).optional(),
+  consolidatedCustomer          : z.string().max(255).optional(), // free text (no longer resolved)
   topLevelParentInternalId      : z.string().max(50).optional(),
-  statusInternalId              : z.string().max(50).optional(),
+  status                        : z.string().max(255).optional(), // free text (no longer resolved)
   tranDate                      : z.string().optional(),
   expectedCloseDate             : z.string().optional(),
   promisedDeliveryDate          : z.string().optional(),
@@ -74,6 +73,8 @@ export type EstimateQuoteUpdateInput = z.infer<typeof EstimateQuoteUpdateSchema>
 
 const PASSTHROUGH_FIELDS = [
   'documentNumber',
+  'consolidatedCustomer',
+  'status',
   'tranDate',
   'expectedCloseDate',
   'promisedDeliveryDate',
@@ -106,9 +107,7 @@ interface FkResolver {
 const FK_RESOLVERS: FkResolver[] = [
   { field: 'departmentInternalId',           table: departments,       column: 'departmentId',           tkey: 'departments' },
   { field: 'customerInternalId',             table: customers,         column: 'customerId',             tkey: 'customers' },
-  { field: 'consolidatedCustomerInternalId', table: customers,         column: 'consolidatedCustomerId', tkey: 'customers' },
   { field: 'topLevelParentInternalId',       table: customers,         column: 'topLevelParentId',       tkey: 'customers' },
-  { field: 'statusInternalId',               table: estimateStatuses,  column: 'statusId',               tkey: 'estimateStatuses' },
   { field: 'currencyInternalId',             table: currencies,        column: 'currencyId',             tkey: 'currencies' },
   { field: 'subsidiaryInternalId',           table: subsidiaries,      column: 'subsidiaryId',           tkey: 'subsidiaries' },
   { field: 'projectNameInternalId',          table: projectNames,      column: 'projectNameId',          tkey: 'projectNames' },
