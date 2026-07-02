@@ -19,6 +19,7 @@ import lineItemRoutes from './routes/estimates/lineItems.js';
 import estimateQuoteRoutes from './routes/estimateQuotesSearch/index.js';
 import invoiceRoutes from './routes/invoiceSearch/index.js';
 import salesOrderRoutes from './routes/salesOrderSearch/index.js';
+import budgetRoutes from './routes/budgetSearch/index.js';
 import nsRoutes       from './routes/netsuite/index.js';
 import uploadRoutes   from './routes/upload/index.js';
 import portalProjectNames from './routes/portal/projectNames.js';
@@ -49,7 +50,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       req.url.startsWith('/api/v1/netsuite') ||
       req.url.startsWith('/api/v1/estimate-quotes') ||
       req.url.startsWith('/api/v1/invoices') ||
-      req.url.startsWith('/api/v1/sales-orders'),
+      req.url.startsWith('/api/v1/sales-orders') ||
+      req.url.startsWith('/api/v1/budgets'),
   });
 
   await app.register(swagger, {
@@ -78,6 +80,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(estimateQuoteRoutes, { prefix: '/api/v1/estimate-quotes' });
   await app.register(invoiceRoutes, { prefix: '/api/v1/invoices' });
   await app.register(salesOrderRoutes, { prefix: '/api/v1/sales-orders' });
+  await app.register(budgetRoutes, { prefix: '/api/v1/budgets' });
 
   // ── File upload (JWT auth) ────────────────────────────────────
   await app.register(uploadRoutes, { prefix: '/api/v1/upload' });
