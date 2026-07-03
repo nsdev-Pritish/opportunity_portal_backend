@@ -5,6 +5,7 @@ import {
   estimates, estimateLineItems, estimateFreightGroups, estimateQuotes,
   customers, departments, businessVerticals, accountManagers,
   likelyToClose, opsPartners, productDevelopers,
+  projectTypes, currencies, salesChannels,
 } from '../db/schema/index.js';
 import { cacheDel, CacheKeys } from '../utils/cache.js';
 import { NotFoundError } from '../utils/errors.js';
@@ -86,6 +87,14 @@ function buildBaseQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
     netsuiteInternalId: estimates.netsuiteInternalId,
     projectNameId: estimates.projectNameId,
     projectName: estimates.projectName,
+    projectTypeId: estimates.projectTypeId,
+    projectTypeName: projectTypes.name,
+    sellCurrencyId: estimates.sellCurrencyId,
+    currencyCode: currencies.code,
+    currencyName: currencies.name,
+    estimatedQty: estimates.estimatedQty,
+    salesChannelId: estimates.salesChannelId,
+    salesChannelName: salesChannels.name,
     status: estimates.status,
     statusId: estimates.statusId,
     customerPo: estimates.customerPo,
@@ -117,7 +126,10 @@ function buildBaseQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
     .leftJoin(accountManagers,   eq(estimates.acctManagerId,     accountManagers.id))
     .leftJoin(likelyToClose,     eq(estimates.likelyToCloseId,   likelyToClose.id))
     .leftJoin(op1,               eq(estimates.opsPartner1Id,     op1.id))
-    .leftJoin(op2,               eq(estimates.opsPartner2Id,     op2.id));
+    .leftJoin(op2,               eq(estimates.opsPartner2Id,     op2.id))
+    .leftJoin(projectTypes,      eq(estimates.projectTypeId,     projectTypes.id))
+    .leftJoin(currencies,        eq(estimates.sellCurrencyId,    currencies.id))
+    .leftJoin(salesChannels,     eq(estimates.salesChannelId,    salesChannels.id));
 }
 
 function buildCountQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
