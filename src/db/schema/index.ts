@@ -287,6 +287,15 @@ export const accountManagers = pgTable('account_managers', {
   ...syncCols,
 });
 
+// ES Status — master dropdown. `isActive` (from syncCols) is the active/inactive flag.
+export const esStatus = pgTable('es_status', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,   // provides netsuite_internal_id, is_active, source, sync_* , timestamps
+}, (t) => ({
+  nsIdIdx: uniqueIndex('es_status_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
 export const productDevelopers = pgTable('product_developers', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
@@ -567,6 +576,7 @@ export const estimates = pgTable('estimates', {
 
   // Edit / Update fields
   statusId: integer('status_id').references(() => estimateStatuses.id),
+  esStatusId: integer('es_status_id').references(() => esStatus.id),
   closedLostReasonId: integer('closed_lost_reason_id').references(() => closedLostReasons.id),
   clientPursuitAlternativeId: integer('client_pursuit_alternative_id').references(() => clientPursuitAlternatives.id),
   projectHoldDate: date('project_hold_date'),
@@ -1105,6 +1115,7 @@ export const estimatesRelations = relations(estimates, ({ one, many }) => ({
   projectNameRel: one(projectNames, { fields: [estimates.projectNameId], references: [projectNames.id] }),
   sellCurrency: one(currencies, { fields: [estimates.sellCurrencyId], references: [currencies.id] }),
   acctManager: one(accountManagers, { fields: [estimates.acctManagerId], references: [accountManagers.id] }),
+  esStatus: one(esStatus, { fields: [estimates.esStatusId], references: [esStatus.id] }),
   lineItems: many(estimateLineItems),
   createdByUser: one(users, { fields: [estimates.createdBy], references: [users.id] }),
 }));
@@ -1222,6 +1233,7 @@ export const MASTER_TABLES = {
   fcl_rates: fclRates,
   air_rates: airRates,
   additional_fees: additionalFees,
+  es_status: esStatus,
 } as const;
 
 export type MasterEntityKey = keyof typeof MASTER_TABLES;

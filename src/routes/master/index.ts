@@ -1,10 +1,12 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { asc } from 'drizzle-orm';
 import {
   listActiveRecords, getRecord, createRecord, updateRecord, setActiveStatus, getAllDropdowns,
 } from '../../services/masterData.service.js';
 import { getAllEstimateQuoteMappings } from '../../services/estimateQuote.service.js';
-import { type MasterEntityKey, MASTER_TABLES } from '../../db/schema/index.js';
+import { getDb } from '../../config/database.js';
+import { type MasterEntityKey, MASTER_TABLES, esStatus } from '../../db/schema/index.js';
 import { ValidationError } from '../../utils/errors.js';
 
 const VALID_ENTITIES = Object.keys(MASTER_TABLES) as MasterEntityKey[];
@@ -43,6 +45,11 @@ export default async function masterRoutes(app: FastifyInstance) {
     };
   });
   app.get('/all-dropdowns', async () => getAllDropdowns());
+
+  // GET /api/v1/master/es-status — ALL es_status rows (active + inactive)
+  app.get('/es-status', async () =>
+    getDb().select().from(esStatus).orderBy(asc(esStatus.name)),
+  );
 
   // GET /api/v1/master/estimate-quotes — all Estimate ↔ Quote mappings
   app.get('/estimate-quotes', async () => getAllEstimateQuoteMappings());
