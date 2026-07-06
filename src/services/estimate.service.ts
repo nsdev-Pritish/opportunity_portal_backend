@@ -91,12 +91,11 @@ function buildConditions(
     const matchToken = (t: string) => {
       const term = `%${t}%`;
       return or(
-        // Text / name columns
-        ilike(estimates.documentNumber!,     term),
-        ilike(estimates.projectName!,        term),
-        ilike(estimates.customerPo!,         term),
-        ilike(estimates.netsuiteInternalId!, term),
-        sql`CAST(${estimates.status} AS TEXT) ILIKE ${term}`,
+        // Whole estimate row cast to text — matches ANY column on the estimates table
+        // (document number, project name, PO, status, dates, amounts, flags, memo,
+        //  ship_to/bill_to, adjusted_pipeline, and any future column).
+        sql`CAST(${estimates} AS TEXT) ILIKE ${term}`,
+        // Joined related-table names (NOT on the estimates row — kept explicit)
         ilike(customers.name,            term),
         ilike(departments.name,          term),
         ilike(businessVerticals.name,    term),
@@ -107,10 +106,6 @@ function buildConditions(
         ilike(projectTypes.name,         term),
         ilike(currencies.code,           term),
         ilike(salesChannels.name,        term),
-        // Numeric columns — cast to text so ids / quantities / amounts are searchable
-        sql`CAST(${estimates.id} AS TEXT) ILIKE ${term}`,
-        sql`CAST(${estimates.estimatedQty} AS TEXT) ILIKE ${term}`,
-        sql`CAST(${estimates.projectedTotalAmt} AS TEXT) ILIKE ${term}`,
       );
     };
     if (tokens.length) conds.push(or(...tokens.map(matchToken))!);
