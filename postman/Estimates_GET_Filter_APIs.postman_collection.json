@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Estimates — GET Filter APIs",
-    "description": "Two APIs for the Estimates filter panel.\n\n1. Document Numbers dropdown\n2. Get estimates — pass whichever filter the user selected (document number, department, customer, project name, etc.). All params are optional and independent.",
+    "description": "Two APIs for the Estimates filter panel.\n\n1. Document Numbers dropdown\n2. Get estimates — pass whichever filter the user selected (document number, department, customer, project name, etc.). All params are optional and independent.\n\nNEW:\n• `search` — general keyword search; case-insensitive match across document number, project name, customer PO, customer, department, business vertical, sales rep, likely-to-close, ops partners, project type, currency code, sales channel.\n• Multi-select filters — the id filters (customerId, salesRepId, departmentId, businessVerticalId, projectNameId, likelyToCloseId, productDeveloperId, opsPartnerId) and documentNumber accept COMMA-SEPARATED values, e.g. customerId=12,15,20. A single value still works.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -51,6 +51,12 @@
               "description": "Records per page, max 100 (default 20)"
             },
             {
+              "key": "search",
+              "value": "",
+              "description": "← General keyword search (the top 'Search pipeline entries' box). Case-insensitive; matches across document number, project name, customer PO, customer, department, business vertical, sales rep, likely-to-close, ops partners, project type, currency code, sales channel.",
+              "disabled": true
+            },
+            {
               "key": "estimateId",
               "value": "",
               "description": "← Enable this when user selects a Document Number from dropdown (use id from API 1). Returns FULL estimate with all line items + freight groups instead of a summary list.",
@@ -71,7 +77,7 @@
             {
               "key": "customerId",
               "value": "",
-              "description": "← Enable this when user selects a Customer",
+              "description": "← Enable this when user selects a Customer. Comma-separated for multi-select, e.g. 12,15,20",
               "disabled": true
             },
             {

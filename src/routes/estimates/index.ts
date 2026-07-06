@@ -297,6 +297,20 @@ async function parseMultipartEstimate(req: FastifyRequest): Promise<Record<strin
   return raw;
 }
 
+// ── Query helpers ─────────────────────────────────────────────────────────────
+// Filters accept comma-separated values (e.g. customerId=12,15,20). A single value
+// still parses to a one-element array, so callers sending one value keep working.
+const csvInt = (v?: string): number[] | undefined => {
+  if (!v) return undefined;
+  const arr = v.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+  return arr.length ? arr : undefined;
+};
+const csvStr = (v?: string): string[] | undefined => {
+  if (!v) return undefined;
+  const arr = v.split(',').map(s => s.trim()).filter(Boolean);
+  return arr.length ? arr : undefined;
+};
+
 // ── Routes ──────────────────────────────────────────────────────────────────
 
 export default async function estimateRoutes(app: FastifyInstance) {
@@ -351,22 +365,22 @@ export default async function estimateRoutes(app: FastifyInstance) {
   app.get<{ Querystring: DocNumQuery }>('/document-numbers', async (req) => {
     const q = req.query;
     return listDocumentNumbers({
-      customerId:            q.customerId            ? parseInt(q.customerId)            : undefined,
+      customerId:            csvInt(q.customerId),
       customerName:          q.customerName          || undefined,
-      salesRepId:            q.salesRepId            ? parseInt(q.salesRepId)            : undefined,
+      salesRepId:            csvInt(q.salesRepId),
       salesRepName:          q.salesRepName          || undefined,
-      opsPartnerId:          q.opsPartnerId          ? parseInt(q.opsPartnerId)          : undefined,
+      opsPartnerId:          csvInt(q.opsPartnerId),
       opsPartnerName:        q.opsPartnerName        || undefined,
-      businessVerticalId:    q.businessVerticalId    ? parseInt(q.businessVerticalId)    : undefined,
+      businessVerticalId:    csvInt(q.businessVerticalId),
       businessVerticalName:  q.businessVerticalName  || undefined,
-      departmentId:          q.departmentId          ? parseInt(q.departmentId)          : undefined,
+      departmentId:          csvInt(q.departmentId),
       departmentName:        q.departmentName        || undefined,
-      projectNameId:         q.projectNameId         ? parseInt(q.projectNameId)         : undefined,
+      projectNameId:         csvInt(q.projectNameId),
       projectName:           q.projectName           || undefined,
-      statuses:              q.statuses              ? q.statuses.split(',').map(s => s.trim()).filter(Boolean) : undefined,
-      productDeveloperId:    q.productDeveloperId    ? parseInt(q.productDeveloperId)    : undefined,
+      statuses:              csvStr(q.statuses),
+      productDeveloperId:    csvInt(q.productDeveloperId),
       productDeveloperName:  q.productDeveloperName  || undefined,
-      likelyToCloseId:       q.likelyToCloseId       ? parseInt(q.likelyToCloseId)       : undefined,
+      likelyToCloseId:       csvInt(q.likelyToCloseId),
       likelyToCloseName:     q.likelyToCloseName     || undefined,
       expectedCloseDateFrom: q.expectedCloseDateFrom || undefined,
       expectedCloseDateTo:   q.expectedCloseDateTo   || undefined,
@@ -379,6 +393,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
   type SearchQuery = DocNumQuery & {
     page?: string; limit?: string;
     estimateId?: string; documentNumber?: string;
+    search?: string;   // general free-text search across visible columns
   };
   app.get<{ Querystring: SearchQuery }>('/search', async (req) => {
     const q = req.query;
@@ -392,24 +407,25 @@ export default async function estimateRoutes(app: FastifyInstance) {
     return searchEstimatesAdvanced({
       page:                  parseInt(q.page  ?? '1'),
       limit:                 Math.min(parseInt(q.limit ?? '20'), 100),
+      search:                q.search                || undefined,
       estimateId:            q.estimateId            ? parseInt(q.estimateId)            : undefined,
-      documentNumber:        q.documentNumber        || undefined,
-      customerId:            q.customerId            ? parseInt(q.customerId)            : undefined,
+      documentNumber:        csvStr(q.documentNumber),
+      customerId:            csvInt(q.customerId),
       customerName:          q.customerName          || undefined,
-      salesRepId:            q.salesRepId            ? parseInt(q.salesRepId)            : undefined,
+      salesRepId:            csvInt(q.salesRepId),
       salesRepName:          q.salesRepName          || undefined,
-      opsPartnerId:          q.opsPartnerId          ? parseInt(q.opsPartnerId)          : undefined,
+      opsPartnerId:          csvInt(q.opsPartnerId),
       opsPartnerName:        q.opsPartnerName        || undefined,
-      businessVerticalId:    q.businessVerticalId    ? parseInt(q.businessVerticalId)    : undefined,
+      businessVerticalId:    csvInt(q.businessVerticalId),
       businessVerticalName:  q.businessVerticalName  || undefined,
-      departmentId:          q.departmentId          ? parseInt(q.departmentId)          : undefined,
+      departmentId:          csvInt(q.departmentId),
       departmentName:        q.departmentName        || undefined,
-      projectNameId:         q.projectNameId         ? parseInt(q.projectNameId)         : undefined,
+      projectNameId:         csvInt(q.projectNameId),
       projectName:           q.projectName           || undefined,
-      statuses:              q.statuses              ? q.statuses.split(',').map(s => s.trim()).filter(Boolean) : undefined,
-      productDeveloperId:    q.productDeveloperId    ? parseInt(q.productDeveloperId)    : undefined,
+      statuses:              csvStr(q.statuses),
+      productDeveloperId:    csvInt(q.productDeveloperId),
       productDeveloperName:  q.productDeveloperName  || undefined,
-      likelyToCloseId:       q.likelyToCloseId       ? parseInt(q.likelyToCloseId)       : undefined,
+      likelyToCloseId:       csvInt(q.likelyToCloseId),
       likelyToCloseName:     q.likelyToCloseName     || undefined,
       expectedCloseDateFrom: q.expectedCloseDateFrom || undefined,
       expectedCloseDateTo:   q.expectedCloseDateTo   || undefined,

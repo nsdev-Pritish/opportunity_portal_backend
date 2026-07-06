@@ -19,22 +19,23 @@ const CHUNK = 100;
 // ── Shared filter helper ─────────────────────────────────────────────────────
 
 type EstimateFilterOpts = {
-  customerId?: number;
+  search?: string;                 // general free-text search across visible columns
+  customerId?: number[];
   customerName?: string;
-  salesRepId?: number;
+  salesRepId?: number[];
   salesRepName?: string;
-  opsPartnerId?: number;
+  opsPartnerId?: number[];
   opsPartnerName?: string;
-  businessVerticalId?: number;
+  businessVerticalId?: number[];
   businessVerticalName?: string;
-  departmentId?: number;
+  departmentId?: number[];
   departmentName?: string;
-  projectNameId?: number;
+  projectNameId?: number[];
   projectName?: string;
   statuses?: string[];
-  productDeveloperId?: number;
+  productDeveloperId?: number[];
   productDeveloperName?: string;
-  likelyToCloseId?: number;
+  likelyToCloseId?: number[];
   likelyToCloseName?: string;
   expectedCloseDateFrom?: string;
   expectedCloseDateTo?: string;
@@ -43,39 +44,77 @@ type EstimateFilterOpts = {
 };
 
 function buildConditions(
-  opts: EstimateFilterOpts & { estimateId?: number; documentNumber?: string },
+  opts: EstimateFilterOpts & { estimateId?: number; documentNumber?: string[] },
   op1: any,
   op2: any,
 ): any[] {
   const conds: any[] = [eq(estimates.isActive, true)];
 
+  // Multi-value filters: single value → eq, multiple → inArray
+  const oneOrMany = <T>(col: any, arr: T[]) =>
+    arr.length === 1 ? eq(col, arr[0]) : inArray(col, arr);
+
   if (opts.estimateId)          conds.push(eq(estimates.id, opts.estimateId));
-  if (opts.documentNumber)      conds.push(ilike(estimates.documentNumber!, `%${opts.documentNumber}%`));
-  if (opts.customerId)          conds.push(eq(estimates.customerId, opts.customerId));
+  if (opts.documentNumber?.length) conds.push(oneOrMany(estimates.documentNumber, opts.documentNumber)); // exact match
+  if (opts.customerId?.length)  conds.push(oneOrMany(estimates.customerId, opts.customerId));
   if (opts.customerName)        conds.push(ilike(customers.name, `%${opts.customerName}%`));
-  if (opts.salesRepId)          conds.push(eq(estimates.acctManagerId, opts.salesRepId));
+  if (opts.salesRepId?.length)  conds.push(oneOrMany(estimates.acctManagerId, opts.salesRepId));
   if (opts.salesRepName)        conds.push(ilike(accountManagers.name, `%${opts.salesRepName}%`));
-  if (opts.opsPartnerId)        conds.push(or(eq(estimates.opsPartner1Id, opts.opsPartnerId), eq(estimates.opsPartner2Id, opts.opsPartnerId))!);
+  if (opts.opsPartnerId?.length) conds.push(or(inArray(estimates.opsPartner1Id, opts.opsPartnerId), inArray(estimates.opsPartner2Id, opts.opsPartnerId))!);
   if (opts.opsPartnerName)      conds.push(or(ilike(op1.name, `%${opts.opsPartnerName}%`), ilike(op2.name, `%${opts.opsPartnerName}%`))!);
-  if (opts.businessVerticalId)  conds.push(eq(estimates.businessVerticalId, opts.businessVerticalId));
+  if (opts.businessVerticalId?.length) conds.push(oneOrMany(estimates.businessVerticalId, opts.businessVerticalId));
   if (opts.businessVerticalName) conds.push(ilike(businessVerticals.name, `%${opts.businessVerticalName}%`));
-  if (opts.departmentId)        conds.push(eq(estimates.departmentId, opts.departmentId));
+  if (opts.departmentId?.length) conds.push(oneOrMany(estimates.departmentId, opts.departmentId));
   if (opts.departmentName)      conds.push(ilike(departments.name, `%${opts.departmentName}%`));
-  if (opts.projectNameId)       conds.push(eq(estimates.projectNameId, opts.projectNameId));
+  if (opts.projectNameId?.length) conds.push(oneOrMany(estimates.projectNameId, opts.projectNameId));
   if (opts.projectName)         conds.push(ilike(estimates.projectName!, `%${opts.projectName}%`));
   if (opts.statuses?.length) {
     conds.push(opts.statuses.length === 1
       ? eq(estimates.status, opts.statuses[0] as any)
       : inArray(estimates.status, opts.statuses as any[]));
   }
-  if (opts.productDeveloperId)  conds.push(sql`${opts.productDeveloperId} = ANY(${estimates.productDeveloperIds})`);
+  if (opts.productDeveloperId?.length) conds.push(or(...opts.productDeveloperId.map(id => sql`${id} = ANY(${estimates.productDeveloperIds})`))!); // match any of the developers
   if (opts.productDeveloperName) conds.push(sql`EXISTS (SELECT 1 FROM product_developers pd WHERE pd.id = ANY(${estimates.productDeveloperIds}) AND pd.name ILIKE ${'%' + opts.productDeveloperName + '%'})`);
-  if (opts.likelyToCloseId)     conds.push(eq(estimates.likelyToCloseId, opts.likelyToCloseId));
+  if (opts.likelyToCloseId?.length) conds.push(oneOrMany(estimates.likelyToCloseId, opts.likelyToCloseId));
   if (opts.likelyToCloseName)   conds.push(ilike(likelyToClose.name, `%${opts.likelyToCloseName}%`));
   if (opts.expectedCloseDateFrom) conds.push(gte(estimates.expectedCloseDate, opts.expectedCloseDateFrom));
   if (opts.expectedCloseDateTo)   conds.push(lte(estimates.expectedCloseDate, opts.expectedCloseDateTo));
   if (opts.dateOfEntryFrom)     conds.push(gte(estimates.createdAt, new Date(opts.dateOfEntryFrom)));
   if (opts.dateOfEntryTo)       conds.push(lte(estimates.createdAt, new Date(opts.dateOfEntryTo)));
+
+  // General search — one box, type anything. The input is split into tokens (by
+  // space or comma); a row matches if ANY token is found in ANY column below
+  // (text/names, status, and numeric fields cast to text). So "Saks,draft,2354"
+  // returns rows matching Saks OR draft OR 2354.
+  if (opts.search) {
+    const tokens = opts.search.split(/[\s,]+/).map(t => t.trim()).filter(Boolean);
+    const matchToken = (t: string) => {
+      const term = `%${t}%`;
+      return or(
+        // Text / name columns
+        ilike(estimates.documentNumber!,     term),
+        ilike(estimates.projectName!,        term),
+        ilike(estimates.customerPo!,         term),
+        ilike(estimates.netsuiteInternalId!, term),
+        sql`CAST(${estimates.status} AS TEXT) ILIKE ${term}`,
+        ilike(customers.name,            term),
+        ilike(departments.name,          term),
+        ilike(businessVerticals.name,    term),
+        ilike(accountManagers.name,      term),
+        ilike(likelyToClose.name,        term),
+        ilike(op1.name,                  term),
+        ilike(op2.name,                  term),
+        ilike(projectTypes.name,         term),
+        ilike(currencies.code,           term),
+        ilike(salesChannels.name,        term),
+        // Numeric columns — cast to text so ids / quantities / amounts are searchable
+        sql`CAST(${estimates.id} AS TEXT) ILIKE ${term}`,
+        sql`CAST(${estimates.estimatedQty} AS TEXT) ILIKE ${term}`,
+        sql`CAST(${estimates.projectedTotalAmt} AS TEXT) ILIKE ${term}`,
+      );
+    };
+    if (tokens.length) conds.push(or(...tokens.map(matchToken))!);
+  }
 
   return conds;
 }
@@ -141,7 +180,10 @@ function buildCountQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
     .leftJoin(accountManagers,   eq(estimates.acctManagerId,     accountManagers.id))
     .leftJoin(likelyToClose,     eq(estimates.likelyToCloseId,   likelyToClose.id))
     .leftJoin(op1,               eq(estimates.opsPartner1Id,     op1.id))
-    .leftJoin(op2,               eq(estimates.opsPartner2Id,     op2.id));
+    .leftJoin(op2,               eq(estimates.opsPartner2Id,     op2.id))
+    .leftJoin(projectTypes,      eq(estimates.projectTypeId,     projectTypes.id))
+    .leftJoin(currencies,        eq(estimates.sellCurrencyId,    currencies.id))
+    .leftJoin(salesChannels,     eq(estimates.salesChannelId,    salesChannels.id));
 }
 
 // ── Document-number dropdown ─────────────────────────────────────────────────
@@ -180,7 +222,7 @@ export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
   page: number;
   limit: number;
   estimateId?: number;
-  documentNumber?: string;
+  documentNumber?: string[];
 }) {
   const db = getDb();
   const op1 = alias(opsPartners, 'op1');
