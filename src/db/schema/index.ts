@@ -549,6 +549,7 @@ export const estimates = pgTable('estimates', {
   sellCurrencyId: integer('sell_currency_id').references(() => currencies.id),
   projectedTotalAmt: numeric('projected_total_amt', { precision: 15, scale: 2 }),
   estimatedQty: integer('estimated_qty'),
+  adjustedPipeline: numeric('adjusted_pipeline', { precision: 15, scale: 2 }), // NetSuite currency field: adjustedPipelineAmountNS
 
   // Classification
   departmentId: integer('department_id').references(() => departments.id),

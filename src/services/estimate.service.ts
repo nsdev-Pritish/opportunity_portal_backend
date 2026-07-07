@@ -127,6 +127,7 @@ function buildBaseQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
     currencyCode: currencies.code,
     currencyName: currencies.name,
     estimatedQty: estimates.estimatedQty,
+    adjustedPipeline: estimates.adjustedPipeline,
     salesChannelId: estimates.salesChannelId,
     salesChannelName: salesChannels.name,
     status: estimates.status,

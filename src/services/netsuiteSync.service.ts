@@ -466,6 +466,7 @@ export async function syncEstimateToNetsuite(
       internalId?    : string;
       tranId?        : string;
       documentNumber?: string;
+      adjustedPipelineAmountNS?: string;
       quoteId?       : string;
       quoteTranId?   : string;
       lineIds?       : (string | number)[] | Record<string, string | number>;
@@ -475,6 +476,8 @@ export async function syncEstimateToNetsuite(
     // sometimes returns tranId: "" when the document number is assigned asynchronously.
     const nsInternalId   = nsResp.id     || nsResp.internalId     || undefined;
     const documentNumber = nsResp.tranId || nsResp.documentNumber || undefined;
+    // Adjusted Pipeline is returned by NetSuite on the create/update response.
+    const adjustedPipeline = nsResp.adjustedPipelineAmountNS;
 
     logger.info({
       estimateId,
@@ -502,6 +505,8 @@ export async function syncEstimateToNetsuite(
       };
       if (nsInternalId)   setData.netsuiteInternalId = nsInternalId;
       if (documentNumber) setData.documentNumber     = documentNumber;
+      // Write back Adjusted Pipeline when NetSuite returns it (skip blank — numeric column).
+      if (adjustedPipeline !== undefined && adjustedPipeline !== '') setData.adjustedPipeline = adjustedPipeline;
 
       await db.update(estimates)
         .set(setData as any)

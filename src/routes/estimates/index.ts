@@ -155,6 +155,7 @@ const EstimateHeaderSchema = z.object({
   sellCurrencyId: z.number().int().positive().optional(),
   projectedTotalAmt: z.string().optional(),
   estimatedQty: z.number().int().nonnegative().optional(),
+  adjustedPipeline: z.string().optional(),   // Adjusted Pipeline currency amount → estimates.adjusted_pipeline
 
   // Classification
   departmentId: z.number().int().positive().optional(),
