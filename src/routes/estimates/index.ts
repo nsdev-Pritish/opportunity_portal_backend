@@ -84,6 +84,7 @@ const ComponentSchema = z.object({
   // ── Classification ─────────────────────────────────────────────────────────
   productClassId: z.number().int().positive().optional(),
   productClassEuId: z.number().int().positive().optional(),
+  classId: z.number().int().positive().optional(),
   sustainabilityId: z.number().int().positive().optional(),
   componentKitItemId: z.number().int().positive().optional(),
   htsCode: z.string().max(20).optional(),

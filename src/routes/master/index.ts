@@ -6,7 +6,7 @@ import {
 } from '../../services/masterData.service.js';
 import { getAllEstimateQuoteMappings } from '../../services/estimateQuote.service.js';
 import { getDb } from '../../config/database.js';
-import { type MasterEntityKey, MASTER_TABLES, esStatus } from '../../db/schema/index.js';
+import { type MasterEntityKey, MASTER_TABLES, esStatus, classes } from '../../db/schema/index.js';
 import { ValidationError } from '../../utils/errors.js';
 
 const VALID_ENTITIES = Object.keys(MASTER_TABLES) as MasterEntityKey[];
@@ -49,6 +49,11 @@ export default async function masterRoutes(app: FastifyInstance) {
   // GET /api/v1/master/es-status — ALL es_status rows (active + inactive)
   app.get('/es-status', async () =>
     getDb().select().from(esStatus).orderBy(asc(esStatus.name)),
+  );
+
+  // GET /api/v1/master/classes — ALL class rows (active + inactive), all fields
+  app.get('/classes', async () =>
+    getDb().select().from(classes).orderBy(asc(classes.name)),
   );
 
   // GET /api/v1/master/estimate-quotes — all Estimate ↔ Quote mappings

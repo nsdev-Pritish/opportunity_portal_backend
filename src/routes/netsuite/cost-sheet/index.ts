@@ -22,6 +22,7 @@ import vendorAddressRoutes     from './vendorAddresses.js';
 import vendorIncotermRoutes    from './vendorIncoterms.js';
 import csItemRoutes            from './csItems.js';
 import componentKitItemRoutes  from './componentKitItems.js';
+import classRoutes             from './classes.js';
 
 export default async function costSheetRoutes(app: FastifyInstance) {
   await app.register(factoryNameRoutes,      { prefix: '/factory-names' });
@@ -33,4 +34,5 @@ export default async function costSheetRoutes(app: FastifyInstance) {
   await app.register(vendorIncotermRoutes,   { prefix: '/vendor-incoterms' });
   await app.register(csItemRoutes,           { prefix: '/items' });
   await app.register(componentKitItemRoutes, { prefix: '/component-kit-items' });
+  await app.register(classRoutes,            { prefix: '/classes' });
 }

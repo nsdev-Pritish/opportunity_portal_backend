@@ -420,6 +420,46 @@ export const productClassesEu = pgTable('product_classes_eu', {
   ...syncCols,
 });
 
+// Unified Class master — mirrors the NetSuite "Class" record (holds both the US
+// and EU fields on a single row). Intended to replace productClasses + productClassesEu.
+export const classes = pgTable('classes', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  parentClass: varchar('parent_class', { length: 255 }),
+  subsidiaries: text('subsidiaries'),
+  includeChildren: boolean('include_children').default(false),
+  usHtsCode: varchar('us_hts_code', { length: 50 }),
+  usDutyRate: numeric('us_duty_rate', { precision: 10, scale: 3 }),
+  show: boolean('show').default(false),
+  euHtsImport: varchar('eu_hts_import', { length: 255 }),
+  euHtsExport: varchar('eu_hts_export', { length: 255 }),
+  euDutyRate: numeric('eu_duty_rate', { precision: 10, scale: 3 }),
+  notes: text('notes'),
+  classPlanningCategory: varchar('class_planning_category', { length: 255 }),
+  nspbClassPlanningCategory: varchar('nspb_class_planning_category', { length: 255 }),
+  chinaDutyRate: numeric('china_duty_rate', { precision: 10, scale: 3 }),
+  cambodiaDutyRate: numeric('cambodia_duty_rate', { precision: 10, scale: 3 }),
+  taiwanDutyRate: numeric('taiwan_duty_rate', { precision: 10, scale: 3 }),
+  thailandDutyRate: numeric('thailand_duty_rate', { precision: 10, scale: 3 }),
+  vietnamDutyRate: numeric('vietnam_duty_rate', { precision: 10, scale: 3 }),
+  chinaTariffRate: numeric('china_tariff_rate', { precision: 10, scale: 3 }),
+  hkTariffRate: numeric('hk_tariff_rate', { precision: 10, scale: 3 }),
+  taiwanTariffRate: numeric('taiwan_tariff_rate', { precision: 10, scale: 3 }),
+  vietnamTariffRate: numeric('vietnam_tariff_rate', { precision: 10, scale: 3 }),
+  cambodiaTariffRate: numeric('cambodia_tariff_rate', { precision: 10, scale: 3 }),
+  thailandTariffRate: numeric('thailand_tariff_rate', { precision: 10, scale: 3 }),
+  isEu: varchar('is_eu', { length: 50 }),
+  euHtsCode: varchar('eu_hts_code', { length: 50 }),
+  chinaDutyRateEu: numeric('china_duty_rate_eu', { precision: 10, scale: 3 }),
+  cambodiaDutyRateEu: numeric('cambodia_duty_rate_eu', { precision: 10, scale: 3 }),
+  taiwanDutyRateEu: numeric('taiwan_duty_rate_eu', { precision: 10, scale: 3 }),
+  thailandDutyRateEu: numeric('thailand_duty_rate_eu', { precision: 10, scale: 3 }),
+  vietnamDutyRateEu: numeric('vietnam_duty_rate_eu', { precision: 10, scale: 3 }),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('classes_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
 export const sustainabilityOptions = pgTable('sustainability_options', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
@@ -686,6 +726,7 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   productClassId: integer('product_class_id').references(() => productClasses.id),
   sustainabilityId: integer('sustainability_id').references(() => sustainabilityOptions.id),
   productClassEuId: integer('product_class_eu_id').references(() => productClassesEu.id),
+  classId: integer('class_id').references(() => classes.id),
   componentKitItemId: integer('component_kit_item_id').references(() => componentKitItems.id),
   htsCode: varchar('hts_code', { length: 20 }),
   countryOfOrigin: varchar('country_of_origin', { length: 100 }),
@@ -1134,6 +1175,7 @@ export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, m
   vendorCurrency: one(currencies, { fields: [estimateLineItems.vendorCurrencyId], references: [currencies.id] }),
   productClass: one(productClasses, { fields: [estimateLineItems.productClassId], references: [productClasses.id] }),
   productClassEu: one(productClassesEu, { fields: [estimateLineItems.productClassEuId], references: [productClassesEu.id] }),
+  class: one(classes, { fields: [estimateLineItems.classId], references: [classes.id] }),
   componentKitItem: one(componentKitItems, { fields: [estimateLineItems.componentKitItemId], references: [componentKitItems.id] }),
 }));
 
@@ -1223,6 +1265,7 @@ export const MASTER_TABLES = {
   item_types: itemTypes,
   product_classes: productClasses,
   product_classes_eu: productClassesEu,
+  classes,
   sustainability_options: sustainabilityOptions,
   component_kit_items: componentKitItems,
   closed_lost_reasons: closedLostReasons,

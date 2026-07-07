@@ -16,6 +16,7 @@ const LineItemSchema = z.object({
   otherCostPct: z.string().optional(), paddingPct: z.string().optional(),
   productClassId: z.number().int().optional(), sustainabilityId: z.number().int().optional(),
   productClassEuId: z.number().int().optional(),
+  classId: z.number().int().optional(),
   htsCode: z.string().max(20).optional(), countryOfOrigin: z.string().max(100).optional(),
   countryOfDest: z.enum(['US','EU']).optional(),
   unitsPerCarton: z.number().int().optional(), dimLCm: z.string().optional(),
