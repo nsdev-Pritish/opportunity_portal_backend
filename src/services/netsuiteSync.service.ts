@@ -470,6 +470,9 @@ export async function syncEstimateToNetsuite(
       quoteId?       : string;
       quoteTranId?   : string;
       lineIds?       : (string | number)[] | Record<string, string | number>;
+      // Per-line unified Class id NetSuite resolved for each line, keyed by the same
+      // 1-based line number used in the outbound `lines` payload (or a positional array).
+      resolvedClassIds?: (string | number | null)[] | Record<string, string | number | null>;
     };
 
     // Use `||` (not `??`) so empty strings fall through to the next candidate — NetSuite
@@ -595,6 +598,38 @@ export async function syncEstimateToNetsuite(
       }
 
       logger.info({ estimateId, newLines: newLines.length, assigned: assignments.length, lineIds: nsResp.lineIds }, 'New line NS IDs stored');
+    }
+
+    // ── Store NetSuite-resolved unified Class ids back to each line item ──────
+    // NetSuite resolves the Class per line and returns it as `resolvedClassIds`
+    // (keyed by the same 1-based line number as the outbound `lines` payload, or a
+    // positional array). Written straight into estimate_line_items.class_id — same
+    // read-response-then-write-back pattern as adjustedPipelineAmountNS above.
+    if (!isConvert && nsResp.resolvedClassIds && typeof nsResp.resolvedClassIds === 'object') {
+      const classLineRows = await db.select({ id: estimateLineItems.id })
+        .from(estimateLineItems)
+        .where(eq(estimateLineItems.estimateId, estimateId))
+        .orderBy(asc(estimateLineItems.lineNumber));
+
+      const classByLineNum: Record<string, string | number | null> = Array.isArray(nsResp.resolvedClassIds)
+        ? Object.fromEntries(nsResp.resolvedClassIds.map((v, i) => [String(i + 1), v]))
+        : nsResp.resolvedClassIds;
+
+      const classAssignments = classLineRows
+        .map((row, i) => ({ portalLineId: row.id, classId: classByLineNum[String(i + 1)] }))
+        .filter(a => a.classId !== undefined && a.classId !== null && a.classId !== '');
+
+      if (classAssignments.length > 0) {
+        await db.transaction(async (tx) => {
+          for (const a of classAssignments) {
+            await tx.update(estimateLineItems)
+              .set({ classId: Number(a.classId) } as any)
+              .where(eq(estimateLineItems.id, a.portalLineId));
+          }
+        });
+      }
+
+      logger.info({ estimateId, assigned: classAssignments.length }, 'Line class ids stored from NetSuite');
     }
 
     logger.info({ estimateId, mode, nsInternalId, documentNumber, quoteId: nsResp.quoteId }, 'Estimate synced to NetSuite successfully');
