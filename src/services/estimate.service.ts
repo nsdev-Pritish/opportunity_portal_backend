@@ -5,7 +5,7 @@ import {
   estimates, estimateLineItems, estimateFreightGroups, estimateQuotes,
   customers, departments, businessVerticals, accountManagers,
   likelyToClose, opsPartners, productDevelopers,
-  projectTypes, currencies, salesChannels,
+  projectTypes, currencies, salesChannels, esStatus,
 } from '../db/schema/index.js';
 import { cacheDel, CacheKeys } from '../utils/cache.js';
 import { NotFoundError } from '../utils/errors.js';
@@ -679,6 +679,21 @@ async function upsertLineItemsWithComponents(
 
 // ── Create estimate + cost sheet items atomically ───────────────────────────
 
+// Default ES Status applied to newly created estimates when the caller doesn't set one.
+const DEFAULT_ES_STATUS_NAME = 'In Progress';
+
+// Resolve the es_status row id for the default status name. Returns null if the
+// master row is missing so a create never fails just because the seed data isn't there.
+async function getDefaultEsStatusId(): Promise<number | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: esStatus.id })
+    .from(esStatus)
+    .where(and(eq(esStatus.name, DEFAULT_ES_STATUS_NAME), eq(esStatus.isActive, true)))
+    .limit(1);
+  return row?.id ?? null;
+}
+
 export async function createEstimateWithItems(
   headerData: Record<string, unknown>,
   lineItems: RawLineItem[],
@@ -687,6 +702,16 @@ export async function createEstimateWithItems(
   const db = getDb();
   const startTime = Date.now();
   logger.info('Creating estimate');
+
+  // Default es_status → "In Progress" when the caller didn't specify one.
+  if (headerData.esStatusId === undefined || headerData.esStatusId === null) {
+    const defaultEsStatusId = await getDefaultEsStatusId();
+    if (defaultEsStatusId !== null) {
+      headerData = { ...headerData, esStatusId: defaultEsStatusId };
+    } else {
+      logger.warn({ name: DEFAULT_ES_STATUS_NAME }, 'Default es_status not found — estimate created without one');
+    }
+  }
 
   return db.transaction(async (tx) => {
     // Step 1: Insert estimate header
