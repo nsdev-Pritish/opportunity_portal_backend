@@ -122,6 +122,7 @@ const ComponentSchema = z.object({
   paddingAmount:        z.string().optional(),            // numeric string e.g. "12.50"
   dutyMarkupAmount:     z.string().optional(),            // numeric string
   converted:            z.boolean().optional(),
+  freightModeSelection: z.string().max(20).optional(),
   freightSelectedGroup: z.string().max(255).optional(),
   freightPol:           z.string().max(255).optional(),
   freightPod:           z.string().max(255).optional(),
