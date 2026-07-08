@@ -764,6 +764,8 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   paddingAmount:        numeric('padding_amount',        { precision: 15, scale: 4 }),
   dutyMarkupAmount:     numeric('duty_markup_amount',    { precision: 15, scale: 4 }),
   converted:            boolean('converted').default(false),
+  // Line-level freight mode selection (free-form text, e.g. "FOB", "Ocean", "Air", "Group").
+  freightModeSelection: varchar('freight_mode_selection', { length: 20 }),
   freightSelectedGroup: varchar('freight_selected_group', { length: 255 }),
   freightPol:           varchar('freight_pol', { length: 255 }),
   freightPod:           varchar('freight_pod', { length: 255 }),
