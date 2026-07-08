@@ -132,6 +132,7 @@ function buildBaseQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
     salesChannelName: salesChannels.name,
     status: estimates.status,
     statusId: estimates.statusId,
+    esStatusId: estimates.esStatusId,
     customerPo: estimates.customerPo,
     projectedTotalAmt: estimates.projectedTotalAmt,
     expectedCloseDate: estimates.expectedCloseDate,
