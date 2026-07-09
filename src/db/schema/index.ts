@@ -848,6 +848,12 @@ export const estimateFreightGroups = pgTable('estimate_freight_groups', {
   customProvider: varchar('custom_provider', { length: 255 }),
   customNotes:    text('custom_notes'),
 
+  // Sync — mirrors the parent estimate's NetSuite outcome so the UI can show the
+  // sync state (and any error) per freight group. Written by netsuiteSync.service.
+  syncStatus: syncStatusEnum('sync_status').default('pending').notNull(),
+  syncError:  text('sync_error'),
+  syncedAt:   timestamp('synced_at', { withTimezone: true }),
+
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   // NOTE: the old chosen_type, sort_order and rate-ref columns from the original

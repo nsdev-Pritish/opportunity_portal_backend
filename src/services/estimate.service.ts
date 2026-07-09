@@ -144,6 +144,9 @@ function buildBaseQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
     opsPartner2Id: estimates.opsPartner2Id,
     acctManagerId: estimates.acctManagerId,
     productDeveloperIds: estimates.productDeveloperIds,
+    syncStatus: estimates.syncStatus,
+    syncError: estimates.syncError,
+    syncedAt: estimates.syncedAt,
     createdAt: estimates.createdAt,
     updatedAt: estimates.updatedAt,
     customerId: estimates.customerId,
@@ -317,6 +320,9 @@ export async function listEstimates(opts: {
       customerPo: estimates.customerPo,
       projectedTotalAmt: estimates.projectedTotalAmt,
       expectedCloseDate: estimates.expectedCloseDate,
+      syncStatus: estimates.syncStatus,
+      syncError: estimates.syncError,
+      syncedAt: estimates.syncedAt,
       createdAt: estimates.createdAt,
       updatedAt: estimates.updatedAt,
       customerName: customers.name,
@@ -824,10 +830,19 @@ export async function resyncEstimate(id: number) {
 
   if (!est) throw new NotFoundError('Estimate', String(id));
 
-  // Reset to pending so the UI knows a sync attempt is in flight
-  await db.update(estimates)
-    .set({ syncStatus: 'pending', syncError: null } as any)
-    .where(eq(estimates.id, id));
+  // Reset to pending so the UI knows a sync attempt is in flight — including the
+  // estimate's line items + freight groups, which the sync run will re-stamp.
+  await Promise.all([
+    db.update(estimates)
+      .set({ syncStatus: 'pending', syncError: null } as any)
+      .where(eq(estimates.id, id)),
+    db.update(estimateLineItems)
+      .set({ syncStatus: 'pending', syncError: null } as any)
+      .where(and(eq(estimateLineItems.estimateId, id), eq(estimateLineItems.isActive, true))),
+    db.update(estimateFreightGroups)
+      .set({ syncStatus: 'pending', syncError: null } as any)
+      .where(eq(estimateFreightGroups.estimateId, id)),
+  ]);
 
   // Use 'create' if NS never received the record, 'update' if it did
   const mode = est.netsuiteInternalId ? 'update' : 'create';
