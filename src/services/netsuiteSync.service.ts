@@ -399,6 +399,31 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
   return payload;
 }
 
+// ── Cascade a sync outcome to an estimate's children ────────────────────────────
+//
+// The estimate header, its line items and its freight groups are pushed as ONE
+// suitelet call, so they share a single outcome. Mirroring the header's status onto
+// each child row lets the UI show sync state — and, on failure, the same error text —
+// per line item / freight group instead of only at the estimate level.
+async function markEstimateChildrenSync(
+  estimateId: number,
+  syncStatus: 'synced' | 'failed',
+  syncError : string | null,
+): Promise<void> {
+  const db = getDb();
+  const set: Record<string, unknown> = { syncStatus, syncError };
+  if (syncStatus === 'synced') set.syncedAt = new Date();
+
+  await Promise.all([
+    db.update(estimateLineItems)
+      .set(set as any)
+      .where(and(eq(estimateLineItems.estimateId, estimateId), eq(estimateLineItems.isActive, true))),
+    db.update(estimateFreightGroups)
+      .set(set as any)
+      .where(eq(estimateFreightGroups.estimateId, estimateId)),
+  ]);
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 export async function syncEstimateToNetsuite(
@@ -514,6 +539,10 @@ export async function syncEstimateToNetsuite(
       await db.update(estimates)
         .set(setData as any)
         .where(eq(estimates.id, estimateId));
+
+      // Cascade the synced outcome to this estimate's line items + freight groups.
+      // (Line NS ids are still stamped separately below — this only sets sync state.)
+      await markEstimateChildrenSync(estimateId, 'synced', null);
     }
 
     // ── For convert / convertToExisting: save quote IDs + mark lines converted ─
@@ -641,6 +670,10 @@ export async function syncEstimateToNetsuite(
     await db.update(estimates)
       .set({ syncStatus: 'failed', syncError: message } as any)
       .where(eq(estimates.id, estimateId));
+
+    // Cascade the failure + error text to this estimate's line items + freight groups
+    // so the UI can flag the specific rows that failed to sync.
+    await markEstimateChildrenSync(estimateId, 'failed', message);
 
     // For convert modes also mark the quote row as failed
     if (isConvert && opts?.quoteId) {
