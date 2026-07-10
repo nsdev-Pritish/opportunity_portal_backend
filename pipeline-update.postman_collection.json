@@ -1,0 +1,143 @@
+{
+  "info": {
+    "name": "Estimates - Pipeline Bulk Update",
+    "description": "Bulk-update the inline Pipeline grid fields on estimates, and GET the estimates to verify the changes.\n\nUpdate endpoint: PATCH /api/v1/estimates/pipeline\nRead endpoints:  GET /api/v1/estimates/search  and  GET /api/v1/estimates/:id\nAuth: none (estimate routes are currently unauthenticated).\n\nSuggested flow:\n1. Run 'GET - view 5 estimates (before/after)' to see the current values.\n2. Run 'Bulk update - 5 records'.\n3. Run the same GET again and compare acctManagerId/salesRepName, businessVerticalId/businessVerticalName, esStatusId, projectedTotalAmt, syncStatus, updatedAt, etc.\n\nAll IDs below are REAL values from the database:\n- Estimates: 244=EST0008746, 243=EST0008745, 242=EST0008744, 241=EST0008743, 240=EST0008742\n- Sales Rep (acctManagerId): 344=Abigail Worthington, 345=Alexandra Joneaux, 346=Alexandra Grunstein, 347=Anna Paxton, 402=OBC Dev\n- Ops Partner (opsPartner1Id): 11=Cecile Aurran, 12=Chante Fennel, 13=Domestic Team, 29=Korree Jones, 44=Yvonne Flores\n- Sales Channel (salesChannelId): 1=CEW UK, 2=Inbounds, 3=Katie Reed, 4=Luxepack LA, 5=Luxepack Monaco\n- Category (businessVerticalId): 1=GIFTS & LOYALTY, 2=PRIVATE LABEL, 3=INFLUENCER, 4=PACKAGING, 5=BRANDED MERCHANDISE\n- Likely to Close (likelyToCloseId): 4=1-Low, 5=2-Low/Medium, 6=3-Medium, 7=4-Medium/High, 8=5-High\n- ES Status (esStatusId): 5=Closed Lost, 6=Converted To Quote, 7=In Progress, 8=Partially Converted\n- Product Developers (productDeveloperIds): 122=Ali DiCerbo, 123=Anna Paxton, 124=Annie Conlon, 125=Ashley Bell, 128=Belen De Costi, 131=Brielle Farruggio",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "GET - view 5 estimates (before/after)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/search?documentNumber=EST0008746,EST0008745,EST0008744,EST0008743,EST0008742&limit=50",
+          "host": [ "{{baseUrl}}" ],
+          "path": [ "api", "v1", "estimates", "search" ],
+          "query": [
+            { "key": "documentNumber", "value": "EST0008746,EST0008745,EST0008744,EST0008743,EST0008742" },
+            { "key": "limit", "value": "50" }
+          ]
+        },
+        "description": "Returns { data: [...], pagination }. Each row includes the grid fields WITH resolved names: acctManagerId/salesRepName, opsPartner1Id/opsPartner1Name, salesChannelId/salesChannelName, businessVerticalId/businessVerticalName, likelyToCloseId/likelyToCloseName, esStatusId, productDeveloperIds, projectedTotalAmt, estimatedQty, expectedCloseDate, promiseDate, syncStatus, updatedAt. Run before and after the update to see the diff."
+      }
+    },
+    {
+      "name": "GET - single estimate by id",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/244",
+          "host": [ "{{baseUrl}}" ],
+          "path": [ "api", "v1", "estimates", "244" ]
+        },
+        "description": "Full estimate 244 (header + line items). Change 244 to any id (243, 242, 241, 240)."
+      }
+    },
+    {
+      "name": "Bulk update - 5 records",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "const b = pm.response.json();",
+              "pm.test('all 5 rows succeeded', () => { pm.expect(b.updated).to.eql(5); b.results.forEach(r => pm.expect(r.success, JSON.stringify(r)).to.be.true); });",
+              "console.log('updated:', b.updated, JSON.stringify(b.results));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/pipeline",
+          "host": [ "{{baseUrl}}" ],
+          "path": [ "api", "v1", "estimates", "pipeline" ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"items\": [\n    {\n      \"id\": 244,\n      \"acctManagerId\": 344,\n      \"opsPartner1Id\": 11,\n      \"productDeveloperIds\": [122, 131],\n      \"projectedTotalAmt\": \"75000.00\",\n      \"estimatedQty\": 5000,\n      \"expectedCloseDate\": \"2026-09-30\",\n      \"promiseDate\": \"2026-10-15\",\n      \"salesChannelId\": 1,\n      \"businessVerticalId\": 1,\n      \"likelyToCloseId\": 6,\n      \"esStatusId\": 7\n    },\n    {\n      \"id\": 243,\n      \"acctManagerId\": 346,\n      \"opsPartner1Id\": 13,\n      \"productDeveloperIds\": [125, 124],\n      \"projectedTotalAmt\": \"42000.00\",\n      \"estimatedQty\": 2500,\n      \"expectedCloseDate\": \"2026-10-05\",\n      \"promiseDate\": \"2026-10-20\",\n      \"salesChannelId\": 2,\n      \"businessVerticalId\": 5,\n      \"likelyToCloseId\": 8,\n      \"esStatusId\": 6\n    },\n    {\n      \"id\": 242,\n      \"acctManagerId\": 402,\n      \"opsPartner1Id\": 12,\n      \"productDeveloperIds\": [128],\n      \"projectedTotalAmt\": \"18500.50\",\n      \"estimatedQty\": 1200,\n      \"expectedCloseDate\": \"2026-11-01\",\n      \"promiseDate\": \"2026-11-18\",\n      \"salesChannelId\": 3,\n      \"businessVerticalId\": 2,\n      \"likelyToCloseId\": 7,\n      \"esStatusId\": 7\n    },\n    {\n      \"id\": 241,\n      \"acctManagerId\": 345,\n      \"opsPartner1Id\": 29,\n      \"productDeveloperIds\": [123, 122, 125],\n      \"projectedTotalAmt\": \"96000.00\",\n      \"estimatedQty\": 8000,\n      \"expectedCloseDate\": \"2026-12-15\",\n      \"promiseDate\": \"2027-01-10\",\n      \"salesChannelId\": 4,\n      \"businessVerticalId\": 4,\n      \"likelyToCloseId\": 5,\n      \"esStatusId\": 8\n    },\n    {\n      \"id\": 240,\n      \"acctManagerId\": 347,\n      \"opsPartner1Id\": 44,\n      \"productDeveloperIds\": [131],\n      \"projectedTotalAmt\": \"33750.25\",\n      \"estimatedQty\": 3000,\n      \"expectedCloseDate\": \"2027-02-01\",\n      \"promiseDate\": \"2027-02-20\",\n      \"salesChannelId\": 5,\n      \"businessVerticalId\": 3,\n      \"likelyToCloseId\": 4,\n      \"esStatusId\": 5\n    }\n  ]\n}"
+        },
+        "description": "Bulk-updates 5 real estimates (244, 243, 242, 241, 240). Every ID used is valid in the DB."
+      }
+    },
+    {
+      "name": "Single row update",
+      "request": {
+        "method": "PATCH",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/pipeline",
+          "host": [ "{{baseUrl}}" ],
+          "path": [ "api", "v1", "estimates", "pipeline" ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"items\": [\n    {\n      \"id\": 242,\n      \"esStatusId\": 7,\n      \"likelyToCloseId\": 8,\n      \"acctManagerId\": 346\n    }\n  ]\n}"
+        },
+        "description": "Updates one estimate (242): ES Status, Likely-to-close, and Sales Rep only."
+      }
+    },
+    {
+      "name": "Partial success (valid + invalid row)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "const b = pm.response.json();",
+              "pm.test('valid row ok, bad row reported', () => { pm.expect(b.results[0].success).to.be.true; pm.expect(b.results[1].success).to.be.false; });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/pipeline",
+          "host": [ "{{baseUrl}}" ],
+          "path": [ "api", "v1", "estimates", "pipeline" ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"items\": [\n    {\n      \"id\": 241,\n      \"businessVerticalId\": 2,\n      \"salesChannelId\": 2\n    },\n    {\n      \"id\": 999999999,\n      \"esStatusId\": 7\n    }\n  ]\n}"
+        },
+        "description": "estimate 241 updates successfully; nonexistent id 999999999 returns success:false. HTTP status is still 200."
+      }
+    },
+    {
+      "name": "Validation error (empty items -> 400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [ "pm.test('status is 400', () => pm.response.to.have.status(400));" ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/pipeline",
+          "host": [ "{{baseUrl}}" ],
+          "path": [ "api", "v1", "estimates", "pipeline" ]
+        },
+        "body": { "mode": "raw", "raw": "{\n  \"items\": []\n}" },
+        "description": "Empty items array fails validation (min 1) -> HTTP 400 Validation Error."
+      }
+    }
+  ]
+}

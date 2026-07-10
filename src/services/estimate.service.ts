@@ -800,6 +800,56 @@ export async function updateEstimateWithItems(
   return result;
 }
 
+// ── Bulk pipeline-grid update ─────────────────────────────────────────────────
+// Lightweight, header-only update for the inline Pipeline grid. Updates only the
+// narrow set of cells edited in the grid across many estimates in one request —
+// does NOT touch line items / freight groups (unlike updateEstimateWithItems).
+// Each row is updated independently so one bad row does not sink the whole batch;
+// per-row outcomes are returned. Cache is invalidated and NS sync fired per updated row.
+type PipelineUpdateItem = { id: number } & Record<string, unknown>;
+
+export async function updateEstimatesPipelineFields(items: PipelineUpdateItem[]) {
+  const db = getDb();
+  const startTime = Date.now();
+  const results: Array<{ id: number; success: boolean; error?: string }> = [];
+  const updatedIds: number[] = [];
+
+  for (const { id, ...fields } of items) {
+    // Skip rows that carry an id but no editable cells.
+    if (Object.keys(fields).length === 0) {
+      results.push({ id, success: false, error: 'No fields to update' });
+      continue;
+    }
+    try {
+      const [updated] = await db.update(estimates)
+        .set({ ...fields as any, syncStatus: 'dirty', updatedAt: new Date() })
+        .where(and(eq(estimates.id, id), eq(estimates.isActive, true)))
+        .returning({ id: estimates.id });
+
+      if (!updated) {
+        results.push({ id, success: false, error: 'Estimate not found or inactive' });
+        continue;
+      }
+      updatedIds.push(id);
+      results.push({ id, success: true });
+    } catch (err) {
+      logger.error({ estimateId: id, err }, 'Pipeline field update failed');
+      results.push({ id, success: false, error: err instanceof Error ? err.message : 'Update failed' });
+    }
+  }
+
+  // Invalidate cache + fire-and-forget NS sync for each successfully updated row.
+  await Promise.all(updatedIds.map(id => cacheDel(CacheKeys.estimate(id))));
+  for (const id of updatedIds) {
+    syncEstimateToNetsuite(id, 'update').catch(() => {/* already logged + recorded */});
+  }
+
+  logger.info({ updated: updatedIds.length, total: items.length, durationMs: Date.now() - startTime },
+    'Pipeline fields bulk-updated');
+
+  return { updated: updatedIds.length, results };
+}
+
 // ── List estimates with failed NS sync ───────────────────────────────────────
 
 export async function listFailedSyncs() {

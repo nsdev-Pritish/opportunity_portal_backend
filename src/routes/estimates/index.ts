@@ -31,6 +31,7 @@ import {
   getEstimate,
   createEstimateWithItems,
   updateEstimateWithItems,
+  updateEstimatesPipelineFields,
   deactivateEstimate,
   listDocumentNumbers,
   searchEstimatesAdvanced,
@@ -251,6 +252,28 @@ const CreateEstimateSchema = EstimateHeaderSchema.extend({
 const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
   lineItems: z.array(LineItemSchema).max(400).optional(),
   freightGroups: z.array(FreightGroupSchema).max(50).optional(),
+});
+
+// ── Pipeline grid bulk-update schema ─────────────────────────────────────────
+// The Pipeline screen edits a narrow set of header cells inline across many rows.
+// This schema deliberately allows ONLY those fields — Zod strips everything else —
+// so the bulk endpoint can never touch line items, freight, or other header fields.
+// All fields optional (partial cell edits); each item carries its own estimate id.
+const PipelineFieldsSchema = z.object({
+  acctManagerId:       z.number().int().positive().optional(),  // Sales Rep
+  opsPartner1Id:       z.number().int().positive().optional(),  // Ops Partner
+  productDeveloperIds: z.array(z.number().int().positive()).optional(),  // Product Dev (multi)
+  projectedTotalAmt:   z.string().optional(),                   // Projected
+  estimatedQty:        z.number().int().nonnegative().optional(),  // Est. qty
+  expectedCloseDate:   z.string().optional(),                   // Exp. close
+  promiseDate:         z.string().optional(),                   // Promise
+  salesChannelId:      z.number().int().positive().optional(),  // Channel
+  businessVerticalId:  z.number().int().positive().optional(),  // Category
+  likelyToCloseId:     z.number().int().positive().optional(),  // Likely-to-close
+  esStatusId:          z.number().int().positive().optional(),  // ES Status
+});
+const PipelineBulkSchema = z.object({
+  items: z.array(PipelineFieldsSchema.extend({ id: z.number().int().positive() })).min(1).max(200),
 });
 
 // ── Multipart helper ─────────────────────────────────────────────────────────
