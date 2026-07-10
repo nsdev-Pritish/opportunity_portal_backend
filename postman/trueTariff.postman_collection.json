@@ -1,0 +1,226 @@
+{
+  "info": {
+    "name": "Opportunity Portal - trueTariff",
+    "_postman_id": "b7e1a9c2-truetariff-0001-0000-000000000001",
+    "description": "Tests the new line-item field `trueTariff` end-to-end:\n\n1. Portal standalone line-item CRUD (currently UNAUTHENTICATED) - fastest path.\n2. Portal estimate-save (JWT) - nested lineItems round-trip.\n3. NetSuite sync inbound (X-API-Key) - `trueTariff` on the payload.\n4. NetSuite resync outbound - triggers portal->NS push where the field is sent as `trueTariffRateNS`.\n\nSet the collection variables first: baseUrl, nsApiKey, estimateId, and (for the JWT requests) paste your token into the `jwt` variable. ids are captured automatically by test scripts.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "nsApiKey", "value": "your-NS_API_KEY-from-env", "type": "string" },
+    { "key": "jwt", "value": "", "type": "string" },
+    { "key": "estimateId", "value": "1", "type": "string" },
+    { "key": "lineItemId", "value": "", "type": "string" },
+    { "key": "customerId", "value": "1", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0. Health check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+      }
+    },
+    {
+      "name": "1. Standalone: Add line item WITH trueTariff (no auth)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const b = pm.response.json();",
+              "pm.test('trueTariff round-trips', () => pm.expect(b.trueTariff).to.eql('TT-TEST-001'));",
+              "if (b.id) { pm.collectionVariables.set('lineItemId', String(b.id)); console.log('lineItemId =', b.id); }"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"shortDescription\": \"trueTariff test line\",\n  \"quantity\": \"100\",\n  \"sellPricePerUnit\": \"9.99\",\n  \"tariffPct\": \"10\",\n  \"trueTariff\": \"TT-TEST-001\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/line-items/",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","v1","estimates","{{estimateId}}","line-items",""]
+        },
+        "description": "Uses an EXISTING estimateId (set the variable). This route is currently unauthenticated. NOTE the trailing slash - the route only registers as .../line-items/ (see app.ts wrapper). Confirms trueTariff persists and is returned."
+      }
+    },
+    {
+      "name": "2. Standalone: List line items (verify persisted)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const rows = pm.response.json();",
+              "const hit = (Array.isArray(rows) ? rows : []).find(r => String(r.id) === pm.collectionVariables.get('lineItemId'));",
+              "pm.test('trueTariff stored', () => pm.expect(hit && hit.trueTariff).to.eql('TT-TEST-001'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/line-items/",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","v1","estimates","{{estimateId}}","line-items",""]
+        }
+      }
+    },
+    {
+      "name": "3. Standalone: Update trueTariff (PATCH, no auth)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const b = pm.response.json();",
+              "pm.test('trueTariff updated', () => pm.expect(b.trueTariff).to.eql('TT-UPDATED-002'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"trueTariff\": \"TT-UPDATED-002\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/line-items/{{lineItemId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","v1","estimates","{{estimateId}}","line-items","{{lineItemId}}"]
+        }
+      }
+    },
+    {
+      "name": "4. Portal: Create estimate with nested trueTariff (JWT)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('2xx', () => pm.expect(pm.response.code).to.be.oneOf([200,201]));",
+              "const b = pm.response.json();",
+              "if (b && b.id) { pm.collectionVariables.set('estimateId', String(b.id)); console.log('estimateId =', b.id); }",
+              "const li = b && b.lineItems && b.lineItems[0];",
+              "if (li) pm.test('nested trueTariff saved', () => pm.expect(li.trueTariff).to.eql('TT-EST-003'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{jwt}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customerId\": {{customerId}},\n  \"projectName\": \"trueTariff smoke test\",\n  \"lineItems\": [\n    {\n      \"shortDescription\": \"nested trueTariff line\",\n      \"quantity\": \"50\",\n      \"sellPricePerUnit\": \"4.50\",\n      \"trueTariff\": \"TT-EST-003\"\n    }\n  ]\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/v1/estimates", "host": ["{{baseUrl}}"], "path": ["api","v1","estimates"] },
+        "description": "customerId must reference an existing customer. Confirms trueTariff on the estimate-save (ComponentSchema) path."
+      }
+    },
+    {
+      "name": "5. Portal: Get estimate (verify nested round-trip)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const b = pm.response.json();",
+              "const li = (b.lineItems || []).find(x => x.trueTariff);",
+              "pm.test('trueTariff present on GET', () => pm.expect(li && li.trueTariff).to.be.a('string'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{jwt}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","v1","estimates","{{estimateId}}"]
+        }
+      }
+    },
+    {
+      "name": "6. NetSuite: Sync estimate INBOUND with trueTariff (X-API-Key)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('2xx', () => pm.expect(pm.response.code).to.be.oneOf([200,201]));",
+              "console.log('If the SuiteScript sends the inbound key as something other than `trueTariff`, adjust SyncLineItemSchema.');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{nsApiKey}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"estimate\": {\n    \"netsuiteInternalId\": \"NS-TT-TEST-9001\",\n    \"customerNsId\": \"1\"\n  },\n  \"lineItems\": [\n    {\n      \"netsuiteInternalId\": \"NS-LINE-9001\",\n      \"shortDescription\": \"inbound trueTariff line\",\n      \"quantity\": \"25\",\n      \"trueTariff\": \"TT-INBOUND-004\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/netsuite/estimates/sync",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","v1","netsuite","estimates","sync"]
+        },
+        "description": "Inbound NS->portal upsert. The estimate object fields depend on SyncEstimateSchema (customerNsId etc. must resolve to real NS ids you have mapped). Adjust ids to your data. Verifies trueTariff persists via resolveLineItemValues."
+      }
+    },
+    {
+      "name": "7. NetSuite: Resync estimate OUTBOUND (trueTariffRateNS)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('2xx', () => pm.expect(pm.response.code).to.be.oneOf([200,202]));",
+              "console.log('Outbound push. Inspect the NS payload / server logs for `trueTariffRateNS` carrying the line trueTariff value.');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{jwt}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/resync",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","v1","estimates","{{estimateId}}","resync"]
+        },
+        "description": "Triggers portal->NetSuite sync for the estimate. The outbound payload maps line trueTariff -> trueTariffRateNS (netsuiteSync.service.ts). Requires NetSuite env creds configured; inspect outbound payload/logs to confirm the key."
+      }
+    }
+  ]
+}

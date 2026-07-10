@@ -340,6 +340,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
         paddingAmountNS       : toNum(li.paddingAmount),
         dutyMarkupAmountNS    : toNum(li.dutyMarkupAmount),
         convertedNS           : li.converted ?? false,
+        trueTariffRateNS      : li.trueTariff ?? '',
         freightSelectedGroupNS: li.freightSelectedGroup ?? '',
         freightPOLNS          : li.freightPol ?? '',
         freightPODNS          : li.freightPod ?? '',
