@@ -410,6 +410,7 @@ async function otbBuildCreatePayload(estimateId: number) {
         paddingAmountNS       : otbToNum(li.paddingAmount),
         dutyMarkupAmountNS    : otbToNum(li.dutyMarkupAmount),
         convertedNS           : li.converted ?? false,
+        trueTariffRateNS      : li.trueTariff ?? '',
         freightSelectedGroupNS: li.freightSelectedGroup ?? '',
         freightPOLNS          : li.freightPol ?? '',
         freightPODNS          : li.freightPod ?? '',

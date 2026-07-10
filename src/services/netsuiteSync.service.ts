@@ -24,7 +24,7 @@ import {
   clientIncoterms, clientShippingMethods, addresses,
   csItems, vendors, sustainabilityOptions, productClasses, productClassesEu, vendorIncoterms, factories,
   vendorAddresses, componentKitItems,
-  closedLostReasons, clientPursuitAlternatives, estimateStatuses,
+  closedLostReasons, clientPursuitAlternatives, estimateStatuses, esStatus,
   estimateFreightGroups,
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
@@ -128,6 +128,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     acctMgrNsId, hkPartnerNsId, ops1NsId, ops2NsId, complianceNsId,
     shipTermsNsId, shipMethodNsId, shipAddrNsId, billAddrNsId,
     estimateStatusNsId, closedLostReasonNsId, clientPursuitAltNsId,
+    esStatusNsId,
   ] = await Promise.all([
     getNsId(subsidiaries,                est.subsidiaryId),
     getNsId(customers,                   est.customerId),
@@ -152,6 +153,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     getNsId(estimateStatuses,            est.statusId),
     getNsId(closedLostReasons,           est.closedLostReasonId),
     getNsId(clientPursuitAlternatives,   est.clientPursuitAlternativeId),
+    getNsId(esStatus,                    est.esStatusId),
   ]);
 
   // Resolve NS IDs for all product developers in parallel
@@ -203,6 +205,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     twelvePaysImportFrtNS        : est.twelvePaysImportFrt ?? '',
     twelvePaysShipToCustNS       : est.twelvePaysShipToCust ?? '',
     statusNSId                   : estimateStatusNsId,
+    esStatusNSId                 : esStatusNsId,
     closedLostReasonNSId         : closedLostReasonNsId,
     clientPursuitAlternativeNSId : clientPursuitAltNsId,
     projectHoldDateNS            : formatNsDate(est.projectHoldDate),
@@ -340,6 +343,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
         paddingAmountNS       : toNum(li.paddingAmount),
         dutyMarkupAmountNS    : toNum(li.dutyMarkupAmount),
         convertedNS           : li.converted ?? false,
+        trueTariffRateNS      : li.trueTariff ?? '',
         freightSelectedGroupNS: li.freightSelectedGroup ?? '',
         freightPOLNS          : li.freightPol ?? '',
         freightPODNS          : li.freightPod ?? '',

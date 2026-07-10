@@ -152,6 +152,7 @@ const LineItemSchema = z.object({
   pickupExwFob        : z.string().optional().nullable(),
   oceanDdp            : z.string().optional().nullable(),
   airDdp              : z.string().optional().nullable(),
+  trueTariff          : z.string().max(255).optional().nullable(),
 });
 
 // Combined Schema: Create estimate WITH line items in single transaction
@@ -215,6 +216,7 @@ const SyncLineItemSchema = z.object({
   shipToVendorNsId     : z.string().optional().nullable(), // → vendors
   shipToVendorAddrNsId : z.string().optional().nullable(), // → vendor_addresses
   notes                : z.string().optional().nullable(),
+  trueTariff           : z.string().max(255).optional().nullable(),
   selected             : z.boolean().optional(),
 });
 
@@ -738,6 +740,7 @@ async function resolveLineItemValues(item: z.infer<typeof SyncLineItemSchema>) {
     shippingGroupId    : item.shippingGroupId ?? null,
     exFactoryDate      : item.exFactoryDate ?? null,
     notes              : item.notes ?? null,
+    trueTariff         : item.trueTariff ?? null,
     selected           : item.selected ?? true,
     syncStatus         : 'synced' as const,
     syncedAt           : new Date(),
