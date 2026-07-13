@@ -25,7 +25,7 @@ import {
   csItems, vendors, sustainabilityOptions, productClasses, productClassesEu, vendorIncoterms, factories,
   vendorAddresses, componentKitItems,
   closedLostReasons, clientPursuitAlternatives, estimateStatuses, esStatus,
-  estimateFreightGroups,
+  estimateFreightGroups, drayage,
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -367,9 +367,23 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     const dbIdToLineNum = new Map<number, number>();
     for (let i = 0; i < lineItemRows.length; i++) dbIdToLineNum.set(lineItemRows[i].id, i + 1);
 
+    // Resolve drayage local ids → NetSuite recordid + name for the freight-group payload.
+    const drayageIds = [...new Set(
+      freightGroupRows.map(g => g.drayageId).filter((v): v is number => typeof v === 'number'),
+    )];
+    const drayageById = new Map<number, { nsId: string | null; name: string }>();
+    if (drayageIds.length > 0) {
+      const drayageRows = await db.select({
+        id: drayage.id, nsId: drayage.netsuiteInternalId, name: drayage.name,
+      }).from(drayage).where(inArray(drayage.id, drayageIds));
+      for (const d of drayageRows) drayageById.set(d.id, { nsId: d.nsId, name: d.name });
+    }
+
     payload.freightGroups = freightGroupRows.map(g => ({
       groupNameNS      : g.groupName ?? '',
       freightModeNS    : g.freightModeSelected ?? '',
+      drayageNS        : g.drayageId != null ? (drayageById.get(g.drayageId)?.nsId ?? '') : '',
+      drayageNameNS    : g.drayageId != null ? (drayageById.get(g.drayageId)?.name ?? '') : '',
       itemLinesNS      : (g.itemIds ?? [])
         .map(id => dbIdToLineNum.get(id))
         .filter((n): n is number => typeof n === 'number'),

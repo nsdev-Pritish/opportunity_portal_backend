@@ -217,6 +217,7 @@ const EstimateHeaderSchema = z.object({
 const FreightGroupSchema = z.object({
   groupName:           z.string().max(255).optional(),
   freightModeSelected: z.enum(['OCEAN_LCL', 'OCEAN_FCL', 'AIR', 'CUSTOM']).optional(),  // Freight Mode Selected
+  drayageId:           z.number().int().positive().nullable().optional(),  // FK → drayage.id (freight group → one drayage)
   itemIds:             z.array(z.number().int().nonnegative()).optional(),  // indices into lineItems
   numItems:       z.number().int().nonnegative().optional(),
   totalCartons:   z.number().int().nonnegative().optional(),
