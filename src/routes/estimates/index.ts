@@ -490,6 +490,18 @@ export default async function estimateRoutes(app: FastifyInstance) {
     getEstimate(parseInt(req.params.id)),
   );
 
+  // PATCH /api/v1/estimates/pipeline — bulk-update inline grid header fields on many
+  // estimates in one request. Body: { items: [{ id, ...editedCells }] }. Only the narrow
+  // set in PipelineFieldsSchema is accepted; everything else is stripped. Registered
+  // before /:id so the static path wins.
+  app.patch<{ Body: unknown }>('/pipeline', async (req) => {
+    const body = req.body as { items?: unknown[] };
+    const rawItems = Array.isArray(body?.items) ? body.items : [];
+    const items = rawItems.map(it => stripEmpty(normalizeBody(it)));
+    const parsed = PipelineBulkSchema.parse({ items });
+    return updateEstimatesPipelineFields(parsed.items);
+  });
+
   // PATCH /api/v1/estimates/:id — accepts JSON or multipart/form-data
   app.patch<{ Params: { id: string }; Body: unknown }>('/:id', async (req) => {
     const raw = req.headers['content-type']?.startsWith('multipart/form-data')
