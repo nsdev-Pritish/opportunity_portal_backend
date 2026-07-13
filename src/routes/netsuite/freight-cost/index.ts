@@ -6,6 +6,7 @@
  *  /fcl-rates        → fclRates.ts
  *  /air-rates        → airRates.ts
  *  /additional-fees  → additionalFees.ts
+ *  /drayage          → drayage.ts
  */
 
 import { FastifyInstance } from 'fastify';
@@ -13,10 +14,12 @@ import lclRateRoutes       from './lclRates.js';
 import fclRateRoutes       from './fclRates.js';
 import airRateRoutes       from './airRates.js';
 import additionalFeeRoutes from './additionalFees.js';
+import drayageRoutes       from './drayage.js';
 
 export default async function freightCostRoutes(app: FastifyInstance) {
   await app.register(lclRateRoutes,       { prefix: '/lcl-rates' });
   await app.register(fclRateRoutes,       { prefix: '/fcl-rates' });
   await app.register(airRateRoutes,       { prefix: '/air-rates' });
   await app.register(additionalFeeRoutes, { prefix: '/additional-fees' });
+  await app.register(drayageRoutes,       { prefix: '/drayage' });
 }

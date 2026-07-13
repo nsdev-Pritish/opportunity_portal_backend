@@ -545,6 +545,24 @@ export const airRates = pgTable('air_rates', {
   nsIdIdx: uniqueIndex('air_rates_ns_id_idx').on(t.netsuiteInternalId),
 }));
 
+// Drayage — master dropdown synced from NetSuite custom record `customrecord_fcldrayage`.
+// Referenced by estimate_freight_groups (freight group → one drayage).
+//   name    → Name
+//   netsuiteInternalId (from syncCols) → recordid (NetSuite ID)
+//   isActive (from syncCols) → inverse of NetSuite `isinactive`
+export const drayage = pgTable('drayage', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),           // Name
+  city: varchar('city', { length: 255 }),                     // custrecord_fcldrayage_city
+  state: varchar('state', { length: 255 }),                   // custrecord_fcldrayage_state
+  zipCode: varchar('zip_code', { length: 20 }),               // custrecord_fcldrayage_zipcode
+  port: varchar('port', { length: 255 }),                     // custrecord_fcldrayage_port
+  total: numeric('total', { precision: 15, scale: 4 }),       // custrecord_fcldrayage_total
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('drayage_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
 export const additionalFees = pgTable('additional_fees', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
@@ -817,6 +835,9 @@ export const estimateFreightGroups = pgTable('estimate_freight_groups', {
   // Freight Mode Selected for this group (OCEAN_LCL | OCEAN_FCL | AIR | CUSTOM)
   freightModeSelected: varchar('freight_mode_selected', { length: 20 }),
 
+  // Drayage selected for this group → drayage master dropdown.
+  drayageId: integer('drayage_id').references(() => drayage.id, { onDelete: 'set null' }),
+
   // Membership: ids of the estimate_line_items belonging to this group.
   itemIds: jsonb('item_ids').$type<number[]>().default([]),
 
@@ -863,6 +884,7 @@ export const estimateFreightGroups = pgTable('estimate_freight_groups', {
   // not mapped here — they are unused by the current freight-group model.
 }, (t) => ({
   estimateIdx: index('efg_estimate_idx').on(t.estimateId),
+  drayageIdx: index('efg_drayage_idx').on(t.drayageId),
 }));
 
 // ══════════════════════════════════════════════════════════════════
@@ -1189,6 +1211,15 @@ export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, m
   componentKitItem: one(componentKitItems, { fields: [estimateLineItems.componentKitItemId], references: [componentKitItems.id] }),
 }));
 
+export const drayageRelations = relations(drayage, ({ many }) => ({
+  freightGroups: many(estimateFreightGroups),
+}));
+
+export const estimateFreightGroupsRelations = relations(estimateFreightGroups, ({ one }) => ({
+  estimate: one(estimates, { fields: [estimateFreightGroups.estimateId], references: [estimates.id] }),
+  drayage: one(drayage, { fields: [estimateFreightGroups.drayageId], references: [drayage.id] }),
+}));
+
 export const estimateQuoteSearchRelations = relations(estimateQuoteSearch, ({ one }) => ({
   department:           one(departments,       { fields: [estimateQuoteSearch.departmentId],         references: [departments.id] }),
   customer:             one(customers,         { fields: [estimateQuoteSearch.customerId],           references: [customers.id] }),
@@ -1287,6 +1318,7 @@ export const MASTER_TABLES = {
   fcl_rates: fclRates,
   air_rates: airRates,
   additional_fees: additionalFees,
+  drayage,
   es_status: esStatus,
 } as const;
 
