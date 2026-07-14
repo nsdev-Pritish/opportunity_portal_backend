@@ -18,7 +18,7 @@
  */
 
 import crypto from 'crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import {
   estimates, estimateLineItems, estimateQuotes,
@@ -28,7 +28,7 @@ import {
   clientIncoterms, clientShippingMethods, addresses,
   csItems, vendors, sustainabilityOptions, productClasses, productClassesEu, vendorIncoterms, factories,
   vendorAddresses, componentKitItems,
-  closedLostReasons, clientPursuitAlternatives, estimateStatuses,
+  closedLostReasons, clientPursuitAlternatives, estimateStatuses, esStatus,
   estimateFreightGroups,
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
@@ -572,6 +572,66 @@ async function otbSyncEstimateCreate(estimateId: number): Promise<void> {
   }
 }
 
+// ── ES Status flip after convert (own copy; see netsuiteSync.service.ts) ──────
+// Mirrors the estimate's ES Status from NetSuite. Preference:
+//   1. The es_status NetSuite reports on the converted estimate (mapped by netsuite_internal_id).
+//   2. Fallback when NS omits it — "Converted To Quote" if every active line is now converted,
+//      else "Partially Converted".
+// Returns quietly on any missing lookup so a convert never fails on missing seed data.
+async function otbApplyConvertEsStatus(estimateId: number, nsEsStatusId?: string | number): Promise<void> {
+  const db = getDb();
+
+  let esStatusId: number | null = null;
+  let source = '';
+
+  // 1. Prefer NetSuite's own ES Status value (NetSuite → portal)
+  if (nsEsStatusId !== undefined && nsEsStatusId !== null && String(nsEsStatusId) !== '') {
+    const [byNs] = await db
+      .select({ id: esStatus.id })
+      .from(esStatus)
+      .where(and(eq(esStatus.netsuiteInternalId, String(nsEsStatusId)), eq(esStatus.isActive, true)))
+      .limit(1);
+    if (byNs) {
+      esStatusId = byNs.id;
+      source = `netsuite(nsId=${nsEsStatusId})`;
+    } else {
+      logger.warn({ estimateId, nsEsStatusId }, 'OTB: NS es_status id has no matching portal es_status — falling back to computed status');
+    }
+  }
+
+  // 2. Fallback — compute from how many lines were converted
+  if (esStatusId === null) {
+    const [remaining] = await db
+      .select({ id: estimateLineItems.id })
+      .from(estimateLineItems)
+      .where(and(
+        eq(estimateLineItems.estimateId, estimateId),
+        eq(estimateLineItems.isActive, true),
+        eq(estimateLineItems.converted, false),
+      ))
+      .limit(1);
+
+    const targetName = remaining ? 'Partially Converted' : 'Converted To Quote';
+    const [row] = await db
+      .select({ id: esStatus.id })
+      .from(esStatus)
+      .where(and(eq(esStatus.name, targetName), eq(esStatus.isActive, true)))
+      .limit(1);
+    esStatusId = row?.id ?? null;
+    source = `computed(${targetName})`;
+  }
+
+  if (esStatusId === null) {
+    logger.warn({ estimateId }, 'OTB: convert es_status not found — ES Status left unchanged');
+    return;
+  }
+
+  await db.update(estimates)
+    .set({ esStatusId, updatedAt: new Date() } as any)
+    .where(eq(estimates.id, estimateId));
+  logger.info({ estimateId, esStatusId, source }, 'OTB: ES Status updated after convert');
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  NetSuite: post the convert (create new quote) and store the returned quote ids
 //  Swallows its own errors and records failure on both the estimate and quote rows.
@@ -617,6 +677,7 @@ async function otbSyncConvert(estimateId: number, quoteId: number, lineItemIds: 
     const nsResp = await res.json() as {
       id?: string; internalId?: string; documentNumber?: string;
       quoteId?: string; quoteTranId?: string;
+      esStatusNSId?: string | number; esStatus?: string | number;
     };
 
     const quoteNsId   = nsResp.internalId     ?? nsResp.quoteId;
@@ -642,6 +703,11 @@ async function otbSyncConvert(estimateId: number, quoteId: number, lineItemIds: 
     await db.update(estimates)
       .set({ syncStatus: 'synced', syncError: null, syncedAt: new Date() } as any)
       .where(eq(estimates.id, estimateId));
+
+    // Mirror the ES Status from NetSuite now that the conversion is confirmed. Uses the
+    // es_status NetSuite returns (esStatusNSId), falling back to a computed status if absent.
+    // (runs after the converted=true update above so the partial/full fallback is accurate.)
+    await otbApplyConvertEsStatus(estimateId, nsResp.esStatusNSId ?? nsResp.esStatus);
 
     logger.info({ estimateId, quoteId, quoteNsId, quoteDocNum }, 'OTB: convert synced to NetSuite');
 

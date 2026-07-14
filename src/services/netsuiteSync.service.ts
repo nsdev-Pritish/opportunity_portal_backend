@@ -442,6 +442,86 @@ async function markEstimateChildrenSync(
   ]);
 }
 
+// ── ES Status names applied when an estimate is converted to a quote ──────────
+// The convert flow only quotes the newly-added (unconverted) lines, so an estimate
+// reaches "Converted To Quote" only once every active line has been quoted; while
+// some active lines remain unconverted it sits at "Partially Converted".
+const ES_STATUS_CONVERTED_TO_QUOTE = 'Converted To Quote';
+const ES_STATUS_PARTIALLY_CONVERTED = 'Partially Converted';
+
+// Resolve an es_status row id by name. Returns null if the master row is missing so
+// a convert never fails just because the seed data isn't there.
+async function getEsStatusIdByName(name: string): Promise<number | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: esStatus.id })
+    .from(esStatus)
+    .where(and(eq(esStatus.name, name), eq(esStatus.isActive, true)))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+// Map a NetSuite es_status internal id → the portal es_status row id. This is what lets
+// the portal mirror whatever ES Status NetSuite set on the estimate during the convert.
+async function getEsStatusIdByNsId(nsId: string): Promise<number | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: esStatus.id })
+    .from(esStatus)
+    .where(and(eq(esStatus.netsuiteInternalId, nsId), eq(esStatus.isActive, true)))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+// After a successful convert, mirror the estimate's ES Status from NetSuite.
+// Preference order:
+//   1. The es_status NetSuite reports on the converted estimate (mapped by netsuite_internal_id).
+//   2. Fallback when NS omits it — "Converted To Quote" if every active line is now converted,
+//      else "Partially Converted" — so the flow still works before the suitelet returns es_status.
+async function applyConvertEsStatus(estimateId: number, nsEsStatusId?: string | number): Promise<void> {
+  const db = getDb();
+
+  let esStatusId: number | null = null;
+  let source = '';
+
+  // 1. Prefer NetSuite's own ES Status value (NetSuite → portal)
+  if (nsEsStatusId !== undefined && nsEsStatusId !== null && String(nsEsStatusId) !== '') {
+    esStatusId = await getEsStatusIdByNsId(String(nsEsStatusId));
+    if (esStatusId !== null) {
+      source = `netsuite(nsId=${nsEsStatusId})`;
+    } else {
+      logger.warn({ estimateId, nsEsStatusId }, 'NS es_status id has no matching portal es_status — falling back to computed status');
+    }
+  }
+
+  // 2. Fallback — compute from how many lines were converted
+  if (esStatusId === null) {
+    const [remaining] = await db
+      .select({ id: estimateLineItems.id })
+      .from(estimateLineItems)
+      .where(and(
+        eq(estimateLineItems.estimateId, estimateId),
+        eq(estimateLineItems.isActive, true),
+        eq(estimateLineItems.converted, false),
+      ))
+      .limit(1);
+
+    const targetName = remaining ? ES_STATUS_PARTIALLY_CONVERTED : ES_STATUS_CONVERTED_TO_QUOTE;
+    esStatusId = await getEsStatusIdByName(targetName);
+    source = `computed(${targetName})`;
+  }
+
+  if (esStatusId === null) {
+    logger.warn({ estimateId }, 'Convert es_status not found — ES Status left unchanged');
+    return;
+  }
+
+  await db.update(estimates)
+    .set({ esStatusId, updatedAt: new Date() } as any)
+    .where(eq(estimates.id, estimateId));
+  logger.info({ estimateId, esStatusId, source }, 'ES Status updated after convert');
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 export async function syncEstimateToNetsuite(
@@ -513,6 +593,10 @@ export async function syncEstimateToNetsuite(
       quoteId?       : string;
       quoteTranId?   : string;
       lineIds?       : (string | number)[] | Record<string, string | number>;
+      // ES Status the estimate holds in NetSuite after the convert (its es_status
+      // internal id). Mapped back to the portal es_status master by netsuite_internal_id.
+      esStatusNSId?  : string | number;
+      esStatus?      : string | number;
       // Per-line unified Class id NetSuite resolved for each line, keyed by the same
       // 1-based line number used in the outbound `lines` payload (or a positional array).
       resolvedClassIds?: (string | number | null)[] | Record<string, string | number | null>;
@@ -595,6 +679,11 @@ export async function syncEstimateToNetsuite(
       await db.update(estimates)
         .set({ syncStatus: 'synced', syncError: null, syncedAt: new Date() } as any)
         .where(eq(estimates.id, estimateId));
+
+      // Mirror the ES Status from NetSuite now that the conversion is confirmed. Uses the
+      // es_status NetSuite returns (esStatusNSId), falling back to a computed status if absent.
+      // (runs after the converted=true update above so the partial/full fallback is accurate.)
+      await applyConvertEsStatus(estimateId, nsResp.esStatusNSId ?? nsResp.esStatus);
     }
 
     // ── Store NS line IDs back to each line item ──────────────────────────────

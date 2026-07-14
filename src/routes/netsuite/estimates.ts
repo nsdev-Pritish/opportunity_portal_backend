@@ -23,7 +23,7 @@ import {
   customers, contacts, currencies, projectTypes, likelyToClose,
   departments, salesChannels, businessVerticals, businessTypes,
   accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
-  subsidiaries, estimateStatuses, closedLostReasons, clientPursuitAlternatives,
+  subsidiaries, estimateStatuses, esStatus, closedLostReasons, clientPursuitAlternatives,
   clientIncoterms, clientShippingMethods, addresses,
   csItems, vendors, factories, productClasses, productClassesEu,
   sustainabilityOptions, vendorIncoterms, vendorAddresses, componentKitItems,
@@ -91,6 +91,7 @@ const CreateEstimateSchema = z.object({
 
   // Edit / Update fields (status, win/loss, close-lost)
   statusNsId                  : z.string().optional().nullable(),
+  esStatusNsId                : z.string().optional().nullable(),  // NS internalId of es_status (2=Converted To Quote, 4=Partially Converted, …)
   closedLostReasonNsId        : z.string().optional().nullable(),
   clientPursuitAlternativeNsId: z.string().optional().nullable(),
   notesClosedLostReason       : z.string().optional().nullable(),
@@ -594,6 +595,7 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     shipTo               : body.shipTo,
     billTo               : body.billTo,
     statusId                   : await resolveNsId(estimateStatuses,           body.statusNsId),
+    esStatusId                 : await resolveNsId(esStatus,                    body.esStatusNsId),
     closedLostReasonId         : await resolveNsId(closedLostReasons,          body.closedLostReasonNsId),
     clientPursuitAlternativeId : await resolveNsId(clientPursuitAlternatives,  body.clientPursuitAlternativeNsId),
     notesClosedLostReason      : body.notesClosedLostReason,
@@ -651,6 +653,7 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
     [opsPartners,        'opsPartner1NsId',        'opsPartner1Id'],
     [opsPartners,        'opsPartner2NsId',        'opsPartner2Id'],
     [estimateStatuses,           'statusNsId',                   'statusId'],
+    [esStatus,                   'esStatusNsId',                 'esStatusId'],
     [closedLostReasons,          'closedLostReasonNsId',         'closedLostReasonId'],
     [clientPursuitAlternatives,  'clientPursuitAlternativeNsId', 'clientPursuitAlternativeId'],
   ];
