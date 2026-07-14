@@ -1,0 +1,123 @@
+{
+  "info": {
+    "name": "OTB Convert — ES Status Flip Test (existing estimate)",
+    "description": "Tests the post-convert ES Status flip on an EXISTING estimate (default: id 282) via POST /api/v1/estimates/:id/convert-to-otb.\n\nWHAT IT PROVES\nAfter the convert's background NetSuite sync finishes, the estimate's `esStatusId` should change to:\n  - \"Converted To Quote\"   -> every active line converted\n  - \"Partially Converted\"  -> some active lines still unconverted\n...preferring whatever ES Status NetSuite returned, else the computed one.\n\nPREREQUISITES for the estimate under test (id in {{estimateId}}):\n  1. It exists and is active.\n  2. It is ALREADY synced to NetSuite (has a netsuite_internal_id). If not you get\n     \"Estimate has not been synced to NetSuite yet\".\n  3. It has at least one UNCONVERTED line item, else convert returns\n     \"No new line items to quote\" and the flip never runs.\n\nIMPORTANT — THE FLIP IS ASYNCHRONOUS\nStep 3 returns immediately with syncStatus:\"pending\" and kicks off the NetSuite\nsync in the background. The ES Status flip runs AFTER NetSuite responds (up to ~60s).\nSo: run step 3, wait, then run step 4 (re-run step 4 until syncStatus == \"synced\").\n\nHOW TO RUN (in order)\n1. GET es-status master   -> note which id maps to \"Converted To Quote\" / \"Partially Converted\"\n2. GET estimate BEFORE    -> record the current esStatusId\n3. POST convert-to-otb    -> target:new (default). Returns syncStatus:pending immediately\n4. GET estimate AFTER     -> re-run until syncStatus==synced, then compare esStatusId vs step 1",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "estimateId", "value": "282", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1. GET es-status master (map id -> name)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const rows = pm.response.json();",
+              "const list = Array.isArray(rows) ? rows : (rows.data || rows.items || []);",
+              "const wanted = ['Converted To Quote', 'Partially Converted'];",
+              "console.log('--- ES Status ids you care about ---');",
+              "list.filter(r => wanted.includes(r.name)).forEach(r => console.log(r.name, '=> id', r.id, '| nsId', r.netsuiteInternalId, '| active', r.isActive));",
+              "const found = list.filter(r => wanted.includes(r.name) && r.isActive);",
+              "pm.test('Both convert statuses exist and are active (fallback path can resolve)', () => pm.expect(found.length).to.eql(2));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/api/v1/master/es-status", "host": ["{{baseUrl}}"], "path": ["api", "v1", "master", "es-status"] },
+        "description": "Logs the ids for 'Converted To Quote' and 'Partially Converted' so you can recognise them in the GET-estimate response, and fails if either is missing (in which case the convert would log a warning and leave the status unchanged)."
+      }
+    },
+    {
+      "name": "2. GET estimate BEFORE (record esStatusId)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const est = pm.response.json().estimate || pm.response.json();",
+              "pm.collectionVariables.set('esStatusBefore', String(est.esStatusId));",
+              "console.log('BEFORE  esStatusId =', est.esStatusId, '| status =', est.status, '| syncStatus =', est.syncStatus);",
+              "console.log('netsuiteInternalId =', est.netsuiteInternalId, '(must be set, else convert will be rejected)');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "estimates", "{{estimateId}}"] },
+        "description": "Snapshot of the estimate before converting. Note the current esStatusId to compare against later, and confirm netsuiteInternalId is set."
+      }
+    },
+    {
+      "name": "3. POST convert-to-otb (target: new)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const res = pm.response.json();",
+              "console.log('Convert response:', JSON.stringify(res, null, 2));",
+              "if (res.message && /No new line items/.test(res.message)) {",
+              "  console.warn('All lines already converted — nothing to quote, so the ES Status flip will NOT run this time.');",
+              "}",
+              "pm.test('convert accepted (HTTP 2xx)', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+              "console.log('NOTE: syncStatus is \"pending\" now. Wait ~30-60s, then run step 4 (re-run until synced).');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}/convert-to-otb", "host": ["{{baseUrl}}"], "path": ["api", "v1", "estimates", "{{estimateId}}", "convert-to-otb"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"target\": \"new\"\n}"
+        },
+        "description": "Converts the unconverted lines into a NEW quote and kicks off the NetSuite sync in the BACKGROUND. Returns immediately with syncStatus:\"pending\".\n\n  target:new      -> new quote covering all currently-unconverted lines (use this first). Every active line ends converted -> expect 'Converted To Quote'.\n  target:existing -> add only newly-added lines to an existing active quote (requires a prior quote). Can leave the estimate 'Partially Converted'.\n\nThe ES Status flip (applyConvertEsStatus) runs after NetSuite responds — check with step 4."
+      }
+    },
+    {
+      "name": "4. GET estimate AFTER (verify flip — re-run until synced)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const est = pm.response.json().estimate || pm.response.json();",
+              "const before = pm.collectionVariables.get('esStatusBefore');",
+              "console.log('AFTER   esStatusId =', est.esStatusId, '| status =', est.status, '| syncStatus =', est.syncStatus);",
+              "console.log('BEFORE was esStatusId =', before);",
+              "console.log('syncError =', est.syncError);",
+              "if (est.syncStatus === 'pending') {",
+              "  console.warn('Still pending — the background NetSuite sync has not finished. Wait a bit and re-run this request.');",
+              "}",
+              "pm.test('sync finished (not pending)', () => pm.expect(est.syncStatus).to.not.eql('pending'));",
+              "pm.test('sync succeeded', () => pm.expect(est.syncStatus).to.eql('synced'));",
+              "pm.test('esStatusId changed from before', () => pm.expect(String(est.esStatusId)).to.not.eql(before));",
+              "console.log('Compare esStatusId above with step 1 to confirm it is Converted/Partially Converted.');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/api/v1/estimates/{{estimateId}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "estimates", "{{estimateId}}"] },
+        "description": "Reads the estimate after conversion. Re-run this until syncStatus == 'synced' (the sync runs in the background). Then confirm esStatusId changed and matches 'Converted To Quote' / 'Partially Converted' from step 1.\n\nIf syncStatus == 'failed', read syncError — the ES Status flip only runs on a SUCCESSFUL sync."
+      }
+    }
+  ]
+}
