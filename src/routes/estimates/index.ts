@@ -387,6 +387,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
     statuses?: string;
     productDeveloperId?: string; productDeveloperName?: string;
     likelyToCloseId?: string; likelyToCloseName?: string;
+    esStatusId?: string;
     expectedCloseDateFrom?: string; expectedCloseDateTo?: string;
     dateOfEntryFrom?: string; dateOfEntryTo?: string;
   };
@@ -410,6 +411,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
       productDeveloperName:  q.productDeveloperName  || undefined,
       likelyToCloseId:       csvInt(q.likelyToCloseId),
       likelyToCloseName:     q.likelyToCloseName     || undefined,
+      esStatusId:            csvInt(q.esStatusId),
       expectedCloseDateFrom: q.expectedCloseDateFrom || undefined,
       expectedCloseDateTo:   q.expectedCloseDateTo   || undefined,
       dateOfEntryFrom:       q.dateOfEntryFrom       || undefined,
@@ -455,6 +457,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
       productDeveloperName:  q.productDeveloperName  || undefined,
       likelyToCloseId:       csvInt(q.likelyToCloseId),
       likelyToCloseName:     q.likelyToCloseName     || undefined,
+      esStatusId:            csvInt(q.esStatusId),
       expectedCloseDateFrom: q.expectedCloseDateFrom || undefined,
       expectedCloseDateTo:   q.expectedCloseDateTo   || undefined,
       dateOfEntryFrom:       q.dateOfEntryFrom       || undefined,
