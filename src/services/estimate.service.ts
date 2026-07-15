@@ -37,6 +37,7 @@ type EstimateFilterOpts = {
   productDeveloperName?: string;
   likelyToCloseId?: number[];
   likelyToCloseName?: string;
+  esStatusId?: number[];
   expectedCloseDateFrom?: string;
   expectedCloseDateTo?: string;
   dateOfEntryFrom?: string;
@@ -77,6 +78,7 @@ function buildConditions(
   if (opts.productDeveloperName) conds.push(sql`EXISTS (SELECT 1 FROM product_developers pd WHERE pd.id = ANY(${estimates.productDeveloperIds}) AND pd.name ILIKE ${'%' + opts.productDeveloperName + '%'})`);
   if (opts.likelyToCloseId?.length) conds.push(oneOrMany(estimates.likelyToCloseId, opts.likelyToCloseId));
   if (opts.likelyToCloseName)   conds.push(ilike(likelyToClose.name, `%${opts.likelyToCloseName}%`));
+  if (opts.esStatusId?.length)  conds.push(oneOrMany(estimates.esStatusId, opts.esStatusId));
   if (opts.expectedCloseDateFrom) conds.push(gte(estimates.expectedCloseDate, opts.expectedCloseDateFrom));
   if (opts.expectedCloseDateTo)   conds.push(lte(estimates.expectedCloseDate, opts.expectedCloseDateTo));
   if (opts.dateOfEntryFrom)     conds.push(gte(estimates.createdAt, new Date(opts.dateOfEntryFrom)));
