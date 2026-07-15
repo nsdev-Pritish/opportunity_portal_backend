@@ -70,9 +70,11 @@ function buildConditions(
   if (opts.projectNameId?.length) conds.push(oneOrMany(estimates.projectNameId, opts.projectNameId));
   if (opts.projectName)         conds.push(ilike(estimates.projectName!, `%${opts.projectName}%`));
   if (opts.statuses?.length) {
-    conds.push(opts.statuses.length === 1
-      ? eq(estimates.status, opts.statuses[0] as any)
-      : inArray(estimates.status, opts.statuses as any[]));
+    // The `statuses` param is the ES Status filter — it carries es_status ids and
+    // must ONLY match estimates.es_status_id (the es_status lookup table), never the
+    // workflow-status text enum. Filtering the enum with a numeric id errors (500).
+    const esIds = opts.statuses.map(Number).filter(n => Number.isInteger(n));
+    if (esIds.length) conds.push(oneOrMany(estimates.esStatusId, esIds));
   }
   if (opts.productDeveloperId?.length) conds.push(or(...opts.productDeveloperId.map(id => sql`${id} = ANY(${estimates.productDeveloperIds})`))!); // match any of the developers
   if (opts.productDeveloperName) conds.push(sql`EXISTS (SELECT 1 FROM product_developers pd WHERE pd.id = ANY(${estimates.productDeveloperIds}) AND pd.name ILIKE ${'%' + opts.productDeveloperName + '%'})`);
