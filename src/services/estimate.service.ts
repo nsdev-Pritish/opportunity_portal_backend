@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, like, ilike, or, count, isNull, gte, lte, inArray, sql } from 'drizzle-orm';
+import { eq, and, desc, asc, like, ilike, or, count, isNull, gte, lte, inArray, sql, getTableColumns } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '../config/database.js';
 import {
@@ -133,40 +133,15 @@ function buildConditions(
 
 function buildBaseQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
   return db.select({
-    id: estimates.id,
-    documentNumber: estimates.documentNumber,
-    netsuiteInternalId: estimates.netsuiteInternalId,
-    projectNameId: estimates.projectNameId,
-    projectName: estimates.projectName,
-    projectTypeId: estimates.projectTypeId,
+    // Return the full estimate row so search results carry every column the
+    // detail endpoint (getEstimate) returns — keeps the two response shapes in
+    // sync so no field shows empty in search but populated in detail.
+    ...getTableColumns(estimates),
+    // Resolved names from the joined lookup tables (kept identical to before).
     projectTypeName: projectTypes.name,
-    sellCurrencyId: estimates.sellCurrencyId,
     currencyCode: currencies.code,
     currencyName: currencies.name,
-    estimatedQty: estimates.estimatedQty,
-    adjustedPipeline: estimates.adjustedPipeline,
-    salesChannelId: estimates.salesChannelId,
     salesChannelName: salesChannels.name,
-    status: estimates.status,
-    statusId: estimates.statusId,
-    esStatusId: estimates.esStatusId,
-    customerPo: estimates.customerPo,
-    projectedTotalAmt: estimates.projectedTotalAmt,
-    expectedCloseDate: estimates.expectedCloseDate,
-    promiseDate: estimates.promiseDate,
-    likelyToCloseId: estimates.likelyToCloseId,
-    departmentId: estimates.departmentId,
-    businessVerticalId: estimates.businessVerticalId,
-    opsPartner1Id: estimates.opsPartner1Id,
-    opsPartner2Id: estimates.opsPartner2Id,
-    acctManagerId: estimates.acctManagerId,
-    productDeveloperIds: estimates.productDeveloperIds,
-    syncStatus: estimates.syncStatus,
-    syncError: estimates.syncError,
-    syncedAt: estimates.syncedAt,
-    createdAt: estimates.createdAt,
-    updatedAt: estimates.updatedAt,
-    customerId: estimates.customerId,
     customerName: customers.name,
     departmentName: departments.name,
     businessVerticalName: businessVerticals.name,
