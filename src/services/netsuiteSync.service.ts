@@ -86,6 +86,17 @@ function formatNsDate(date: string | null | undefined): string {
   return `${m}/${d}/${y}`;  // MM/DD/YYYY — DB stores zero-padded so no parseInt needed
 }
 
+// Format a timestamptz value (e.g. created_at, a JS Date) → NetSuite's MM/DD/YYYY.
+// UTC components keep this deterministic and aligned with how Postgres stores timestamptz.
+function formatNsDateFromTimestamp(value: Date | string | null | undefined): string {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return '';
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${m}/${day}/${d.getUTCFullYear()}`;
+}
+
 // Convert a stored NS internal ID string → number for NS payload, null if absent
 function toNsNum(nsId: string): number | null {
   return nsId ? Number(nsId) : null;
@@ -171,6 +182,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     customerPoNS        : est.customerPo ?? '',
     projectNameNSId     : projectNameNsId,
     projectTypeNSId     : projectTypeNsId,
+    trandateNS          : formatNsDateFromTimestamp(est.createdAt),  // NS transaction date = portal created_at
     expectedCloseDateNS : formatNsDate(est.expectedCloseDate),
     promiseDateNS       : formatNsDate(est.promiseDate),
     likelyToCloseNSId   : likelyToCloseNsId,

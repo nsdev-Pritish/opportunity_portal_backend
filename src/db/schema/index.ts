@@ -601,6 +601,7 @@ export const estimates = pgTable('estimates', {
   projectNameId: integer('project_name_id').references(() => projectNames.id),
   projectName: varchar('project_name', { length: 255 }),
   projectTypeId: integer('project_type_id').references(() => projectTypes.id),
+  trandate: date('trandate'),  // NetSuite transaction date. Inbound: set from NS `trandate` key. Outbound: sent as created_at.
   expectedCloseDate: date('expected_close_date'),
   promiseDate: date('promise_date'),
   likelyToCloseId: integer('likely_to_close_id').references(() => likelyToClose.id),

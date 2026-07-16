@@ -58,6 +58,7 @@ const CreateEstimateSchema = z.object({
   customerContactNsId  : z.string().optional().nullable(),
   customerPo           : z.string().max(100).optional().nullable(),
   projectTypeNsId      : z.string().optional().nullable(),
+  trandate             : z.string().optional().nullable(),  // NS transaction date "YYYY-MM-DD"
   expectedCloseDate    : z.string().optional().nullable(),  // "YYYY-MM-DD"
   promiseDate          : z.string().optional().nullable(),
   likelyToCloseNsId    : z.string().optional().nullable(),
@@ -571,6 +572,7 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     customerContactId    : await resolveNsId(contacts,           body.customerContactNsId),
     customerPo           : body.customerPo,
     projectTypeId        : await resolveNsId(projectTypes,       body.projectTypeNsId),
+    trandate             : body.trandate,
     expectedCloseDate    : body.expectedCloseDate,
     promiseDate          : body.promiseDate,
     likelyToCloseId      : await resolveNsId(likelyToClose,      body.likelyToCloseNsId),
@@ -630,7 +632,7 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
   const updates: Record<string, unknown> = { updatedAt: new Date() };
 
   // Scalar fields — only set if present in body
-  const scalars = ['documentNumber','projectName','customerPo','expectedCloseDate','promiseDate',
+  const scalars = ['documentNumber','projectName','customerPo','trandate','expectedCloseDate','promiseDate',
     'projectedTotalAmt','estimatedQty','deckRequest','artSetupRequest',
     'pkgDeckRequest','pkgArtSetupRequest','sampleOnlyOrder','reOrder','bibleLink','memo',
     'notesClosedLostReason','projectHoldDate','shipTo','billTo',
