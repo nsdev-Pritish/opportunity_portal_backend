@@ -27,6 +27,7 @@ import {
   clientIncoterms, clientShippingMethods, addresses,
   csItems, vendors, factories, productClasses, productClassesEu,
   sustainabilityOptions, vendorIncoterms, vendorAddresses, componentKitItems,
+  projectNames,
 } from '../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
@@ -52,6 +53,7 @@ const CreateEstimateSchema = z.object({
   customerNsId         : z.string().min(1),  // NS internalId of the customer
 
   // Optional — send NS internalIds for each lookup field
+  projectNameNsId      : z.string().optional().nullable(),  // NS internalId of project_names → estimates.project_name_id
   subsidiaryNsId       : z.string().optional().nullable(),
   customerContactNsId  : z.string().optional().nullable(),
   customerPo           : z.string().max(100).optional().nullable(),
@@ -563,6 +565,7 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     netsuiteInternalId   : body.netsuiteInternalId,
     documentNumber       : body.documentNumber,
     projectName          : body.projectName,
+    projectNameId        : await resolveNsId(projectNames, body.projectNameNsId),
     customerId,
     subsidiaryId         : await resolveNsId(subsidiaries,       body.subsidiaryNsId),
     customerContactId    : await resolveNsId(contacts,           body.customerContactNsId),
@@ -639,6 +642,7 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
   // FK fields — resolve *NsId → portal id
   const fkMap: Array<[any, string, string]> = [
     [customers,          'customerNsId',          'customerId'],
+    [projectNames,       'projectNameNsId',        'projectNameId'],
     [subsidiaries,       'subsidiaryNsId',         'subsidiaryId'],
     [departments,        'departmentNsId',         'departmentId'],
     [salesChannels,      'salesChannelNsId',       'salesChannelId'],
