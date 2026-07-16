@@ -177,6 +177,16 @@ function otbFormatNsDate(date: string | null | undefined): string {
   return `${m}/${d}/${y}`;
 }
 
+// Format a timestamp (created_at) → plain YYYY-MM-DD using UTC components,
+// so the date-only trandate matches how Postgres stores the timestamptz.
+function otbToDateOnly(value: Date | string): string {
+  const dt = value instanceof Date ? value : new Date(value);
+  const y = dt.getUTCFullYear();
+  const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dt.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function otbToNsNum(nsId: string): number | null {
   return nsId ? Number(nsId) : null;
 }
@@ -738,9 +748,17 @@ export async function createEstimateAndConvertToOtb(
 
   // 1. Insert estimate + line items (+ freight groups) atomically
   const { estimate, lineItems: lines } = await db.transaction(async (tx) => {
+    // trandate = the portal creation date in date-only form (YYYY-MM-DD);
+    // created_at keeps the full timestamptz.
     const [estimate] = await tx.insert(estimates)
-      .values({ ...headerData, source: 'portal', syncStatus: 'pending' } as any)
+      .values({
+        ...headerData,
+        source: 'portal',
+        syncStatus: 'pending',
+        trandate: otbToDateOnly(new Date()),
+      } as any)
       .returning();
+
     const { parents, components } = await otbInsertLineItems(tx, estimate.id, lineItems);
     await otbInsertFreightGroups(tx, estimate.id, freightGroups, parents);
     return { estimate, lineItems: [...parents, ...components] };
