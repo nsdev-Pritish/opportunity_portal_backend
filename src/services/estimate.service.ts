@@ -218,8 +218,7 @@ export async function listDocumentNumbers(opts: EstimateFilterOpts) {
     .leftJoin(op1,               eq(estimates.opsPartner1Id,     op1.id))
     .leftJoin(op2,               eq(estimates.opsPartner2Id,     op2.id))
     .where(and(...conds))
-    .orderBy(asc(estimates.documentNumber), desc(estimates.createdAt))
-    .limit(500);
+    .orderBy(asc(estimates.documentNumber), desc(estimates.createdAt));
 
   return rows;
 }
