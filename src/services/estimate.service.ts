@@ -84,12 +84,13 @@ function buildConditions(
   if (opts.dateOfEntryFrom)     conds.push(gte(estimates.createdAt, new Date(opts.dateOfEntryFrom)));
   if (opts.dateOfEntryTo)       conds.push(lte(estimates.createdAt, new Date(opts.dateOfEntryTo)));
 
-  // General search — one box, type anything. The input is split into tokens (by
-  // space or comma); a row matches if ANY token is found in ANY column below
-  // (text/names, status, and numeric fields cast to text). So "Saks,draft,2354"
-  // returns rows matching Saks OR draft OR 2354.
+  // General search — one box, type anything. The input is split into tokens by
+  // COMMA ONLY (spaces are kept, so a multi-word phrase stays one token); a row
+  // matches if ANY token is found in ANY column below (text/names, status, and
+  // numeric fields cast to text). So "In Progress" matches the whole phrase
+  // "In Progress", while "Saks,draft,2354" returns rows matching Saks OR draft OR 2354.
   if (opts.search) {
-    const tokens = opts.search.split(/[\s,]+/).map(t => t.trim()).filter(Boolean);
+    const tokens = opts.search.split(',').map(t => t.trim()).filter(Boolean);
     const matchToken = (t: string) => {
       const term = `%${t}%`;
       return or(
@@ -108,6 +109,7 @@ function buildConditions(
         ilike(projectTypes.name,         term),
         ilike(currencies.code,           term),
         ilike(salesChannels.name,        term),
+        ilike(esStatus.name,             term),   // ES Status name (e.g. "In Progress")
       );
     };
     if (tokens.length) conds.push(or(...tokens.map(matchToken))!);
@@ -170,7 +172,8 @@ function buildBaseQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
     .leftJoin(op2,               eq(estimates.opsPartner2Id,     op2.id))
     .leftJoin(projectTypes,      eq(estimates.projectTypeId,     projectTypes.id))
     .leftJoin(currencies,        eq(estimates.sellCurrencyId,    currencies.id))
-    .leftJoin(salesChannels,     eq(estimates.salesChannelId,    salesChannels.id));
+    .leftJoin(salesChannels,     eq(estimates.salesChannelId,    salesChannels.id))
+    .leftJoin(esStatus,          eq(estimates.esStatusId,        esStatus.id));
 }
 
 function buildCountQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
@@ -185,7 +188,8 @@ function buildCountQuery(db: ReturnType<typeof getDb>, op1: any, op2: any) {
     .leftJoin(op2,               eq(estimates.opsPartner2Id,     op2.id))
     .leftJoin(projectTypes,      eq(estimates.projectTypeId,     projectTypes.id))
     .leftJoin(currencies,        eq(estimates.sellCurrencyId,    currencies.id))
-    .leftJoin(salesChannels,     eq(estimates.salesChannelId,    salesChannels.id));
+    .leftJoin(salesChannels,     eq(estimates.salesChannelId,    salesChannels.id))
+    .leftJoin(esStatus,          eq(estimates.esStatusId,        esStatus.id));
 }
 
 // ── Document-number dropdown ─────────────────────────────────────────────────
