@@ -602,6 +602,8 @@ export async function syncEstimateToNetsuite(
       tranId?        : string;
       documentNumber?: string;
       adjustedPipelineAmountNS?: string;
+      // NS transaction date echoed back on the create/update response (MM/DD/YYYY).
+      trandateNS?    : string;
       quoteId?       : string;
       quoteTranId?   : string;
       lineIds?       : (string | number)[] | Record<string, string | number>;
@@ -620,12 +622,16 @@ export async function syncEstimateToNetsuite(
     const documentNumber = nsResp.tranId || nsResp.documentNumber || undefined;
     // Adjusted Pipeline is returned by NetSuite on the create/update response.
     const adjustedPipeline = nsResp.adjustedPipelineAmountNS;
+    // NS transaction date — NetSuite is the source of truth for trandate. Stored
+    // as-is in whatever format NetSuite sends.
+    const trandate = nsResp.trandateNS;
 
     logger.info({
       estimateId,
       mode,
       rawResponse    : nsResp,
       nsInternalId   : nsInternalId   ?? null,
+      trandate       : nsResp.trandateNS       ?? null,      
       documentNumber : documentNumber ?? null,
       quoteId        : nsResp.quoteId    ?? null,
       quoteTranId    : nsResp.quoteTranId ?? null,
@@ -649,6 +655,8 @@ export async function syncEstimateToNetsuite(
       if (documentNumber) setData.documentNumber     = documentNumber;
       // Write back Adjusted Pipeline when NetSuite returns it (skip blank — numeric column).
       if (adjustedPipeline !== undefined && adjustedPipeline !== '') setData.adjustedPipeline = adjustedPipeline;
+      // Write back the NS transaction date when NetSuite returns one.
+      if (trandate) setData.trandate = trandate;
 
       await db.update(estimates)
         .set(setData as any)

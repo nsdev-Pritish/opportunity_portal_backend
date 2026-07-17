@@ -16,17 +16,6 @@ type RawLineItem = Record<string, unknown> & { components?: Record<string, unkno
 
 const CHUNK = 100;
 
-// Format a timestamp (e.g. created_at) → plain YYYY-MM-DD using UTC components,
-// matching how Postgres stores the timestamptz. Used to derive the date-only
-// `trandate` from the full `created_at` timestamp on portal-created estimates.
-function toDateOnly(value: Date | string): string {
-  const d = value instanceof Date ? value : new Date(value);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 // ── Shared filter helper ─────────────────────────────────────────────────────
 
 type EstimateFilterOpts = {
@@ -715,14 +704,14 @@ export async function createEstimateWithItems(
 
   return db.transaction(async (tx) => {
     // Step 1: Insert estimate header.
-    // trandate = the portal creation date in date-only form (YYYY-MM-DD), while
-    // created_at keeps the full timestamptz (e.g. 2026-06-02 10:20:09.825083+00).
+    // trandate is intentionally left unset here — NetSuite is the source of truth
+    // for the transaction date. It's written back from the `trandateNS` key on the
+    // NS create/update response (see syncEstimateToNetsuite).
     const [estimate] = await tx.insert(estimates)
       .values({
         ...headerData,
         source: 'portal',
         syncStatus: 'pending',
-        trandate: toDateOnly(new Date()),
       } as any)
       .returning();
 
