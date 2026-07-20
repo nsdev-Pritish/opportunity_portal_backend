@@ -503,7 +503,9 @@ async function persistFreightGroups(
 //   • matched line  → UPDATE in place (row id + netsuite_internal_id are NEVER touched,
 //                     so the NS line id survives and NetSuite updates the same line)
 //   • new line      → INSERT
-//   • removed line  → DELETE (parent delete cascades to its components)
+//   • removed line  → SOFT-DELETE (is_active=false). The row + its netsuite_internal_id
+//                     are kept so the NS line can be deactivated afterwards (delete-mode
+//                     sync). The returned `deletedIds` are handed to that NS sync.
 //
 // Matching, per incoming line: 1) by `id` when the payload carries a known id;
 // 2) otherwise by POSITION — the Nth incoming parent maps to the Nth old parent, and
@@ -519,7 +521,7 @@ async function upsertLineItemsWithComponents(
   tx: any,
   estimateId: number,
   items: RawLineItem[],
-): Promise<{ parents: any[]; components: any[] }> {
+): Promise<{ parents: any[]; components: any[]; deletedIds: number[] }> {
   // Only ACTIVE rows take part in the diff. Soft-deleted rows (is_active = false) are left
   // untouched so their row + netsuite_internal_id survive for later NetSuite deactivation.
   const activeOnly = and(
@@ -528,8 +530,15 @@ async function upsertLineItemsWithComponents(
   );
 
   if (items.length === 0) {
-    await tx.delete(estimateLineItems).where(activeOnly);
-    return { parents: [], components: [] };
+    // Every line removed: soft-delete all currently-active rows (keep them for NS deactivation).
+    const removed = await tx.select({ id: estimateLineItems.id })
+      .from(estimateLineItems).where(activeOnly);
+    if (removed.length > 0) {
+      await tx.update(estimateLineItems)
+        .set({ isActive: false, updatedAt: new Date() })
+        .where(activeOnly);
+    }
+    return { parents: [], components: [], deletedIds: removed.map((r: any) => r.id) };
   }
 
   // Snapshot existing ACTIVE rows (ids + ordering) so we can match incoming lines to them.
@@ -606,11 +615,17 @@ async function upsertLineItemsWithComponents(
     toDelete         : existing.filter((r: any) => !keptIds.has(r.id)).map((r: any) => r.id),
   }, 'upsertLineItems: in-place diff (update kept, insert new, delete removed)');
 
-  // ── Phase 2: delete removed lines ───────────────────────────────────────────
-  // (Deleting a removed parent cascades to its components.)
+  // ── Phase 2: soft-delete removed lines ──────────────────────────────────────
+  // Flip is_active=false instead of hard-deleting, so the row + its netsuite_internal_id
+  // survive for later NetSuite deactivation (delete-mode sync). `existing` already holds
+  // BOTH parents and components, so an orphaned component of a removed kit parent is
+  // captured here too. The partial unique index (is_active=true) excludes these rows, so
+  // their old line_number can't collide with the kept rows we renumber below.
   const toDelete = existing.filter((r: any) => !keptIds.has(r.id)).map((r: any) => r.id);
   if (toDelete.length > 0) {
-    await tx.delete(estimateLineItems).where(inArray(estimateLineItems.id, toDelete));
+    await tx.update(estimateLineItems)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(inArray(estimateLineItems.id, toDelete));
   }
 
   // ── Phase 3: park survivors' lineNumber out of the target range ─────────────
@@ -663,7 +678,7 @@ async function upsertLineItemsWithComponents(
     lineCounter++;
   }
 
-  return { parents, components };
+  return { parents, components, deletedIds: toDelete };
 }
 
 // ── Create estimate + cost sheet items atomically ───────────────────────────
@@ -744,6 +759,9 @@ export async function updateEstimateWithItems(
   const db = getDb();
   const startTime = Date.now();
 
+  // Ids of lines the diff soft-deleted this update — deactivated in NetSuite after commit.
+  let deletedLineIds: number[] = [];
+
   const result = await db.transaction(async (tx) => {
     // 1. Update estimate header
     const [updated] = await tx.update(estimates)
@@ -756,8 +774,9 @@ export async function updateEstimateWithItems(
     // Step 2 – Line items
     let allLineItems: any[];
     if (newLineItems !== undefined) {
-      const { parents, components } = await upsertLineItemsWithComponents(tx, id, newLineItems);
+      const { parents, components, deletedIds } = await upsertLineItemsWithComponents(tx, id, newLineItems);
       allLineItems = [...parents, ...components];
+      deletedLineIds = deletedIds;
     } else {
       allLineItems = await tx.select()
         .from(estimateLineItems)
@@ -784,7 +803,16 @@ export async function updateEstimateWithItems(
   const duration = Date.now() - startTime;
   logger.info({ estimateId: id, durationMs: duration }, 'Estimate updated');
 
-  syncEstimateToNetsuite(id, 'update').catch(() => {/* already logged + recorded */});
+  // NS sync. When lines were soft-deleted this update, run the two NS writes in sequence —
+  // first push the header + surviving active lines, then deactivate the removed lines —
+  // so NetSuite never receives two concurrent edits to the same record.
+  if (deletedLineIds.length > 0) {
+    syncEstimateToNetsuite(id, 'update')
+      .then(() => deactivateLinesInNetsuite(id, { lineItemIds: deletedLineIds }))
+      .catch(() => {/* already logged + recorded */});
+  } else {
+    syncEstimateToNetsuite(id, 'update').catch(() => {/* already logged + recorded */});
+  }
 
   return result;
 }

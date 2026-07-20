@@ -225,12 +225,15 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     attachmentsNS                : Array.isArray(est.attachments) ? est.attachments : [],
   };
 
-  // Phase 2 – Line items (for 'convert' mode only the target lineItemIds are sent)
+  // Phase 2 – Line items (for 'convert' mode only the target lineItemIds are sent).
+  // For create/update send only ACTIVE lines — soft-deleted lines are removed from
+  // NetSuite separately by the delete-mode sync (deactivateLinesInNetsuite), so they
+  // must never be re-sent here as if they were still active.
   const lineItemRows = await db.select().from(estimateLineItems)
     .where(
       lineItemIds && lineItemIds.length > 0
         ? inArray(estimateLineItems.id, lineItemIds)
-        : eq(estimateLineItems.estimateId, estimateId)
+        : and(eq(estimateLineItems.estimateId, estimateId), eq(estimateLineItems.isActive, true))
     )
     .orderBy(estimateLineItems.lineNumber);
 
