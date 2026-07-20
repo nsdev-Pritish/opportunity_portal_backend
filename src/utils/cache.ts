@@ -1,6 +1,10 @@
 import { getRedis } from '../config/redis.js';
 import { env } from '../config/env.js';
 
+// Namespace every key with the per-environment prefix (e.g. "prod:", "sandbox:") so
+// multiple services sharing one Redis instance never read or overwrite each other's keys.
+const PREFIX = env.CACHE_PREFIX ?? '';
+
 export async function cacheGet<T>(key: string): Promise<T | null> {
   try {
     const v = await getRedis().get(key);
@@ -17,7 +21,7 @@ export async function cacheDel(...keys: string[]) {
 }
 
 export async function cacheDelPattern(pattern: string) {
-  const keys = await getRedis().keys(pattern).catch(() => [] as string[]);
+  const keys = await getRedis().keys(`${PREFIX}${pattern}`).catch(() => [] as string[]);
   if (keys.length) await getRedis().del(...keys).catch(() => {});
 }
 
@@ -30,10 +34,10 @@ export async function cacheAside<T>(key: string, ttl: number, fn: () => Promise<
 }
 
 export const CacheKeys = {
-  dropdown      : (entity: string) => `dd:${entity}:active`,
-  dropdownScoped: (entity: string, id: number) => `dd:${entity}:${id}`,
-  allDropdowns  : () => 'dd:all',
-  estimate      : (id: number) => `est:${id}`,
+  dropdown      : (entity: string) => `${PREFIX}dd:${entity}:active`,
+  dropdownScoped: (entity: string, id: number) => `${PREFIX}dd:${entity}:${id}`,
+  allDropdowns  : () => `${PREFIX}dd:all`,
+  estimate      : (id: number) => `${PREFIX}est:${id}`,
 };
 
 export async function invalidateDropdown(entity: string, scopeId?: number) {

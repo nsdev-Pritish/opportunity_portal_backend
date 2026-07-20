@@ -11,6 +11,10 @@ const envSchema = z.object({
 
   REDIS_URL: z.string().default('redis://localhost:6379'),
   REDIS_PASSWORD: z.string().optional(),
+  // Per-environment cache-key namespace so prod & sandbox can safely share ONE Redis
+  // instance without colliding. Set e.g. "prod:" on production and "sandbox:" on the
+  // sandbox service. Empty (default) = no prefix (keeps local/dev behaviour unchanged).
+  CACHE_PREFIX: z.string().default(''),
 
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.string().default('7d'),
