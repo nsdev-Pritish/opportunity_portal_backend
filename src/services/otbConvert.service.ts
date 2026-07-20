@@ -50,9 +50,21 @@ async function otbInsertLineItems(
 ): Promise<{ parents: any[]; components: any[] }> {
   if (items.length === 0) return { parents: [], components: [] };
 
+  // Flattened line numbering: each parent is immediately followed by its own components,
+  // then the next item — e.g. kit(1), comp(2), comp(3), quote(4) — so the stored order
+  // matches the on-screen structure and NetSuite's lineComponentsNS references the
+  // contiguous lines right after the kit (matches insertLineItemsWithComponents).
+  const parentLineNo: number[] = [];
+  const compLineNo: number[][] = [];
+  let lineNo = 1;
+  for (let i = 0; i < items.length; i++) {
+    parentLineNo[i] = lineNo++;
+    compLineNo[i] = (items[i].components ?? []).map(() => lineNo++);
+  }
+
   const parentValues = items.map((item, i) => {
     const { components: _c, ...rest } = item;
-    return { ...rest, estimateId, lineNumber: i + 1, parentLineItemId: null, sortOrder: i };
+    return { ...rest, estimateId, lineNumber: parentLineNo[i], parentLineItemId: null, sortOrder: i };
   });
 
   const parents: any[] = [];
@@ -63,7 +75,6 @@ async function otbInsertLineItems(
     parents.push(...rows);
   }
 
-  let lineCounter = parentValues.length + 1;
   const componentValues: any[] = [];
   for (let i = 0; i < items.length; i++) {
     const comps = items[i].components ?? [];
@@ -71,7 +82,7 @@ async function otbInsertLineItems(
       componentValues.push({
         ...comps[j],
         estimateId,
-        lineNumber: lineCounter++,
+        lineNumber: compLineNo[i][j],
         parentLineItemId: parents[i].id,
         sortOrder: j,
       });

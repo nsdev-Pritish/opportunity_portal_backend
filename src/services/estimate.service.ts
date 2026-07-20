@@ -404,9 +404,21 @@ async function insertLineItemsWithComponents(
 ): Promise<{ parents: any[]; components: any[] }> {
   if (items.length === 0) return { parents: [], components: [] };
 
+  // Flattened line numbering: each parent is immediately followed by its own components,
+  // then the next item — e.g. kit(1), comp(2), comp(3), quote(4). This keeps the stored
+  // order matching the on-screen structure and makes NetSuite's lineComponentsNS point to
+  // the contiguous lines right after the kit (e.g. [2,3]) instead of trailing numbers.
+  const parentLineNo: number[] = [];
+  const compLineNo: number[][] = [];
+  let lineNo = 1;
+  for (let i = 0; i < items.length; i++) {
+    parentLineNo[i] = lineNo++;
+    compLineNo[i] = (items[i].components ?? []).map(() => lineNo++);
+  }
+
   const parentValues = items.map((item, i) => {
     const { components: _c, ...rest } = item;
-    return { ...rest, estimateId, lineNumber: i + 1, parentLineItemId: null, sortOrder: i };
+    return { ...rest, estimateId, lineNumber: parentLineNo[i], parentLineItemId: null, sortOrder: i };
   });
 
   const parents: any[] = [];
@@ -417,7 +429,6 @@ async function insertLineItemsWithComponents(
     parents.push(...rows);
   }
 
-  let lineCounter = parentValues.length + 1;
   const componentValues: any[] = [];
   for (let i = 0; i < items.length; i++) {
     const comps = items[i].components ?? [];
@@ -425,7 +436,7 @@ async function insertLineItemsWithComponents(
       componentValues.push({
         ...comps[j],
         estimateId,
-        lineNumber: lineCounter++,
+        lineNumber: compLineNo[i][j],
         parentLineItemId: parents[i].id,
         sortOrder: j,
       });
@@ -637,12 +648,32 @@ async function upsertLineItemsWithComponents(
       .where(activeOnly);
   }
 
+  // ── Flattened line numbering ────────────────────────────────────────────────
+  // Each parent is immediately followed by its own components, then the next item —
+  // e.g. kit(1), comp(2), comp(3), quote(4) — so the stored order matches the on-screen
+  // structure and NetSuite's lineComponentsNS references the contiguous lines after the
+  // kit. Computed up-front from the plan; the park step above guarantees these final
+  // numbers can't transiently collide with survivors' parked numbers.
+  const compIdxByParent = new Map<number, number[]>();
+  compPlan.forEach((c, ci) => {
+    const arr = compIdxByParent.get(c.parentIdx) ?? [];
+    arr.push(ci);
+    compIdxByParent.set(c.parentIdx, arr);
+  });
+  const parentLineNumber: number[] = [];
+  const compLineNumber: number[] = [];   // indexed by compPlan index
+  let lineNo = 1;
+  for (let i = 0; i < parentPlan.length; i++) {
+    parentLineNumber[i] = lineNo++;
+    for (const ci of (compIdxByParent.get(i) ?? [])) compLineNumber[ci] = lineNo++;
+  }
+
   // ── Phase 4: parents — UPDATE kept rows in place, INSERT new ones ───────────
   const parents: any[] = [];
   const parentFinalId: number[] = [];
   for (let i = 0; i < parentPlan.length; i++) {
     const p = parentPlan[i];
-    const common = { lineNumber: i + 1, sortOrder: i, parentLineItemId: null };
+    const common = { lineNumber: parentLineNumber[i], sortOrder: i, parentLineItemId: null };
     let row: any;
     if (p.oldId != null) {
       [row] = await tx.update(estimateLineItems)
@@ -660,9 +691,9 @@ async function upsertLineItemsWithComponents(
 
   // ── Phase 5: components — UPDATE kept rows in place, INSERT new ones ─────────
   const components: any[] = [];
-  let lineCounter = items.length + 1;
-  for (const c of compPlan) {
-    const common = { lineNumber: lineCounter, sortOrder: c.sortOrder, parentLineItemId: parentFinalId[c.parentIdx] };
+  for (let ci = 0; ci < compPlan.length; ci++) {
+    const c = compPlan[ci];
+    const common = { lineNumber: compLineNumber[ci], sortOrder: c.sortOrder, parentLineItemId: parentFinalId[c.parentIdx] };
     let row: any;
     if (c.oldId != null) {
       [row] = await tx.update(estimateLineItems)
@@ -675,7 +706,6 @@ async function upsertLineItemsWithComponents(
         .returning();
     }
     components.push(row);
-    lineCounter++;
   }
 
   return { parents, components, deletedIds: toDelete };
