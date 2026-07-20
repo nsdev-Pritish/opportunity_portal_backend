@@ -93,7 +93,7 @@ const ComponentSchema = z.object({
   countryOfDest: z.enum(['US', 'EU']).optional(),
 
   // ── Packing Details ────────────────────────────────────────────────────────
-  unitsPerCarton: z.number().int().positive().optional(),
+  unitsPerCarton: z.number().int().nonnegative().optional(),   // allow 0 (blank/not filled)
   dimLCm: z.string().optional(),
   dimWCm: z.string().optional(),
   dimHCm: z.string().optional(),
