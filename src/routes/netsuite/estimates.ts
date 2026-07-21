@@ -45,6 +45,44 @@ async function resolveNsId(table: any, nsId: string | undefined | null): Promise
 
 // ─── Validation ───────────────────────────────────────────────────
 
+// NetSuite is loosely typed on the wire: select/list fields come through as
+// objects ({ value, text }), and numeric fields can arrive as either numbers or
+// strings. These preprocessors normalise those shapes so the strict schemas
+// below accept whatever NetSuite sends, mirroring the portal→NS freight model.
+
+// Flatten a NetSuite object field (e.g. { value, text }) to its display string.
+// Passes plain strings / null / undefined through untouched.
+const nsFlattenText = (v: unknown): unknown => {
+  if (v == null || typeof v === 'string') return v;
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    const cand = o.text ?? o.name ?? o.label ?? o.value ?? o.id;
+    return cand == null ? undefined : String(cand);
+  }
+  return String(v);
+};
+
+// Coerce a numeric-ish value bound for a string column to a string.
+// number → "number"; object → its flattened text; string/null/undefined pass through.
+const nsNumToStr = (v: unknown): unknown => {
+  if (v == null || typeof v === 'string') return v;
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'object') return nsFlattenText(v);
+  return String(v);
+};
+
+// Coerce a value bound for an integer column to a number (NS may send "12").
+const nsToInt = (v: unknown): unknown => {
+  if (v == null || v === '') return v;
+  const n = Number(nsFlattenText(v));
+  return Number.isFinite(n) ? Math.trunc(n) : v;
+};
+
+// Reusable field builders that apply the coercions above.
+const nsText   = () => z.preprocess(nsFlattenText, z.string().optional().nullable());
+const nsMoney  = () => z.preprocess(nsNumToStr,   z.string().optional().nullable());
+const nsInt    = () => z.preprocess(nsToInt, z.number().int().nonnegative().optional().nullable());
+
 const CreateEstimateSchema = z.object({
   // Required
   netsuiteInternalId   : z.string().min(1),  // NS internalId of this estimate
@@ -250,23 +288,64 @@ const SyncLineItemWithComponentsSchema = SyncLineItemSchema.extend({
   components: z.array(SyncLineItemSchema).max(50).optional(),
 });
 
-// Explicit freight group from NetSuite. itemNsIds reference member lines by their
-// NS internal id (resolved to portal line ids on persist). freightModeSelected is a
-// short code ("FCL"/"LCL"/"AIR"/…) or canonical mode; freightTotal/PerUnit/Pol/Pod
-// are the single freight values for the group's selected mode.
+// Explicit freight group from NetSuite. This MIRRORS the portal→NS FreightGroupSchema
+// (src/routes/estimates/index.ts) so NetSuite can send the exact same freight object in
+// both directions, plus a couple of NS-only conveniences:
+//   • Membership can be given as itemNsIds (NS internal ids, resolved to portal line ids
+//     on persist) OR itemIds (already-resolved portal ids).
+//   • Drayage can be given as drayageNsId (resolved) OR drayageId (portal FK).
+// All value fields are coercion-wrapped so NetSuite's loose typing (objects for select
+// fields, numbers for money/counts) is accepted.
+//
+// Two ways to supply the money values:
+//   1. Preferred — explicit per-mode columns (oceanLcl* / oceanFcl* / air* / custom*),
+//      identical to the portal model. Only the modes actually sent are written.
+//   2. Legacy fallback — a single freightTotal/PerUnit/Pol/Pod set, fanned out into
+//      the selected mode's columns (kept for older SuiteScript builds).
 const SyncFreightGroupSchema = z.object({
-  groupName:           z.string().max(255).optional().nullable(),
-  freightModeSelected: z.string().max(20).optional().nullable(),
-  drayageNsId:         z.string().optional().nullable(),
-  itemNsIds:           z.array(z.string()).optional(),
-  numItems:            z.number().int().nonnegative().optional().nullable(),
-  totalCartons:        z.number().int().nonnegative().optional().nullable(),
-  totalCbm:            z.string().optional().nullable(),
-  totalWeight:         z.string().optional().nullable(),
-  freightTotal:        z.string().optional().nullable(),
-  freightPerUnit:      z.string().optional().nullable(),
-  freightPol:          z.string().max(255).optional().nullable(),
-  freightPod:          z.string().max(255).optional().nullable(),
+  // Identity / classification. freightModeSelected accepts a short code
+  // ("FCL"/"LCL"/"AIR"/…) or a canonical mode; mapFreightMode() normalises it.
+  groupName:           z.preprocess(nsFlattenText, z.string().max(255).optional().nullable()),
+  freightModeSelected: z.preprocess(nsFlattenText, z.string().max(40).optional().nullable()),
+
+  // Membership + drayage — NS ids (resolved on persist) or portal ids directly.
+  drayageNsId:         nsText(),
+  itemNsIds:           z.array(z.preprocess(nsFlattenText, z.string())).optional(),
+  drayageId:           z.number().int().positive().optional().nullable(),
+  itemIds:             z.array(z.number().int().nonnegative()).optional(),
+
+  // Aggregates
+  numItems:            nsInt(),
+  totalCartons:        nsInt(),
+  totalCbm:            nsMoney(),
+  totalWeight:         nsMoney(),
+
+  // Per-mode values (mirror portal FreightGroupSchema + DB columns) — preferred.
+  oceanLclTotal:   nsMoney(),
+  oceanLclPerUnit: nsMoney(),
+  oceanLclPol:     nsText(),
+  oceanLclPod:     nsText(),
+
+  oceanFclTotal:   nsMoney(),
+  oceanFclPerUnit: nsMoney(),
+  oceanFclPol:     nsText(),
+  oceanFclPod:     nsText(),
+
+  airTotal:   nsMoney(),
+  airPerUnit: nsMoney(),
+  airPol:     nsText(),
+  airPod:     nsText(),
+
+  customTotal:    nsMoney(),
+  customPerUnit:  nsMoney(),
+  customProvider: nsText(),
+  customNotes:    nsText(),
+
+  // Legacy single-value path (fanned into the selected mode's columns on persist).
+  freightTotal:        nsMoney(),
+  freightPerUnit:      nsMoney(),
+  freightPol:          nsText(),
+  freightPod:          nsText(),
 });
 
 const SyncEstimateSchema = z.object({
@@ -935,26 +1014,48 @@ async function persistNsFreightGroups(
   if (!groups || groups.length === 0) return 0;
 
   for (let idx = 0; idx < groups.length; idx++) {
-    const g = groups[idx];
+    const g = groups[idx] as Record<string, any>;
     const mode = mapFreightMode(g.freightModeSelected ?? g.groupName);
 
-    const memberIds = (g.itemNsIds ?? [])
-      .map((ns) => nsIdToDbId.get(ns))
-      .filter((v): v is number => typeof v === 'number');
+    // Membership: prefer NS ids (resolved to portal line ids); else portal ids directly.
+    const memberIds = (g.itemNsIds?.length
+      ? (g.itemNsIds as string[]).map((ns) => nsIdToDbId.get(ns))
+      : (g.itemIds ?? [])
+    ).filter((v: unknown): v is number => typeof v === 'number');
 
-    const total   = numStrOrNull(g.freightTotal);
-    const perUnit = numStrOrNull(g.freightPerUnit);
-    const pol     = g.freightPol ?? null;
-    const pod     = g.freightPod ?? null;
+    // Per-mode columns. Preferred: explicit per-mode values (mirrors portal→NS).
+    // Fallback: fan the single freight* values into the selected mode's columns.
+    const PER_MODE_NUM = [
+      'oceanLclTotal', 'oceanLclPerUnit', 'oceanFclTotal', 'oceanFclPerUnit',
+      'airTotal', 'airPerUnit', 'customTotal', 'customPerUnit',
+    ] as const;
+    const PER_MODE_STR = [
+      'oceanLclPol', 'oceanLclPod', 'oceanFclPol', 'oceanFclPod',
+      'airPol', 'airPod', 'customProvider', 'customNotes',
+    ] as const;
+    const hasExplicit =
+      PER_MODE_NUM.some((k) => g[k] != null) || PER_MODE_STR.some((k) => g[k] != null);
 
-    // Write the single freight values into the selected mode's columns.
-    const modeCols: Record<string, unknown> =
-        mode === 'OCEAN_LCL' ? { oceanLclTotal: total, oceanLclPerUnit: perUnit, oceanLclPol: pol, oceanLclPod: pod }
-      : mode === 'OCEAN_FCL' ? { oceanFclTotal: total, oceanFclPerUnit: perUnit, oceanFclPol: pol, oceanFclPod: pod }
-      : mode === 'AIR'       ? { airTotal: total, airPerUnit: perUnit, airPol: pol, airPod: pod }
-      :                        { customTotal: total, customPerUnit: perUnit };
+    let modeCols: Record<string, unknown>;
+    if (hasExplicit) {
+      modeCols = {};
+      for (const k of PER_MODE_NUM) if (g[k] != null) modeCols[k] = numStrOrNull(g[k]);
+      for (const k of PER_MODE_STR) if (g[k] != null) modeCols[k] = g[k];
+    } else {
+      const total   = numStrOrNull(g.freightTotal);
+      const perUnit = numStrOrNull(g.freightPerUnit);
+      const pol     = g.freightPol ?? null;
+      const pod     = g.freightPod ?? null;
+      modeCols =
+          mode === 'OCEAN_LCL' ? { oceanLclTotal: total, oceanLclPerUnit: perUnit, oceanLclPol: pol, oceanLclPod: pod }
+        : mode === 'OCEAN_FCL' ? { oceanFclTotal: total, oceanFclPerUnit: perUnit, oceanFclPol: pol, oceanFclPod: pod }
+        : mode === 'AIR'       ? { airTotal: total, airPerUnit: perUnit, airPol: pol, airPod: pod }
+        :                        { customTotal: total, customPerUnit: perUnit };
+    }
 
-    const drayageId = g.drayageNsId ? await resolveNsId(drayage, g.drayageNsId) : null;
+    const drayageId = g.drayageNsId
+      ? await resolveNsId(drayage, g.drayageNsId)
+      : (g.drayageId ?? null);
 
     const [grp] = await tx.insert(estimateFreightGroups).values({
       estimateId,
