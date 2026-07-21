@@ -27,7 +27,7 @@ import {
   clientIncoterms, clientShippingMethods, addresses,
   csItems, vendors, factories, productClasses, productClassesEu,
   sustainabilityOptions, vendorIncoterms, vendorAddresses, componentKitItems,
-  projectNames,
+  projectNames, estimateFreightGroups,
 } from '../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
@@ -222,10 +222,15 @@ const SyncLineItemSchema = z.object({
   notes                : z.string().optional().nullable(),
   trueTariff           : z.string().max(255).optional().nullable(),
 
-  // Line-level freight group detail (legacy line columns, kept in sync with NS)
+  // Freight NS sends per line. These are consumed to build estimate_freight_groups
+  // (see buildFreightGroupsFromLines) and are intentionally NOT written to the
+  // line's freight_* columns.
   freightSelectedGroup : z.string().max(255).optional().nullable(),
   freightPol           : z.string().max(255).optional().nullable(),
   freightPod           : z.string().max(255).optional().nullable(),
+  // NS has sent POL/POD as uppercase keys; accept both casings (coalesced below).
+  freightPOL           : z.string().max(255).optional().nullable(),
+  freightPOD           : z.string().max(255).optional().nullable(),
   totalFreightCost     : z.string().optional().nullable(),   // numeric string
   freightCostPerUnit   : z.string().optional().nullable(),   // numeric string
   freightProvider      : z.string().max(255).optional().nullable(),
@@ -537,7 +542,12 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
       // 3. Upsert line items (parents first, then components)
       const lineResult = await upsertNsLineItems(tx, estimateId, lineItems ?? []);
 
-      return { estimateId, action, ...lineResult };
+      // 4. Build freight groups from the freight NetSuite sent per line.
+      //    Freight is stored ONLY in estimate_freight_groups (never the line
+      //    freight_* columns); each member line is linked via freight_group_id.
+      const freightGroupCount = await buildFreightGroupsFromLines(tx, estimateId, lineResult.parents);
+
+      return { estimateId, action, ...lineResult, freightGroupCount };
     });
 
     logger.info({
@@ -547,6 +557,7 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
       parents   : result.parentCount,
       components : result.componentCount,
       deleted   : result.deletedCount,
+      freightGroups: result.freightGroupCount,
       durationMs: Date.now() - startTime,
     }, 'Estimate synced from NetSuite');
 
@@ -556,6 +567,7 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
       documentNumber    : estData.documentNumber ?? null,
       _action           : result.action,
       lineItems         : { parents: result.parentCount, components: result.componentCount, deleted: result.deletedCount },
+      freightGroups     : result.freightGroupCount,
     });
   });
 
@@ -781,14 +793,9 @@ async function resolveLineItemValues(item: z.infer<typeof SyncLineItemSchema>) {
     notes              : item.notes ?? null,
     trueTariff         : item.trueTariff ?? null,
 
-    // Line-level freight group detail
-    freightSelectedGroup : item.freightSelectedGroup ?? null,
-    freightPol           : item.freightPol ?? null,
-    freightPod           : item.freightPod ?? null,
-    totalFreightCost     : item.totalFreightCost ?? null,
-    freightCostPerUnit   : item.freightCostPerUnit ?? null,
-    freightProvider      : item.freightProvider ?? null,
-    freightNotes         : item.freightNotes ?? null,
+    // NOTE: freight is intentionally NOT written to the line-item freight_*
+    // columns. All freight now lives in estimate_freight_groups; the inbound
+    // freight fields are consumed by buildFreightGroupsFromLines() instead.
 
     // Extended line fields
     paddingAmount        : item.paddingAmount ?? null,
@@ -828,7 +835,7 @@ async function upsertNsLineItems(
   await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, estimateId));
 
   if (items.length === 0) {
-    return { parentCount: 0, componentCount: 0, deletedCount: existing.length };
+    return { parentCount: 0, componentCount: 0, deletedCount: existing.length, parents: [] as Array<{ id: number; item: any }> };
   }
 
   let matched = 0;
@@ -865,5 +872,140 @@ async function upsertNsLineItems(
     parentCount  : items.length,
     componentCount,
     deletedCount : Math.max(0, existing.length - matched),
+    // Parent line id paired with its payload item, so freight groups can be
+    // built from the freight fields NetSuite sent (without touching line columns).
+    parents      : parentIds.map((id, i) => ({ id, item: items[i] as any })),
   };
+}
+
+// ── Freight groups built from the inbound freight NetSuite sends per line ─────
+//
+// NetSuite delivers freight alongside each line (freightSelectedGroup /
+// freightPol / freightPod / totalFreightCost / freightCostPerUnit /
+// freightProvider / freightNotes). By design that freight is NOT stored on the
+// estimate_line_items freight_* columns; it lives ONLY in estimate_freight_groups.
+// We group the payload lines by freightSelectedGroup, materialise one group row
+// per distinct value (freight written into the columns for the mapped mode), and
+// link each member line via freight_group_id. Runs inside the /sync transaction
+// and is idempotent (clears prior groups + links first) so re-syncs stay consistent.
+//
+// `parents` pairs each inserted parent line id with its original payload item,
+// which is where the freight fields are read from (the DB line columns are blank
+// by design).
+
+// Map the short freight code NS sends (e.g. "FCL", "LCL", "AIR") to a group mode.
+function mapFreightMode(code: string | null | undefined): 'OCEAN_LCL' | 'OCEAN_FCL' | 'AIR' | 'CUSTOM' {
+  const c = (code ?? '').trim().toUpperCase();
+  if (c.includes('LCL')) return 'OCEAN_LCL';
+  if (c.includes('FCL')) return 'OCEAN_FCL';
+  if (c.includes('AIR')) return 'AIR';
+  return 'CUSTOM';
+}
+
+// Coerce a numeric string / null to a finite number (0 fallback) for summing.
+function toNumOr0(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// Sanitise a value bound for a NUMERIC column: empty/blank/non-numeric -> null
+// (Postgres rejects "" for numeric, which would otherwise 500 the whole sync).
+function numStrOrNull(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (s === '') return null;
+  return Number.isFinite(Number(s)) ? s : null;
+}
+
+async function buildFreightGroupsFromLines(
+  tx: any,
+  estimateId: number,
+  parents: Array<{ id: number; item: any }>,
+): Promise<number> {
+  // Clear prior groups + links so re-sync is idempotent.
+  await tx.update(estimateLineItems)
+    .set({ freightGroupId: null } as any)
+    .where(eq(estimateLineItems.estimateId, estimateId));
+  await tx.delete(estimateFreightGroups).where(eq(estimateFreightGroups.estimateId, estimateId));
+
+  // Read freight straight from the payload items (POL/POD accept either casing).
+  const lines = parents.map(({ id, item }) => ({
+    id,
+    freightSelectedGroup: item?.freightSelectedGroup ?? null,
+    freightPol        : item?.freightPol ?? item?.freightPOL ?? null,
+    freightPod        : item?.freightPod ?? item?.freightPOD ?? null,
+    totalFreightCost  : item?.totalFreightCost ?? null,
+    freightCostPerUnit: item?.freightCostPerUnit ?? null,
+    freightProvider   : item?.freightProvider ?? null,
+    freightNotes      : item?.freightNotes ?? null,
+    totalCartons      : item?.totalCartons ?? null,
+    totalCbm          : item?.totalCbm ?? null,
+    chargeableWeightKg: item?.chargeableWeightKg ?? null,
+  }));
+
+  // Keep only lines that actually carry freight.
+  const freightLines = lines.filter((l: any) =>
+    (l.freightSelectedGroup && String(l.freightSelectedGroup).trim() !== '') ||
+    l.totalFreightCost != null || l.freightCostPerUnit != null);
+
+  if (freightLines.length === 0) return 0;
+
+  // Group lines by freightSelectedGroup (blank -> "Group 1").
+  const groups = new Map<string, any[]>();
+  for (const l of freightLines) {
+    const key = (l.freightSelectedGroup && String(l.freightSelectedGroup).trim()) || 'Group 1';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(l);
+  }
+
+  for (const [groupName, members] of groups) {
+    const mode  = mapFreightMode(groupName);
+    const first = members[0];
+
+    // Group total = sum of members' totalFreightCost; per-unit / POL / POD are
+    // taken from the first member (they are per-group in NS's model). For a
+    // single-line group (the common case) these equal the line's own values.
+    const total = members.some((m: any) => numStrOrNull(m.totalFreightCost) !== null)
+      ? String(members.reduce((s: number, m: any) => s + toNumOr0(m.totalFreightCost), 0))
+      : null;
+    const perUnit = numStrOrNull(first.freightCostPerUnit);   // NUMERIC col — never ""
+    const pol     = first.freightPol ?? null;
+    const pod     = first.freightPod ?? null;
+
+    const totalCartons = members.reduce((s: number, m: any) => s + toNumOr0(m.totalCartons), 0);
+    const totalCbm = members.some((m: any) => numStrOrNull(m.totalCbm) !== null)
+      ? String(members.reduce((s: number, m: any) => s + toNumOr0(m.totalCbm), 0)) : null;
+    const totalWeight = members.some((m: any) => numStrOrNull(m.chargeableWeightKg) !== null)
+      ? String(members.reduce((s: number, m: any) => s + toNumOr0(m.chargeableWeightKg), 0)) : null;
+
+    // Write freight into the columns for the selected mode. (CUSTOM has no
+    // POL/POD columns, so those are only kept for ocean/air modes.)
+    const modeCols: Record<string, unknown> =
+        mode === 'OCEAN_LCL' ? { oceanLclTotal: total, oceanLclPerUnit: perUnit, oceanLclPol: pol, oceanLclPod: pod }
+      : mode === 'OCEAN_FCL' ? { oceanFclTotal: total, oceanFclPerUnit: perUnit, oceanFclPol: pol, oceanFclPod: pod }
+      : mode === 'AIR'       ? { airTotal: total, airPerUnit: perUnit, airPol: pol, airPod: pod }
+      :                        { customTotal: total, customPerUnit: perUnit, customProvider: first.freightProvider ?? null, customNotes: first.freightNotes ?? null };
+
+    const memberIds = members.map((m: any) => m.id);
+
+    const [grp] = await tx.insert(estimateFreightGroups).values({
+      estimateId,
+      groupName,
+      freightModeSelected: mode,
+      itemIds     : memberIds,
+      numItems    : memberIds.length,
+      totalCartons,
+      totalCbm,
+      totalWeight,
+      ...modeCols,
+      syncStatus  : 'synced',
+      syncedAt    : new Date(),
+    } as any).returning({ id: estimateFreightGroups.id });
+
+    await tx.update(estimateLineItems)
+      .set({ freightGroupId: grp.id } as any)
+      .where(inArray(estimateLineItems.id, memberIds));
+  }
+
+  return groups.size;
 }
