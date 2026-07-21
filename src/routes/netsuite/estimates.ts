@@ -221,6 +221,36 @@ const SyncLineItemSchema = z.object({
   shipToVendorAddrNsId : z.string().optional().nullable(), // → vendor_addresses
   notes                : z.string().optional().nullable(),
   trueTariff           : z.string().max(255).optional().nullable(),
+
+  // Line-level freight group detail (legacy line columns, kept in sync with NS)
+  freightSelectedGroup : z.string().max(255).optional().nullable(),
+  freightPol           : z.string().max(255).optional().nullable(),
+  freightPod           : z.string().max(255).optional().nullable(),
+  totalFreightCost     : z.string().optional().nullable(),   // numeric string
+  freightCostPerUnit   : z.string().optional().nullable(),   // numeric string
+  freightProvider      : z.string().max(255).optional().nullable(),
+  freightNotes         : z.string().optional().nullable(),
+
+  // Extended line fields
+  paddingAmount        : z.string().optional().nullable(),   // numeric string
+  dutyMarkupAmount     : z.string().optional().nullable(),   // numeric string
+  shippingInstruction  : z.string().optional().nullable(),
+  additionalFeeInfo    : z.string().optional().nullable(),
+  vendorSku            : z.string().max(255).optional().nullable(),
+  lineComponents       : z.string().optional().nullable(),
+  // NS sends this as a string. Coerce to int; any empty/blank/non-numeric
+  // value becomes null so a bad id never NaNs or rejects the whole estimate.
+  previousLineId       : z.preprocess(
+    (v) => {
+      if (v === '' || v === null || v === undefined) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.trunc(n) : null;
+    },
+    z.number().int().nullable(),
+  ).optional(),
+  excludeFromPrint     : z.boolean().optional(),
+  converted            : z.boolean().optional(),
+
   selected             : z.boolean().optional(),
 });
 
@@ -750,6 +780,27 @@ async function resolveLineItemValues(item: z.infer<typeof SyncLineItemSchema>) {
     exFactoryDate      : item.exFactoryDate ?? null,
     notes              : item.notes ?? null,
     trueTariff         : item.trueTariff ?? null,
+
+    // Line-level freight group detail
+    freightSelectedGroup : item.freightSelectedGroup ?? null,
+    freightPol           : item.freightPol ?? null,
+    freightPod           : item.freightPod ?? null,
+    totalFreightCost     : item.totalFreightCost ?? null,
+    freightCostPerUnit   : item.freightCostPerUnit ?? null,
+    freightProvider      : item.freightProvider ?? null,
+    freightNotes         : item.freightNotes ?? null,
+
+    // Extended line fields
+    paddingAmount        : item.paddingAmount ?? null,
+    dutyMarkupAmount     : item.dutyMarkupAmount ?? null,
+    shippingInstruction  : item.shippingInstruction ?? null,
+    additionalFeeInfo    : item.additionalFeeInfo ?? null,
+    vendorSku            : item.vendorSku ?? null,
+    lineComponents       : item.lineComponents ?? null,
+    previousLineId       : item.previousLineId ?? null,
+    excludeFromPrint     : item.excludeFromPrint ?? false,
+    converted            : item.converted ?? false,
+
     selected           : item.selected ?? true,
     syncStatus         : 'synced' as const,
     syncedAt           : new Date(),
