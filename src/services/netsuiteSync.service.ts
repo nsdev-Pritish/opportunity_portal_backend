@@ -189,6 +189,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     sellCurrencyNSId    : currencyNsId,
     projectedTotalAmtNSId: String(est.projectedTotalAmt ?? ''),
     estimatedQtyNSId    : String(est.estimatedQty ?? ''),
+    adjustedPipelineAmountNS: String(est.adjustedPipeline ?? ''),
     departmentNSId      : deptNsId,
     salesChannelNSId    : channelNsId,
     businessVerticalNSId: bizVerticalNsId,

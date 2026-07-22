@@ -103,6 +103,7 @@ const CreateEstimateSchema = z.object({
   sellCurrencyNsId     : z.string().optional().nullable(),
   projectedTotalAmt    : z.string().optional().nullable(),
   estimatedQty         : z.number().int().optional().nullable(),
+  adjustedPipelineAmountNS: z.string().optional().nullable(),  // NS currency field → estimates.adjusted_pipeline
 
   // Classification
   departmentNsId       : z.string().optional().nullable(),
@@ -708,6 +709,7 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     sellCurrencyId       : await resolveNsId(currencies,         body.sellCurrencyNsId),
     projectedTotalAmt    : body.projectedTotalAmt,
     estimatedQty         : body.estimatedQty,
+    adjustedPipeline     : numStrOrNull(body.adjustedPipelineAmountNS),
     departmentId         : await resolveNsId(departments,        body.departmentNsId),
     salesChannelId       : await resolveNsId(salesChannels,      body.salesChannelNsId),
     businessVerticalId   : await resolveNsId(businessVerticals,  body.businessVerticalNsId),
@@ -775,6 +777,11 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
     'twelvePaysImportFrt','twelvePaysShipToCust'];
   for (const k of scalars) {
     if (k in body) updates[k] = body[k];
+  }
+
+  // Adjusted Pipeline — NS key differs from the column name; sanitise for NUMERIC.
+  if ('adjustedPipelineAmountNS' in body) {
+    updates.adjustedPipeline = numStrOrNull(body.adjustedPipelineAmountNS);
   }
 
   // FK fields — resolve *NsId → portal id
