@@ -878,6 +878,11 @@ export const estimateFreightGroups = pgTable('estimate_freight_groups', {
   syncError:  text('sync_error'),
   syncedAt:   timestamp('synced_at', { withTimezone: true }),
 
+  // Soft-delete flag. On an update where fewer groups are sent than exist, the surplus
+  // groups are deactivated (is_active=false) rather than hard-deleted, so their row id
+  // survives. All read paths filter on is_active=true.
+  isActive: boolean('is_active').default(true).notNull(),
+
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   // NOTE: the old chosen_type, sort_order and rate-ref columns from the original

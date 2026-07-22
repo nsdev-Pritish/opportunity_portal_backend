@@ -999,7 +999,12 @@ function numStrOrNull(v: unknown): string | null {
 // lines by NS internal id (resolved to portal line ids via nsIdToDbId).
 // freightModeSelected ("FCL"/"LCL"/"AIR"/… or canonical) selects the mode, and
 // the single freightTotal / freightPerUnit / freightPol / freightPod are written
-// into that mode's columns. Idempotent (clears prior groups + links first).
+// into that mode's columns.
+//
+// Position-diff (mirrors the portal persistFreightGroups): the Nth incoming group is
+// matched to the Nth EXISTING group (ordered by id) and UPDATED in place, so its row id
+// survives the sync; extra groups are INSERTed and surplus existing groups DELETEd.
+// This keeps freight-group ids stable across syncs instead of regenerating them each time.
 async function persistNsFreightGroups(
   tx: any,
   estimateId: number,
@@ -1009,9 +1014,29 @@ async function persistNsFreightGroups(
   await tx.update(estimateLineItems)
     .set({ freightGroupId: null } as any)
     .where(eq(estimateLineItems.estimateId, estimateId));
-  await tx.delete(estimateFreightGroups).where(eq(estimateFreightGroups.estimateId, estimateId));
 
-  if (!groups || groups.length === 0) return 0;
+  // Existing ACTIVE groups in stable (id) order, for positional matching.
+  const existing = await tx
+    .select({ id: estimateFreightGroups.id })
+    .from(estimateFreightGroups)
+    .where(and(
+      eq(estimateFreightGroups.estimateId, estimateId),
+      eq(estimateFreightGroups.isActive, true),
+    ))
+    .orderBy(asc(estimateFreightGroups.id));
+
+  if (!groups || groups.length === 0) {
+    // No groups sent → soft-delete any active ones (deactivate, keep the rows + ids).
+    if (existing.length > 0) {
+      await tx.update(estimateFreightGroups)
+        .set({ isActive: false, updatedAt: new Date() } as any)
+        .where(and(
+          eq(estimateFreightGroups.estimateId, estimateId),
+          eq(estimateFreightGroups.isActive, true),
+        ));
+    }
+    return 0;
+  }
 
   for (let idx = 0; idx < groups.length; idx++) {
     const g = groups[idx] as Record<string, any>;
@@ -1057,7 +1082,7 @@ async function persistNsFreightGroups(
       ? await resolveNsId(drayage, g.drayageNsId)
       : (g.drayageId ?? null);
 
-    const [grp] = await tx.insert(estimateFreightGroups).values({
+    const values = {
       estimateId,
       groupName          : g.groupName ?? `Group ${idx + 1}`,
       freightModeSelected: mode,
@@ -1071,13 +1096,35 @@ async function persistNsFreightGroups(
       syncStatus         : 'synced',
       syncedAt           : new Date(),
       updatedAt          : new Date(),
-    } as any).returning({ id: estimateFreightGroups.id });
+    };
+
+    let grp: { id: number };
+    if (idx < existing.length) {
+      // Position match → UPDATE in place, preserving the existing row id.
+      [grp] = await tx.update(estimateFreightGroups)
+        .set(values as any)
+        .where(eq(estimateFreightGroups.id, existing[idx].id))
+        .returning({ id: estimateFreightGroups.id });
+    } else {
+      // No existing group at this position → new group (fresh id).
+      [grp] = await tx.insert(estimateFreightGroups)
+        .values(values as any)
+        .returning({ id: estimateFreightGroups.id });
+    }
 
     if (memberIds.length > 0) {
       await tx.update(estimateLineItems)
         .set({ freightGroupId: grp.id } as any)
         .where(inArray(estimateLineItems.id, memberIds));
     }
+  }
+
+  // Soft-delete surplus existing groups beyond the incoming count (keep the rows + ids).
+  if (existing.length > groups.length) {
+    const surplusIds = existing.slice(groups.length).map((r: any) => r.id);
+    await tx.update(estimateFreightGroups)
+      .set({ isActive: false, updatedAt: new Date() } as any)
+      .where(inArray(estimateFreightGroups.id, surplusIds));
   }
 
   return groups.length;

@@ -447,7 +447,10 @@ async function otbBuildCreatePayload(estimateId: number) {
 
   // Freight groups — itemIds (line-item DB ids) → 1-based payload line numbers.
   const freightGroupRows = await db.select().from(estimateFreightGroups)
-    .where(eq(estimateFreightGroups.estimateId, estimateId))
+    .where(and(
+      eq(estimateFreightGroups.estimateId, estimateId),
+      eq(estimateFreightGroups.isActive, true),
+    ))
     .orderBy(estimateFreightGroups.id);
 
   if (freightGroupRows.length > 0) {

@@ -375,7 +375,10 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
   // Phase 3 – Freight groups. itemIds (stored as line-item DB ids) are translated to the
   // 1-based payload line numbers used in `payload.lines`, so NetSuite can resolve membership.
   const freightGroupRows = await db.select().from(estimateFreightGroups)
-    .where(eq(estimateFreightGroups.estimateId, estimateId))
+    .where(and(
+      eq(estimateFreightGroups.estimateId, estimateId),
+      eq(estimateFreightGroups.isActive, true),
+    ))
     .orderBy(asc(estimateFreightGroups.id));
 
   if (freightGroupRows.length > 0) {
@@ -453,7 +456,10 @@ async function markEstimateChildrenSync(
       .where(and(eq(estimateLineItems.estimateId, estimateId), eq(estimateLineItems.isActive, true))),
     db.update(estimateFreightGroups)
       .set(set as any)
-      .where(eq(estimateFreightGroups.estimateId, estimateId)),
+      .where(and(
+        eq(estimateFreightGroups.estimateId, estimateId),
+        eq(estimateFreightGroups.isActive, true),
+      )),
   ]);
 }
 

@@ -239,7 +239,10 @@ export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
         .orderBy(asc(estimateLineItems.estimateId), asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder)),
       db.select()
         .from(estimateFreightGroups)
-        .where(inArray(estimateFreightGroups.estimateId, estimateIds))
+        .where(and(
+          inArray(estimateFreightGroups.estimateId, estimateIds),
+          eq(estimateFreightGroups.isActive, true),
+        ))
         .orderBy(asc(estimateFreightGroups.estimateId), asc(estimateFreightGroups.id)),
     ]);
 
@@ -371,7 +374,10 @@ export async function getEstimate(id: number) {
       .orderBy(asc(estimateLineItems.lineNumber), asc(estimateLineItems.sortOrder)),
     db.select()
       .from(estimateFreightGroups)
-      .where(eq(estimateFreightGroups.estimateId, id))
+      .where(and(
+        eq(estimateFreightGroups.estimateId, id),
+        eq(estimateFreightGroups.isActive, true),
+      ))
       .orderBy(asc(estimateFreightGroups.id)),
   ]);
 
@@ -455,28 +461,59 @@ async function insertLineItemsWithComponents(
 }
 
 // ── Internal: persist freight groups + line-item back-references ──────────────
-// Replace-all strategy (matches how line items are reconciled): clear this estimate's
-// existing groups + the freight_group_id on its lines, then re-insert the incoming groups.
+// Position-diff strategy: the Nth incoming group is matched to the Nth EXISTING group
+// (ordered by id) and UPDATED in place, so its row id (and created_at) survive the edit.
+// Extra incoming groups are INSERTed; surplus existing groups are DELETEd. This preserves
+// stable freight-group ids across an update instead of churning them on every save.
+//   • matched group (idx < existing) → UPDATE in place (row id preserved)
+//   • new group      (idx ≥ existing) → INSERT (fresh id)
+//   • surplus group  (existing > incoming) → DELETE
+// Position matching assumes the frontend keeps group order and appends new groups at the
+// end; a UI that REORDERS groups will shuffle which id maps to which group.
 //
 // Membership contract: each incoming group.itemIds entry is the 0-based index of a parent
 // line item in the request's lineItems array. We translate those indices to the inserted/
 // updated DB row ids (via `parents`, which is in lineItems order), store the resolved ids on
 // the group, and set freight_group_id on each member line so the link exists both ways.
+//
+// NOTE: an UPDATE only writes the columns present in the payload (same columns the INSERT
+// wrote). The freight edit form sends the full group object, so this is behaviour-identical
+// to the old delete+recreate — except the id is now preserved.
 async function persistFreightGroups(
   tx: any,
   estimateId: number,
   groups: Record<string, unknown>[] | undefined,
   parents: any[],
 ): Promise<any[]> {
-  // Clear existing links + groups for this estimate (no-op on create).
+  // Clear existing membership links; they are re-established below from incoming membership.
   await tx.update(estimateLineItems)
     .set({ freightGroupId: null })
     .where(eq(estimateLineItems.estimateId, estimateId));
-  await tx.delete(estimateFreightGroups).where(eq(estimateFreightGroups.estimateId, estimateId));
 
-  if (!groups || groups.length === 0) return [];
+  // Existing ACTIVE groups in stable (id) order, for positional matching.
+  const existing = await tx
+    .select({ id: estimateFreightGroups.id })
+    .from(estimateFreightGroups)
+    .where(and(
+      eq(estimateFreightGroups.estimateId, estimateId),
+      eq(estimateFreightGroups.isActive, true),
+    ))
+    .orderBy(asc(estimateFreightGroups.id));
 
-  const inserted: any[] = [];
+  if (!groups || groups.length === 0) {
+    // No groups sent → soft-delete any active ones (deactivate, keep the rows + ids).
+    if (existing.length > 0) {
+      await tx.update(estimateFreightGroups)
+        .set({ isActive: false, updatedAt: new Date() })
+        .where(and(
+          eq(estimateFreightGroups.estimateId, estimateId),
+          eq(estimateFreightGroups.isActive, true),
+        ));
+    }
+    return [];
+  }
+
+  const persisted: any[] = [];
   for (let idx = 0; idx < groups.length; idx++) {
     const { itemIds: rawIdx, ...rest } = groups[idx] as Record<string, unknown>;
 
@@ -487,17 +524,29 @@ async function persistFreightGroups(
           .filter((v): v is number => typeof v === 'number')
       : [];
 
-    const [group] = await tx.insert(estimateFreightGroups)
-      .values({
-        ...rest,
-        estimateId,
-        groupName: (rest.groupName as string) ?? `Group ${idx + 1}`,
-        itemIds: memberIds,
-        numItems: (rest.numItems as number) ?? memberIds.length,
-        updatedAt: new Date(),
-      } as any)
-      .returning();
-    inserted.push(group);
+    const values = {
+      ...rest,
+      estimateId,
+      groupName: (rest.groupName as string) ?? `Group ${idx + 1}`,
+      itemIds: memberIds,
+      numItems: (rest.numItems as number) ?? memberIds.length,
+      updatedAt: new Date(),
+    };
+
+    let group: any;
+    if (idx < existing.length) {
+      // Position match → UPDATE in place, preserving the existing row id + created_at.
+      [group] = await tx.update(estimateFreightGroups)
+        .set(values as any)
+        .where(eq(estimateFreightGroups.id, existing[idx].id))
+        .returning();
+    } else {
+      // No existing group at this position → new group (fresh id).
+      [group] = await tx.insert(estimateFreightGroups)
+        .values(values as any)
+        .returning();
+    }
+    persisted.push(group);
 
     if (memberIds.length > 0) {
       await tx.update(estimateLineItems)
@@ -505,7 +554,16 @@ async function persistFreightGroups(
         .where(inArray(estimateLineItems.id, memberIds));
     }
   }
-  return inserted;
+
+  // Soft-delete surplus existing groups beyond the incoming count (keep the rows + ids).
+  if (existing.length > groups.length) {
+    const surplusIds = existing.slice(groups.length).map((r: any) => r.id);
+    await tx.update(estimateFreightGroups)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(inArray(estimateFreightGroups.id, surplusIds));
+  }
+
+  return persisted;
 }
 
 // ── Internal: in-place diff upsert for UPDATE ─────────────────────────────────
@@ -938,7 +996,10 @@ export async function resyncEstimate(id: number) {
       .where(and(eq(estimateLineItems.estimateId, id), eq(estimateLineItems.isActive, true))),
     db.update(estimateFreightGroups)
       .set({ syncStatus: 'pending', syncError: null } as any)
-      .where(eq(estimateFreightGroups.estimateId, id)),
+      .where(and(
+        eq(estimateFreightGroups.estimateId, id),
+        eq(estimateFreightGroups.isActive, true),
+      )),
   ]);
 
   // Use 'create' if NS never received the record, 'update' if it did
