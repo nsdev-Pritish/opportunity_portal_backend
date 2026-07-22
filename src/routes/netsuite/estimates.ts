@@ -741,6 +741,13 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     twelvePaysImportFrt  : body.twelvePaysImportFrt,
     twelvePaysShipToCust : body.twelvePaysShipToCust,
     source               : 'netsuite' as const,
+    // Record came FROM NetSuite → it is in sync at this moment. Mirrors the line-item
+    // + freight-group builders, which already stamp 'synced'. Without this the header
+    // fell back to the column default ('pending'). A later portal edit re-flags it
+    // 'dirty' via updateEstimateWithItems, so outbound push still works.
+    syncStatus           : 'synced' as const,
+    syncedAt             : new Date(),
+    syncError            : null,
   };
 }
 
