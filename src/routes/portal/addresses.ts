@@ -22,7 +22,7 @@ import {
 const CreateAddressBody = z.object({
   customerId: z.number({ required_error: 'Customer is required' }).int().positive(),
   type: z.enum(['shipping', 'billing']).optional().default('shipping'),
-  label: z.string().max(100).optional().nullable(),
+  label: z.string().max(500).optional().nullable(),
   country: z.string().max(100).optional().nullable(),
   attention: z.string().max(255).optional().nullable(),
   addressee: z.string().max(255).optional().nullable(),

@@ -611,7 +611,10 @@ export async function syncEstimateToNetsuite(
       internalId?    : string;
       tranId?        : string;
       documentNumber?: string;
-      adjustedPipelineAmountNS?: string;
+      // NetSuite sends `adjustedPipelineAmount` on the create/update response; older
+      // suitelet builds used the `...NS` suffix, so accept both. May arrive as a number.
+      adjustedPipelineAmount?: string | number;
+      adjustedPipelineAmountNS?: string | number;
       // NS transaction date echoed back on the create/update response (MM/DD/YYYY).
       trandateNS?    : string;
       quoteId?       : string;
@@ -631,7 +634,8 @@ export async function syncEstimateToNetsuite(
     const nsInternalId   = nsResp.id     || nsResp.internalId     || undefined;
     const documentNumber = nsResp.tranId || nsResp.documentNumber || undefined;
     // Adjusted Pipeline is returned by NetSuite on the create/update response.
-    const adjustedPipeline = nsResp.adjustedPipelineAmountNS;
+    // Prefer the current key `adjustedPipelineAmount`, fall back to the legacy `...NS` key.
+    const adjustedPipeline = nsResp.adjustedPipelineAmount ?? nsResp.adjustedPipelineAmountNS;
     // NS transaction date — NetSuite is the source of truth for trandate. Stored
     // as-is in whatever format NetSuite sends.
     const trandate = nsResp.trandateNS;
@@ -664,7 +668,8 @@ export async function syncEstimateToNetsuite(
       if (nsInternalId)   setData.netsuiteInternalId = nsInternalId;
       if (documentNumber) setData.documentNumber     = documentNumber;
       // Write back Adjusted Pipeline when NetSuite returns it (skip blank — numeric column).
-      if (adjustedPipeline !== undefined && adjustedPipeline !== '') setData.adjustedPipeline = adjustedPipeline;
+      // NS may send a number; the numeric column expects a string, so coerce.
+      if (adjustedPipeline !== undefined && adjustedPipeline !== null && adjustedPipeline !== '') setData.adjustedPipeline = String(adjustedPipeline);
       // Write back the NS transaction date when NetSuite returns one.
       if (trandate) setData.trandate = trandate;
 
