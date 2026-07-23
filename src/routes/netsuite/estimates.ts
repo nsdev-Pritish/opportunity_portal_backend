@@ -15,7 +15,7 @@
  */
 
 import { FastifyInstance } from 'fastify';
-import { eq, desc, asc, and, inArray } from 'drizzle-orm';
+import { eq, desc, asc, and, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../config/database.js';
 import {
@@ -210,6 +210,18 @@ const CreateEstimateWithItemsSchema = z.object({
 
 const SyncLineItemSchema = z.object({
   netsuiteInternalId   : z.string().optional().nullable(), // NS line id — used to match existing line
+  // Portal DB line id echoed back by NetSuite (stored in a custom line column). This is the
+  // STABLE identity used to match an incoming line to its existing portal row — NetSuite's own
+  // internal id churns on every save, so it can't be trusted. Empty/blank/0 for lines created
+  // fresh in NetSuite (no portal row yet) — those are inserted and their new id is returned.
+  reactDbLineIdNS      : z.preprocess(
+    (v) => {
+      if (v === '' || v === null || v === undefined) return null;
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+    },
+    z.number().int().positive().nullable(),
+  ).optional(),
   itemTypeNsId         : z.string().optional().nullable(), // → cs_items
   componentKitItemNsId : z.string().optional().nullable(), // → component_kit_items (for components)
   shortDescription     : z.string().max(500).optional().nullable(),
@@ -656,6 +668,10 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
       _action           : result.action,
       lineItems         : { parents: result.parentCount, components: result.componentCount, deleted: result.deletedCount },
       freightGroups     : result.freightGroupCount,
+      // Echo every active line's portal DB id back under reactDbLineIdNS so NetSuite can
+      // store it in its custom line column — this is the STABLE key both sides match on.
+      // Lines NetSuite created without a portal id now receive their freshly-minted id here.
+      lines             : result.lineIdMap,
     });
   });
 
@@ -915,77 +931,176 @@ async function resolveLineItemValues(item: z.infer<typeof SyncLineItemSchema>) {
   };
 }
 
-// Upsert all line items for an estimate, matching by NS line internal id.
-// Strategy: delete all existing rows (clears lineNumber slots), then re-insert.
-// Rows whose NS id matched an existing row keep that same portal id; new NS lines
-// get fresh ids; existing rows absent from the payload are dropped.
+// lineNumber is unique per estimate among ACTIVE rows only (partial unique index), so before
+// renumbering we shift survivors' lineNumber out of the target range to avoid transient
+// unique-index collisions.
+const LINE_NUMBER_PARK = 1_000_000;
+
+// Upsert all line items for an estimate, matched by the portal DB line id that NetSuite stores
+// and echoes back as `reactDbLineIdNS`. NetSuite reassigns its own internal id on every save, so
+// the DB id — an id the PORTAL owns — is the only stable identity to match on:
+//   • reactDbLineIdNS matches an existing row  → UPDATE in place (row id + every reference to
+//     it, e.g. freight-group itemIds / parentLineItemId, is PRESERVED)
+//   • reactDbLineIdNS blank/unknown (new line) → INSERT (fresh id; returned so NetSuite stores it)
+//   • existing ACTIVE row not in the payload   → SOFT-delete (is_active=false) — the row + its
+//     netsuite_internal_id survive for the UI's active-only reads and NetSuite deactivation
+// NetSuite's freshly-generated internal id is written into netsuite_internal_id every time, so
+// our stored copy always tracks NetSuite's latest value.
 async function upsertNsLineItems(
   tx: any,
   estimateId: number,
   items: Array<z.infer<typeof SyncLineItemWithComponentsSchema>>,
 ) {
   const existing = await tx
-    .select({ id: estimateLineItems.id, nsId: estimateLineItems.netsuiteInternalId })
+    .select({ id: estimateLineItems.id, isActive: estimateLineItems.isActive })
     .from(estimateLineItems)
     .where(eq(estimateLineItems.estimateId, estimateId));
+  const existingIds = new Set<number>(existing.map((r: any) => r.id));
 
-  const nsToPortalId = new Map<string, number>();
-  for (const r of existing) { if (r.nsId) nsToPortalId.set(r.nsId, r.id); }
+  const activeOnly = and(
+    eq(estimateLineItems.estimateId, estimateId),
+    eq(estimateLineItems.isActive, true),
+  );
 
-  // Delete all — avoids (estimateId, lineNumber) unique-constraint collisions
-  await tx.delete(estimateLineItems).where(eq(estimateLineItems.estimateId, estimateId));
+  // NS line internal id -> final portal line id, so freight groups can resolve itemNsIds.
+  const nsIdToDbId = new Map<string, number>();
+  // Echo-back: every active line's portal id + its current NS id, returned so NetSuite can
+  // store the portal id (especially for lines it created that had no portal id yet).
+  const lineIdMap: Array<{ reactDbLineIdNS: number; netsuiteInternalId: string | null; lineNumber: number }> = [];
 
   if (items.length === 0) {
-    return {
-      parentCount: 0, componentCount: 0, deletedCount: existing.length,
-      nsIdToDbId: new Map<string, number>(),
-    };
+    // Every line removed in NetSuite → soft-delete all currently-active rows.
+    const removed = await tx.select({ id: estimateLineItems.id })
+      .from(estimateLineItems).where(activeOnly);
+    if (removed.length > 0) {
+      await tx.update(estimateLineItems)
+        .set({ isActive: false, updatedAt: new Date() })
+        .where(activeOnly);
+    }
+    return { parentCount: 0, componentCount: 0, deletedCount: removed.length, nsIdToDbId, lineIdMap };
   }
 
-  let matched = 0;
-  let lineCounter = 1;
-
-  // NS line internal id -> inserted portal line id, so freight groups can
-  // resolve their itemNsIds to real line ids.
-  const nsIdToDbId = new Map<string, number>();
-
-  // Pass 1: parents
-  const parentIds: number[] = [];
-  for (let i = 0; i < items.length; i++) {
-    const { components: _comps, ...rest } = items[i] as any;
+  // ── Phase 1: build the match plan (resolve values; find the matched old row) ──
+  // oldId = existing row this line maps to (by reactDbLineIdNS scoped to THIS estimate), or null.
+  type Plan = { oldId: number | null; vals: Record<string, unknown> };
+  const parentPlan: (Plan & { components: any[] })[] = [];
+  for (const item of items as any[]) {
+    const { components, reactDbLineIdNS, ...rest } = item;
     const vals = await resolveLineItemValues(rest);
-    const portalId = vals.netsuiteInternalId ? nsToPortalId.get(vals.netsuiteInternalId) : undefined;
-    if (portalId) matched++;
-    const [row] = await tx.insert(estimateLineItems)
-      .values({ ...(portalId ? { id: portalId } : {}), ...vals, estimateId, lineNumber: lineCounter++, sortOrder: i, parentLineItemId: null } as any)
-      .returning({ id: estimateLineItems.id });
-    parentIds.push(row.id);
-    if (vals.netsuiteInternalId) nsIdToDbId.set(vals.netsuiteInternalId, row.id);
+    const oldId = reactDbLineIdNS && existingIds.has(reactDbLineIdNS) ? (reactDbLineIdNS as number) : null;
+    parentPlan.push({ oldId, vals, components: components ?? [] });
   }
 
-  // Pass 2: components (nested under their parent)
-  let componentCount = 0;
-  for (let i = 0; i < items.length; i++) {
-    const comps = (items[i] as any).components ?? [];
+  const compPlan: (Plan & { parentIdx: number; sortOrder: number })[] = [];
+  for (let i = 0; i < parentPlan.length; i++) {
+    const comps = parentPlan[i].components;
     for (let j = 0; j < comps.length; j++) {
-      const vals = await resolveLineItemValues(comps[j]);
-      const portalId = vals.netsuiteInternalId ? nsToPortalId.get(vals.netsuiteInternalId) : undefined;
-      if (portalId) matched++;
-      const [row] = await tx.insert(estimateLineItems)
-        .values({ ...(portalId ? { id: portalId } : {}), ...vals, estimateId, lineNumber: lineCounter++, sortOrder: j, parentLineItemId: parentIds[i] } as any)
-        .returning({ id: estimateLineItems.id });
-      if (vals.netsuiteInternalId) nsIdToDbId.set(vals.netsuiteInternalId, row.id);
-      componentCount++;
+      const { reactDbLineIdNS, ...rest } = comps[j];
+      const vals = await resolveLineItemValues(rest);
+      const oldId = reactDbLineIdNS && existingIds.has(reactDbLineIdNS) ? (reactDbLineIdNS as number) : null;
+      compPlan.push({ oldId, vals, parentIdx: i, sortOrder: j });
     }
   }
+
+  const keptIds = new Set<number>(
+    [...parentPlan, ...compPlan].filter(p => p.oldId != null).map(p => p.oldId!),
+  );
+
+  // ── Phase 2: soft-delete active rows NetSuite no longer sends ─────────────────
+  const toSoftDelete = existing
+    .filter((r: any) => r.isActive && !keptIds.has(r.id))
+    .map((r: any) => r.id);
+  if (toSoftDelete.length > 0) {
+    await tx.update(estimateLineItems)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(inArray(estimateLineItems.id, toSoftDelete));
+  }
+
+  // ── Phase 3: park survivors' line numbers out of the 1..N target range ────────
+  // Only active rows carry the (estimateId, lineNumber) unique index, so parking them
+  // frees the low range for the renumber below without transient collisions.
+  if (keptIds.size > 0) {
+    await tx.update(estimateLineItems)
+      .set({ lineNumber: sql`${estimateLineItems.lineNumber} + ${LINE_NUMBER_PARK}` })
+      .where(activeOnly);
+  }
+
+  // ── Flattened numbering: each parent immediately followed by its own components ──
+  const compIdxByParent = new Map<number, number[]>();
+  compPlan.forEach((c, ci) => {
+    const arr = compIdxByParent.get(c.parentIdx) ?? [];
+    arr.push(ci);
+    compIdxByParent.set(c.parentIdx, arr);
+  });
+  const parentLineNumber: number[] = [];
+  const compLineNumber: number[] = [];
+  let lineNo = 1;
+  for (let i = 0; i < parentPlan.length; i++) {
+    parentLineNumber[i] = lineNo++;
+    for (const ci of (compIdxByParent.get(i) ?? [])) compLineNumber[ci] = lineNo++;
+  }
+
+  // ── Phase 4: parents — UPDATE matched rows in place, INSERT new ones ──────────
+  const parentFinalId: number[] = [];
+  for (let i = 0; i < parentPlan.length; i++) {
+    const p = parentPlan[i];
+    // isActive:true reactivates a previously soft-deleted row whose portal id returned.
+    const common = { lineNumber: parentLineNumber[i], sortOrder: i, parentLineItemId: null, isActive: true };
+    let row: { id: number };
+    if (p.oldId != null) {
+      [row] = await tx.update(estimateLineItems)
+        .set({ ...p.vals, ...common, updatedAt: new Date() } as any)
+        .where(eq(estimateLineItems.id, p.oldId))
+        .returning({ id: estimateLineItems.id });
+    } else {
+      [row] = await tx.insert(estimateLineItems)
+        .values({ ...p.vals, ...common, estimateId } as any)
+        .returning({ id: estimateLineItems.id });
+    }
+    parentFinalId[i] = row.id;
+    const nsId = (p.vals.netsuiteInternalId as string | null) ?? null;
+    if (nsId) nsIdToDbId.set(nsId, row.id);
+    lineIdMap.push({ reactDbLineIdNS: row.id, netsuiteInternalId: nsId, lineNumber: parentLineNumber[i] });
+  }
+
+  // ── Phase 5: components — UPDATE matched rows in place, INSERT new ones ────────
+  let componentCount = 0;
+  for (let ci = 0; ci < compPlan.length; ci++) {
+    const c = compPlan[ci];
+    const common = { lineNumber: compLineNumber[ci], sortOrder: c.sortOrder, parentLineItemId: parentFinalId[c.parentIdx], isActive: true };
+    let row: { id: number };
+    if (c.oldId != null) {
+      [row] = await tx.update(estimateLineItems)
+        .set({ ...c.vals, ...common, updatedAt: new Date() } as any)
+        .where(eq(estimateLineItems.id, c.oldId))
+        .returning({ id: estimateLineItems.id });
+    } else {
+      [row] = await tx.insert(estimateLineItems)
+        .values({ ...c.vals, ...common, estimateId } as any)
+        .returning({ id: estimateLineItems.id });
+    }
+    const nsId = (c.vals.netsuiteInternalId as string | null) ?? null;
+    if (nsId) nsIdToDbId.set(nsId, row.id);
+    lineIdMap.push({ reactDbLineIdNS: row.id, netsuiteInternalId: nsId, lineNumber: compLineNumber[ci] });
+    componentCount++;
+  }
+
+  logger.info({
+    estimateId,
+    existingIds: [...existingIds],
+    kept       : [...keptIds],
+    softDeleted: toSoftDelete,
+  }, 'upsertNsLineItems: matched by reactDbLineIdNS (update kept, insert new, soft-delete removed)');
 
   return {
     parentCount  : items.length,
     componentCount,
-    deletedCount : Math.max(0, existing.length - matched),
+    deletedCount : toSoftDelete.length,
     // NS line id -> portal line id, so an explicit freightGroups[] payload can
-    // resolve its itemNsIds to inserted line rows.
+    // resolve its itemNsIds to line rows.
     nsIdToDbId,
+    // Portal line ids to echo back to NetSuite under reactDbLineIdNS.
+    lineIdMap,
   };
 }
 

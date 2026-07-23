@@ -290,6 +290,9 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
       lines[String(i + 1)] = {
         // NS line internal id for already-synced lines; omitted for brand-new lines
         ...(li.netsuiteInternalId ? { lineId: li.netsuiteInternalId } : {}),
+        // Portal DB line id — the STABLE identity NetSuite must store and echo back so
+        // each line can be matched regardless of NetSuite's (churning) internal id.
+        reactDbLineIdNS        : li.id,
          itemTypeIdNSId         : isComponent ? toNsNum(componentKitItemNsId) : toNsNum(itemTypeNsId),
       shortDescriptionNS     : li.shortDescription ?? '',
       descriptionNS          : li.description ?? '',

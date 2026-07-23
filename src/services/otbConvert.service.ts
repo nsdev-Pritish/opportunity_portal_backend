@@ -364,6 +364,9 @@ async function otbBuildCreatePayload(estimateId: number) {
 
       lines[String(i + 1)] = {
         ...(li.netsuiteInternalId ? { lineId: li.netsuiteInternalId } : {}),
+        // Portal DB line id — the STABLE identity NetSuite stores + echoes back so each
+        // line is matched regardless of NetSuite's (churning) internal id.
+        reactDbLineIdNS        : li.id,
         itemTypeIdNSId         : isComponent ? otbToNsNum(componentKitItemNsId) : otbToNsNum(itemTypeNsId),
         shortDescriptionNS     : li.shortDescription ?? '',
         descriptionNS          : li.description ?? '',
