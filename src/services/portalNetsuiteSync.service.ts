@@ -20,7 +20,7 @@
 
 import { and, eq, ne } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
-import { addresses, contacts, customers, projectNames, projectTypes } from '../db/schema/index.js';
+import { addresses, contacts, countries, customers, projectNames, projectTypes, states } from '../db/schema/index.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { postToSuitelet } from '../utils/netsuiteClient.js';
@@ -61,6 +61,21 @@ async function getCustomerNsId(customerId: number | null | undefined): Promise<s
     .select({ nsId: customers.netsuiteInternalId })
     .from(customers)
     .where(eq(customers.id, customerId))
+    .limit(1);
+  return row?.nsId ?? null;
+}
+
+/** Look up a master row's NetSuite internal id by local id (used for country/state links). */
+async function getMasterNsId(
+  table: typeof countries | typeof states,
+  id: number | null | undefined,
+): Promise<string | null> {
+  if (!id) return null;
+  const db = getDb();
+  const [row] = await db
+    .select({ nsId: table.netsuiteInternalId })
+    .from(table)
+    .where(eq(table.id, id))
     .limit(1);
   return row?.nsId ?? null;
 }
@@ -135,16 +150,25 @@ async function syncAddressToNetsuite(
       return skipped();
     }
 
+    // Resolve the linked country/state → their NetSuite internal ids so NetSuite can reference
+    // the actual records. The free-text country/state are still sent for display / fallback.
+    const [countryNSId, stateNSId] = await Promise.all([
+      getMasterNsId(countries, row.countryId),
+      getMasterNsId(states, row.stateId),
+    ]);
+
     const payload = {
       mode,
       customerNSId,
       country:   row.country   ?? '',
+      countryNSId: countryNSId ?? '',
       attention: row.attention ?? '',
       addressee: row.addressee ?? '',
       address1:  row.addrLine1 ?? '',
       address2:  row.addrLine2 ?? '',
       city:      row.city      ?? '',
       state:     row.state     ?? '',
+      stateNSId:  stateNSId ?? '',
       zip:       row.postalCode ?? '',
     };
 

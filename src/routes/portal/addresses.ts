@@ -5,6 +5,10 @@
  *  POST /api/v1/portal/addresses/billing           → create new billing address (from modal)
  *  GET  /api/v1/portal/addresses/shipping?customerId=5  → list shipping addresses for customer
  *  GET  /api/v1/portal/addresses/billing?customerId=5   → list billing addresses for customer
+ *  PATCH /api/v1/portal/addresses/:id               → edit an existing address (incl. country/state)
+ *
+ * Country / State: pass countryId + stateId (preferred) or free-text country/state.
+ * The backend resolves the names, validates the state belongs to the country, and stores both.
  */
 
 import { FastifyInstance } from 'fastify';
@@ -13,7 +17,8 @@ import { eq, and } from 'drizzle-orm';
 import { getDb } from '../../config/database.js';
 import { addresses, customers } from '../../db/schema/index.js';
 import { invalidateDropdown } from '../../utils/cache.js';
-import { ValidationError } from '../../utils/errors.js';
+import { NotFoundError, ValidationError } from '../../utils/errors.js';
+import { resolveCountryState, hasGeoFields } from '../../services/geo.service.js';
 import {
   syncShippingAddressToNetsuite,
   syncBillingAddressToNetsuite,
@@ -23,6 +28,10 @@ const CreateAddressBody = z.object({
   customerId: z.number({ required_error: 'Customer is required' }).int().positive(),
   type: z.enum(['shipping', 'billing']).optional().default('shipping'),
   label: z.string().max(100).optional().nullable(),
+  // Country / State can be supplied either as master-dropdown ids (preferred) or as free text.
+  // When ids are given the names are resolved from the master tables (see createAddress).
+  countryId: z.number().int().positive().optional().nullable(),
+  stateId: z.number().int().positive().optional().nullable(),
   country: z.string().max(100).optional().nullable(),
   attention: z.string().max(255).optional().nullable(),
   addressee: z.string().max(255).optional().nullable(),
@@ -48,19 +57,25 @@ async function createAddress(body: z.infer<typeof CreateAddressBody>, type: 'shi
     throw new ValidationError(`Customer with id '${body.customerId}' not found.`);
   }
 
+  // Resolve country/state from ids or free text (validates state↔country). The FK ids drive
+  // the relation; the resolved names populate the free-text columns the NetSuite sync reads.
+  const geo = await resolveCountryState(body);
+
   const [created] = await db
     .insert(addresses)
     .values({
       customerId: body.customerId,
       type,
       label: body.label ?? null,
-      country: body.country ?? null,
+      countryId: geo.countryId,
+      stateId: geo.stateId,
+      country: geo.country,
       attention: body.attention ?? null,
       addressee: body.addressee ?? null,
       addrLine1: body.addrLine1 ?? null,
       addrLine2: body.addrLine2 ?? null,
       city: body.city ?? null,
-      state: body.state ?? null,
+      state: geo.state,
       postalCode: body.postalCode ?? null,
       companyName: body.companyName ?? null,
       phone: body.phone ?? null,
@@ -96,6 +111,42 @@ async function createAddress(body: z.infer<typeof CreateAddressBody>, type: 'shi
   };
 }
 
+const UpdateAddressBody = CreateAddressBody.partial();
+
+async function updateAddress(id: number, body: z.infer<typeof UpdateAddressBody>) {
+  const db = getDb();
+
+  const [existing] = await db.select().from(addresses).where(eq(addresses.id, id)).limit(1);
+  if (!existing) throw new NotFoundError('Address', id);
+
+  // Only re-resolve country/state when the payload actually references them, so a partial
+  // update (e.g. just renaming the label) never wipes the existing FK link.
+  let geoPatch: Record<string, unknown> = {};
+  if (hasGeoFields(body)) {
+    const geo = await resolveCountryState({
+      // fall back to the stored values so a partial geo update still validates correctly
+      countryId: body.countryId ?? undefined,
+      stateId: body.stateId ?? undefined,
+      country: body.country ?? undefined,
+      state: body.state ?? undefined,
+    });
+    geoPatch = { countryId: geo.countryId, stateId: geo.stateId, country: geo.country, state: geo.state };
+  }
+
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  for (const k of ['label', 'attention', 'addressee', 'addrLine1', 'addrLine2',
+    'city', 'postalCode', 'companyName', 'phone'] as const) {
+    if (k in body) patch[k] = body[k] ?? null;
+  }
+
+  const [updated] = await db.update(addresses)
+    .set({ ...patch, ...geoPatch })
+    .where(eq(addresses.id, id))
+    .returning();
+  await invalidateDropdown('addresses');
+  return updated;
+}
+
 async function listAddresses(customerId: number | undefined, type: 'shipping' | 'billing') {
   const db = getDb();
 
@@ -109,6 +160,8 @@ async function listAddresses(customerId: number | undefined, type: 'shipping' | 
       customerId: addresses.customerId,
       type: addresses.type,
       label: addresses.label,
+      countryId: addresses.countryId,
+      stateId: addresses.stateId,
       country: addresses.country,
       attention: addresses.attention,
       addressee: addresses.addressee,
@@ -174,5 +227,14 @@ export default async function portalAddressRoutes(app: FastifyInstance) {
     const body = CreateAddressBody.parse(req.body);
     const result = await createAddress(body, 'billing');
     return reply.status(201).send(result);
+  });
+
+  // ── Update ─────────────────────────────────────────────────────
+
+  // PATCH /api/v1/portal/addresses/:id — edit an existing address (any type).
+  // Re-resolves country/state only when those fields are present in the body.
+  app.patch<{ Params: { id: string }; Body: unknown }>('/:id', async (req) => {
+    const body = UpdateAddressBody.parse(req.body);
+    return updateAddress(parseInt(req.params.id), body);
   });
 }

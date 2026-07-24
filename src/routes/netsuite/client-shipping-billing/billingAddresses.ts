@@ -33,6 +33,7 @@ import { getDb } from '../../../config/database.js';
 import { addresses, customers } from '../../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../../utils/errors.js';
 import { invalidateDropdown } from '../../../utils/cache.js';
+import { resolveCountryState, hasGeoFields } from '../../../services/geo.service.js';
 
 const ADDRESS_TYPE = 'billing';
 
@@ -44,6 +45,12 @@ const CreateSchema = z.object({
   attention          : z.string().max(255).optional().nullable(),
   addressee          : z.string().max(255).optional().nullable(),
   phone              : z.string().max(50).optional().nullable(),
+  // Country / State — link to the master dropdowns. Preferred: countryNsId / stateNsId
+  // (NetSuite internal ids). Also accepts local ids or free-text country/state (name or code).
+  countryNsId        : z.string().optional().nullable(),
+  stateNsId          : z.string().optional().nullable(),
+  countryId          : z.number().int().positive().optional().nullable(),
+  stateId            : z.number().int().positive().optional().nullable(),
   country            : z.string().max(100).optional().nullable(),
   addrLine1          : z.string().max(255).optional().nullable(),
   addrLine2          : z.string().max(255).optional().nullable(),
@@ -139,6 +146,9 @@ export default async function billingAddressRoutes(app: FastifyInstance) {
       .limit(1);
     if (!customer) throw new ValidationError(`Customer with NetSuite ID ${body.customerNetsuiteId} not found`);
 
+    // Resolve country/state (by NS id, local id, or free text) → FK ids + canonical names.
+    const geo = await resolveCountryState(body);
+
     const [existing] = await db
       .select({ id: addresses.id })
       .from(addresses)
@@ -157,11 +167,13 @@ export default async function billingAddressRoutes(app: FastifyInstance) {
           attention   : body.attention,
           addressee   : body.addressee,
           phone       : body.phone,
-          country     : body.country,
+          countryId   : geo.countryId,
+          stateId     : geo.stateId,
+          country     : geo.country,
           addrLine1   : body.addrLine1,
           addrLine2   : body.addrLine2,
           city        : body.city,
-          state       : body.state,
+          state       : geo.state,
           postalCode  : body.postalCode,
           syncStatus  : 'synced',
           syncedAt    : new Date(),
@@ -183,11 +195,13 @@ export default async function billingAddressRoutes(app: FastifyInstance) {
         attention          : body.attention,
         addressee          : body.addressee,
         phone              : body.phone,
-        country            : body.country,
+        countryId          : geo.countryId,
+        stateId            : geo.stateId,
+        country            : geo.country,
         addrLine1          : body.addrLine1,
         addrLine2          : body.addrLine2,
         city               : body.city,
-        state              : body.state,
+        state              : geo.state,
         postalCode         : body.postalCode,
         source             : 'netsuite',
         syncStatus         : 'synced',
@@ -213,8 +227,14 @@ export default async function billingAddressRoutes(app: FastifyInstance) {
       .limit(1);
     if (!existing) throw new NotFoundError('BillingAddress', req.params.nsId);
 
+    // Strip geo/NS-only fields from the raw spread; re-resolve them only when supplied.
+    const { countryId, stateId, countryNsId, stateNsId, country, state, ...rest } = body;
+    const geoPatch = hasGeoFields(body)
+      ? (({ countryId, stateId, country, state }) => ({ countryId, stateId, country, state }))(await resolveCountryState(body))
+      : {};
+
     const [updated] = await db.update(addresses)
-      .set({ ...body, syncStatus: 'synced', syncedAt: new Date(), updatedAt: new Date() })
+      .set({ ...rest, ...geoPatch, syncStatus: 'synced', syncedAt: new Date(), updatedAt: new Date() })
       .where(eq(addresses.id, existing.id))
       .returning();
     await invalidateDropdown('addresses');
