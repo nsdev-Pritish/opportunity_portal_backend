@@ -21,9 +21,14 @@ export async function listActiveRecords(entity: MasterEntityKey, scopeId?: numbe
     const db = getDb();
     const table = MASTER_TABLES[entity] as any;
     const conditions: any[] = [eq(table.isActive, true)];
-    if (scopeId && 'customerId' in table) conditions.push(eq(table.customerId, scopeId));
-    if (scopeId && 'vendorId'   in table) conditions.push(eq(table.vendorId,   scopeId));
-    if (scopeId && 'countryId'  in table) conditions.push(eq(table.countryId,  scopeId));
+    // Scope filter — mutually exclusive: a table can have several of these columns
+    // (e.g. `addresses` has BOTH customerId and countryId), so pick ONE by precedence.
+    // customer > vendor > country matches how the scoped routes pass scopeId.
+    if (scopeId) {
+      if      ('customerId' in table) conditions.push(eq(table.customerId, scopeId));
+      else if ('vendorId'   in table) conditions.push(eq(table.vendorId,   scopeId));
+      else if ('countryId'  in table) conditions.push(eq(table.countryId,  scopeId));
+    }
     if (entity === 'departments' && 'deptShow' in table) conditions.push(eq(table.deptShow, true));
     
     // Determine sort column based on table structure
