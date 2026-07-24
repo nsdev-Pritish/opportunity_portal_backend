@@ -865,6 +865,25 @@ async function resolveLineItemValues(item: z.infer<typeof SyncLineItemSchema>) {
     resolveNsId(componentKitItems,     item.componentKitItemNsId),
   ]);
 
+  // Log every NS id → resolved portal id so we can see EXACTLY what is written to the DB
+  // and immediately spot any NS id that failed to resolve (portal id === null).
+  logger.info({
+    line: item.netsuiteInternalId ?? null,
+    resolved: {
+      itemTypeNsId         : item.itemTypeNsId         ?? null, itemTypeId,
+      componentKitItemNsId : item.componentKitItemNsId ?? null, componentKitItemId,
+      vendorNsId           : item.vendorNsId           ?? null, vendorId,
+      factoryNsId          : item.factoryNsId          ?? null, factoryId,
+      vendorCurrencyNsId   : item.vendorCurrencyNsId   ?? null, vendorCurrencyId,
+      productClassNsId     : item.productClassNsId     ?? null, productClassId,
+      productClassEuNsId   : item.productClassEuNsId   ?? null, productClassEuId,
+      sustainabilityNsId   : item.sustainabilityNsId   ?? null, sustainabilityId,
+      vendorIncotermsNsId  : item.vendorIncotermsNsId  ?? null, vendorIncotermsId,
+      shipToVendorNsId     : item.shipToVendorNsId     ?? null, shipToVendorId,
+      shipToVendorAddrNsId : item.shipToVendorAddrNsId ?? null, shipToVendorAddrId,
+    },
+  }, 'Resolving the data — NetSuite ids → portal DB ids');
+
   return {
     netsuiteInternalId : item.netsuiteInternalId ?? null,
     itemTypeId, vendorId, factoryId, vendorCurrencyId,
