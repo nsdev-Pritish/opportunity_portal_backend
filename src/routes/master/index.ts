@@ -135,4 +135,10 @@ export default async function masterRoutes(app: FastifyInstance) {
     '/vendors/:vendorId/addresses',
     async (req) => listActiveRecords('vendor_addresses', parseInt(req.params.vendorId)),
   );
+
+  // Scoped lookup: GET /api/v1/master/countries/:countryId/states — states of a country
+  app.get<{ Params: { countryId: string } }>(
+    '/countries/:countryId/states',
+    async (req) => listActiveRecords('states', parseInt(req.params.countryId)),
+  );
 }

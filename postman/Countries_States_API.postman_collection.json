@@ -1,0 +1,592 @@
+{
+  "info": {
+    "name": "Countries & States APIs",
+    "description": "CRUD + dropdown APIs for the `countries` and `states` master tables, plus the linked Address create.\n\nPre-filled with REAL ids from the test DB:\n  countryId = 1  -> United States of America (US)\n  countryId2 = 2 -> Canada (CA)\n  stateId  = 1   -> California (in country 1)\n  customerId = 1637 -> 100 YUM\n\nThree surfaces:\n1. MASTER / PORTAL   — /api/v1/master/...   (id-based; used by the portal UI)\n2. NETSUITE SYNC     — /api/v1/netsuite/... (nsId-based upsert; called by SuiteScript)\n3. ADDRESS (LINKED)  — /api/v1/portal/addresses/... (create an address with countryId/stateId)\n\nRules enforced by the backend:\n  - Country names are unique (case-insensitive).\n  - State names are unique within a country (same name allowed in different countries).\n  - A state must belong to the selected country when creating an address.\n\nRun order that works cleanly: Master folder top-to-bottom, then NetSuite Sync, then Address.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "apiKey", "value": "", "type": "string" },
+    { "key": "countryId", "value": "1", "type": "string" },
+    { "key": "countryId2", "value": "2", "type": "string" },
+    { "key": "stateId", "value": "1", "type": "string" },
+    { "key": "customerId", "value": "1637", "type": "string" },
+    { "key": "countryNsId", "value": "100", "type": "string" },
+    { "key": "stateNsId", "value": "200", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Master (Portal)",
+      "item": [
+        {
+          "name": "GET all dropdowns (includes countries + states)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/all-dropdowns",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "all-dropdowns"]
+            },
+            "description": "Big object keyed by entity. Use the response filter box and type 'countries' or 'states' to jump to them."
+          }
+        },
+        {
+          "name": "GET countries (active dropdown)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/countries",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "countries"]
+            },
+            "description": "Returns United States of America (id 1) and Canada (id 2)."
+          }
+        },
+        {
+          "name": "GET country by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/countries/{{countryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "countries", "{{countryId}}"]
+            }
+          }
+        },
+        {
+          "name": "POST create country (NEW - expect 201)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mexico\",\n  \"code\": \"MX\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/countries",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "countries"]
+            },
+            "description": "Creates a new country. Re-running this a second time returns 409 (duplicate name)."
+          }
+        },
+        {
+          "name": "POST create country (DUPLICATE - expect 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"united states of america\",\n  \"code\": \"US\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/countries",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "countries"]
+            },
+            "description": "Case-insensitive duplicate of country id 1 -> 409 CONFLICT."
+          }
+        },
+        {
+          "name": "PATCH update country (rename, expect 200)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"United States of America\",\n  \"code\": \"US\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/countries/{{countryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "countries", "{{countryId}}"]
+            },
+            "description": "Renaming a row to its own name is allowed (no-op). Renaming to ANOTHER country's name returns 409."
+          }
+        },
+        {
+          "name": "PATCH country status (activate)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/countries/{{countryId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "countries", "{{countryId}}", "status"]
+            },
+            "description": "Set is_active false to deactivate (it then drops out of the active dropdown). Set true to reactivate."
+          }
+        },
+        {
+          "name": "GET states (active dropdown)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/states",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "states"]
+            },
+            "description": "Returns California (id 1) and Texas (id 2), both in country 1."
+          }
+        },
+        {
+          "name": "GET states scoped by country (path)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/countries/{{countryId}}/states",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "countries", "{{countryId}}", "states"]
+            },
+            "description": "The cascading lookup: only the selected country's states."
+          }
+        },
+        {
+          "name": "GET states scoped by country (query param)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/states?scopeId={{countryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "states"],
+              "query": [{ "key": "scopeId", "value": "{{countryId}}" }]
+            }
+          }
+        },
+        {
+          "name": "GET state by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/states/{{stateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "states", "{{stateId}}"]
+            }
+          }
+        },
+        {
+          "name": "POST create state (NEW - expect 201)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New York\",\n  \"code\": \"NY\",\n  \"countryId\": {{countryId}}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/states",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "states"]
+            },
+            "description": "Creates a new state in country 1."
+          }
+        },
+        {
+          "name": "POST create state (DUPLICATE in same country - expect 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"California\",\n  \"code\": \"CA\",\n  \"countryId\": {{countryId}}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/states",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "states"]
+            },
+            "description": "California already exists in country 1 -> 409 CONFLICT."
+          }
+        },
+        {
+          "name": "POST create state (same name, different country - expect 201)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"California\",\n  \"code\": \"CA\",\n  \"countryId\": {{countryId2}}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/states",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "states"]
+            },
+            "description": "Same state name is allowed under a DIFFERENT country (Canada, id 2) -> 201."
+          }
+        },
+        {
+          "name": "PATCH update state (rename, expect 200)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"California\",\n  \"code\": \"CA\",\n  \"countryId\": {{countryId}}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/states/{{stateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "states", "{{stateId}}"]
+            },
+            "description": "No-op rename allowed. Renaming to another state's name in the same country returns 409."
+          }
+        },
+        {
+          "name": "PATCH state status (activate)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/states/{{stateId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "states", "{{stateId}}", "status"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "NetSuite Sync",
+      "description": "nsId-based upsert. POST creates or updates by netsuiteInternalId. Sample ids: countryNsId=100, stateNsId=200. Run 'POST country upsert' before 'POST state upsert' so the state can resolve its country by nsId.",
+      "item": [
+        {
+          "name": "GET countries (active)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}", "type": "text", "disabled": true }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/netsuite/countries",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "netsuite", "countries"]
+            }
+          }
+        },
+        {
+          "name": "POST country upsert (nsId 100)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "X-API-Key", "value": "{{apiKey}}", "type": "text", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"netsuiteInternalId\": \"{{countryNsId}}\",\n  \"name\": \"Mexico\",\n  \"code\": \"MX\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/netsuite/countries",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "netsuite", "countries"]
+            },
+            "description": "Idempotent on netsuiteInternalId. First call -> 201 _action=created; repeat -> 200 _action=updated."
+          }
+        },
+        {
+          "name": "GET country by nsId (100)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}", "type": "text", "disabled": true }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/netsuite/countries/{{countryNsId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "netsuite", "countries", "{{countryNsId}}"]
+            }
+          }
+        },
+        {
+          "name": "PUT country by nsId (100)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "X-API-Key", "value": "{{apiKey}}", "type": "text", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mexico\",\n  \"code\": \"MEX\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/netsuite/countries/{{countryNsId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "netsuite", "countries", "{{countryNsId}}"]
+            }
+          }
+        },
+        {
+          "name": "PUT country status by nsId (100)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "X-API-Key", "value": "{{apiKey}}", "type": "text", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/netsuite/countries/{{countryNsId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "netsuite", "countries", "{{countryNsId}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "GET states (active)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}", "type": "text", "disabled": true }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/netsuite/states",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "netsuite", "states"]
+            }
+          }
+        },
+        {
+          "name": "POST state upsert (nsId 200, links to country nsId 100)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "X-API-Key", "value": "{{apiKey}}", "type": "text", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"netsuiteInternalId\": \"{{stateNsId}}\",\n  \"name\": \"Jalisco\",\n  \"code\": \"JAL\",\n  \"countryNsId\": \"{{countryNsId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/netsuite/states",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "netsuite", "states"]
+            },
+            "description": "countryNsId is resolved to the local countries.id FK. Run the 'POST country upsert (nsId 100)' first."
+          }
+        },
+        {
+          "name": "GET state by nsId (200)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}", "type": "text", "disabled": true }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/netsuite/states/{{stateNsId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "netsuite", "states", "{{stateNsId}}"]
+            }
+          }
+        },
+        {
+          "name": "PUT state by nsId (200)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "X-API-Key", "value": "{{apiKey}}", "type": "text", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jalisco\",\n  \"code\": \"JAL\",\n  \"countryNsId\": \"{{countryNsId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/netsuite/states/{{stateNsId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "netsuite", "states", "{{stateNsId}}"]
+            }
+          }
+        },
+        {
+          "name": "PUT state status by nsId (200)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "X-API-Key", "value": "{{apiKey}}", "type": "text", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/netsuite/states/{{stateNsId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "netsuite", "states", "{{stateNsId}}", "status"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Address (Linked to Country / State)",
+      "description": "Cascading flow using real ids: customerId 1637, countryId 1 (US), stateId 1 (California). The backend resolves the names, validates the state belongs to the country, and keeps the free-text country/state columns in sync for NetSuite.",
+      "item": [
+        {
+          "name": "1. GET countries (fill Country dropdown)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/countries",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "countries"]
+            }
+          }
+        },
+        {
+          "name": "2. GET states for selected country (fill State dropdown)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/master/countries/{{countryId}}/states",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "master", "countries", "{{countryId}}", "states"]
+            }
+          }
+        },
+        {
+          "name": "3. POST create shipping address (countryId + stateId, expect 201)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": {{customerId}},\n  \"countryId\": {{countryId}},\n  \"stateId\": {{stateId}},\n  \"label\": \"Main Warehouse\",\n  \"addressee\": \"Jane Doe\",\n  \"addrLine1\": \"123 Main St\",\n  \"addrLine2\": \"Suite 100\",\n  \"city\": \"Los Angeles\",\n  \"postalCode\": \"90001\",\n  \"phone\": \"+1-555-0100\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/portal/addresses/shipping",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "portal", "addresses", "shipping"]
+            },
+            "description": "Response stores countryId/stateId AND resolves country='United States of America', state='California'. syncStatus may be 'failed' locally if NetSuite isn't reachable - the row is still saved and linked."
+          }
+        },
+        {
+          "name": "3b. POST create billing address (countryId + stateId, expect 201)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": {{customerId}},\n  \"countryId\": {{countryId}},\n  \"stateId\": {{stateId}},\n  \"label\": \"Billing Office\",\n  \"addressee\": \"Accounts Payable\",\n  \"addrLine1\": \"456 Market St\",\n  \"city\": \"San Francisco\",\n  \"postalCode\": \"94103\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/portal/addresses/billing",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "portal", "addresses", "billing"]
+            }
+          }
+        },
+        {
+          "name": "POST address by stateId only (country backfilled, expect 201)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": {{customerId}},\n  \"stateId\": {{stateId}},\n  \"addrLine1\": \"789 Broadway\",\n  \"city\": \"Los Angeles\",\n  \"postalCode\": \"90002\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/portal/addresses/shipping",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "portal", "addresses", "shipping"]
+            },
+            "description": "Only stateId sent -> countryId is derived from the state, and both names resolved."
+          }
+        },
+        {
+          "name": "POST address (state NOT in country, expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": {{customerId}},\n  \"countryId\": {{countryId2}},\n  \"stateId\": {{stateId}},\n  \"addrLine1\": \"X\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/portal/addresses/shipping",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "portal", "addresses", "shipping"]
+            },
+            "description": "countryId 2 (Canada) + stateId 1 (California, country 1) -> 400 'State does not belong to the selected country'."
+          }
+        },
+        {
+          "name": "GET shipping addresses for customer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/portal/addresses/shipping?customerId={{customerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "portal", "addresses", "shipping"],
+              "query": [{ "key": "customerId", "value": "{{customerId}}" }]
+            }
+          }
+        },
+        {
+          "name": "GET billing addresses for customer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/portal/addresses/billing?customerId={{customerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "portal", "addresses", "billing"],
+              "query": [{ "key": "customerId", "value": "{{customerId}}" }]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

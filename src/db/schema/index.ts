@@ -96,6 +96,30 @@ export const obcPodRegions = pgTable('obc_pod_regions', {
   nsIdIdx: uniqueIndex('obc_pod_regions_ns_id_idx').on(t.netsuiteInternalId),
 }));
 
+// Country — master dropdown synced from NetSuite.
+//   name → country name, code → ISO code (optional), netsuiteInternalId → NS internal id.
+export const countries = pgTable('countries', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  code: varchar('code', { length: 10 }),   // ISO country code, e.g. "US"
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('countries_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+// State — master dropdown synced from NetSuite. Scoped to a country (country → many states).
+//   name → state name, code → state code (optional), countryId → countries.id FK.
+export const states = pgTable('states', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  code: varchar('code', { length: 20 }),   // state / province code, e.g. "CA"
+  countryId: integer('country_id').references(() => countries.id),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('states_ns_id_idx').on(t.netsuiteInternalId),
+  countryIdx: index('states_country_idx').on(t.countryId),
+}));
+
 export const customers = pgTable('customers', {
   id: serial('id').primaryKey(),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
@@ -152,14 +176,20 @@ export const addresses = pgTable('addresses', {
   addrLine1: varchar('addr_line1', { length: 255 }),
   addrLine2: varchar('addr_line2', { length: 255 }),
   city: varchar('city', { length: 100 }),
+  // Free-text country/state — kept for display and NetSuite sync (populated from the FK ids below).
   state: varchar('state', { length: 100 }),
   country: varchar('country', { length: 100 }),
+  // FK links to the country/state master dropdowns (state depends on the selected country).
+  countryId: integer('country_id').references(() => countries.id),
+  stateId: integer('state_id').references(() => states.id),
   postalCode: varchar('postal_code', { length: 20 }),
   ...syncCols,
 }, (t) => ({
   nsIdIdx: uniqueIndex('addresses_ns_id_idx').on(t.netsuiteInternalId),
   customerIdx: index('addresses_customer_idx').on(t.customerId),
   typeIdx: index('addresses_type_idx').on(t.type),
+  countryIdx: index('addresses_country_idx').on(t.countryId),
+  stateIdx: index('addresses_state_idx').on(t.stateId),
 }));
 
 export const currencies = pgTable('currencies', {
@@ -1158,6 +1188,15 @@ export const obcPodRegionsRelations = relations(obcPodRegions, ({ many }) => ({
   customers: many(customers),
 }));
 
+// Country ↔ State: one country has many states; each state belongs to one country.
+export const countriesRelations = relations(countries, ({ many }) => ({
+  states: many(states),
+}));
+
+export const statesRelations = relations(states, ({ one }) => ({
+  country: one(countries, { fields: [states.countryId], references: [countries.id] }),
+}));
+
 export const contactsRelations = relations(contacts, ({ one }) => ({
   subsidiary: one(subsidiaries, { fields: [contacts.subsidiaryId], references: [subsidiaries.id] }),
   currency: one(currencies, { fields: [contacts.currencyId], references: [currencies.id] }),
@@ -1166,6 +1205,8 @@ export const contactsRelations = relations(contacts, ({ one }) => ({
 
 export const addressesRelations = relations(addresses, ({ one }) => ({
   customer: one(customers, { fields: [addresses.customerId], references: [customers.id] }),
+  country: one(countries, { fields: [addresses.countryId], references: [countries.id] }),
+  state: one(states, { fields: [addresses.stateId], references: [states.id] }),
 }));
 
 export const projectNamesRelations = relations(projectNames, ({ one }) => ({
@@ -1326,6 +1367,8 @@ export const MASTER_TABLES = {
   additional_fees: additionalFees,
   drayage,
   es_status: esStatus,
+  countries,
+  states,
 } as const;
 
 export type MasterEntityKey = keyof typeof MASTER_TABLES;
