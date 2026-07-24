@@ -952,10 +952,36 @@ async function upsertNsLineItems(
   items: Array<z.infer<typeof SyncLineItemWithComponentsSchema>>,
 ) {
   const existing = await tx
-    .select({ id: estimateLineItems.id, isActive: estimateLineItems.isActive })
+    .select({
+      id: estimateLineItems.id,
+      isActive: estimateLineItems.isActive,
+      netsuiteInternalId: estimateLineItems.netsuiteInternalId,
+    })
     .from(estimateLineItems)
     .where(eq(estimateLineItems.estimateId, estimateId));
   const existingIds = new Set<number>(existing.map((r: any) => r.id));
+
+  // Fallback identity for estimates that originated IN NetSuite: their lines never carried a
+  // portal db id (reactDbLineIdNS is blank), so match them by the NetSuite line internal id.
+  // Without this every sync of such an estimate re-INSERTs a netsuite_internal_id already held
+  // by the (soft-deleted) existing row, tripping the global netsuite_internal_id unique index.
+  const nsIdToExistingId = new Map<string, number>();
+  for (const r of existing as any[]) {
+    if (r.netsuiteInternalId) nsIdToExistingId.set(r.netsuiteInternalId, r.id);
+  }
+  // A row may be claimed by at most one incoming line, whichever identity matched first.
+  const claimedOldIds = new Set<number>();
+  const matchOldId = (reactDbLineIdNS: unknown, nsId: unknown): number | null => {
+    if (typeof reactDbLineIdNS === 'number' && existingIds.has(reactDbLineIdNS) && !claimedOldIds.has(reactDbLineIdNS)) {
+      claimedOldIds.add(reactDbLineIdNS);
+      return reactDbLineIdNS;
+    }
+    if (typeof nsId === 'string' && nsId && nsIdToExistingId.has(nsId)) {
+      const id = nsIdToExistingId.get(nsId)!;
+      if (!claimedOldIds.has(id)) { claimedOldIds.add(id); return id; }
+    }
+    return null;
+  };
 
   const activeOnly = and(
     eq(estimateLineItems.estimateId, estimateId),
@@ -981,13 +1007,14 @@ async function upsertNsLineItems(
   }
 
   // ── Phase 1: build the match plan (resolve values; find the matched old row) ──
-  // oldId = existing row this line maps to (by reactDbLineIdNS scoped to THIS estimate), or null.
+  // oldId = existing row this line maps to, matched by reactDbLineIdNS first, then falling back
+  // to netsuite_internal_id (for NS-origin estimates that never had a portal id). Null = new line.
   type Plan = { oldId: number | null; vals: Record<string, unknown> };
   const parentPlan: (Plan & { components: any[] })[] = [];
   for (const item of items as any[]) {
     const { components, reactDbLineIdNS, ...rest } = item;
     const vals = await resolveLineItemValues(rest);
-    const oldId = reactDbLineIdNS && existingIds.has(reactDbLineIdNS) ? (reactDbLineIdNS as number) : null;
+    const oldId = matchOldId(reactDbLineIdNS, vals.netsuiteInternalId);
     parentPlan.push({ oldId, vals, components: components ?? [] });
   }
 
@@ -997,7 +1024,7 @@ async function upsertNsLineItems(
     for (let j = 0; j < comps.length; j++) {
       const { reactDbLineIdNS, ...rest } = comps[j];
       const vals = await resolveLineItemValues(rest);
-      const oldId = reactDbLineIdNS && existingIds.has(reactDbLineIdNS) ? (reactDbLineIdNS as number) : null;
+      const oldId = matchOldId(reactDbLineIdNS, vals.netsuiteInternalId);
       compPlan.push({ oldId, vals, parentIdx: i, sortOrder: j });
     }
   }
