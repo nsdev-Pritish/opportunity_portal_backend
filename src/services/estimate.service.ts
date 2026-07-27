@@ -1118,7 +1118,7 @@ export async function listEstimateQuotes(estimateId: number) {
     .orderBy(desc(estimateQuotes.createdAt));
 }
 
-// ── Deactivate ───────────────────────────────────────────────────────────────
+// ── Deactivate (soft delete) ─────────────────────────────────────────────────
 
 export async function deactivateEstimate(id: number) {
   const db = getDb();
@@ -1137,4 +1137,41 @@ export async function deactivateEstimate(id: number) {
   // Push the deactivation to NetSuite (delete mode) for every line of this estimate.
   deactivateLinesInNetsuite(id).catch(() => {/* already logged + recorded */});
   return { id, isActive: false };
+}
+
+// ── Delete (hard delete) ─────────────────────────────────────────────────────
+//
+// Permanently removes the estimate row from the database. The FK constraints on
+// the child tables — estimate_line_items (incl. its component sub-tree via
+// parent_line_item_id), estimate_freight_groups and estimate_quotes — are all
+// ON DELETE CASCADE, so the database removes every related row in the same
+// statement. No separate line-item cleanup is needed.
+//
+// Before deleting we push a delete-mode sync to NetSuite (best-effort) so the
+// matching lines are deactivated there too. This MUST run first, while the rows
+// and their netsuite_internal_ids still exist — once the estimate is deleted
+// there is no way to tell NetSuite which lines to deactivate.
+//
+// This is separate from deactivateEstimate() (soft delete); callers choose one.
+export async function deleteEstimate(id: number) {
+  const db = getDb();
+
+  // Confirm it exists so callers get a clean 404 instead of a silent no-op.
+  const [existing] = await db.select({ id: estimates.id })
+    .from(estimates)
+    .where(eq(estimates.id, id))
+    .limit(1);
+  if (!existing) throw new NotFoundError('Estimate', id);
+
+  // Notify NetSuite first (all lines, regardless of is_active) — the rows and
+  // their NS ids are about to be deleted. Best-effort: failures are logged and
+  // recorded but must not block the delete.
+  await deactivateLinesInNetsuite(id, { allLines: true })
+    .catch(() => {/* already logged + recorded */});
+
+  // Hard delete — FK cascade removes line items, freight groups and quotes.
+  await db.delete(estimates).where(eq(estimates.id, id));
+
+  await cacheDel(CacheKeys.estimate(id));
+  return { id, deleted: true };
 }

@@ -837,7 +837,7 @@ export async function syncEstimateToNetsuite(
 // call is skipped.
 export async function deactivateLinesInNetsuite(
   estimateId: number,
-  opts?: { lineItemIds?: number[] },
+  opts?: { lineItemIds?: number[]; allLines?: boolean },
 ): Promise<void> {
   if (!env.NS_SUITELET_URL) {
     logger.debug({ estimateId }, 'NS_SUITELET_URL not configured — skipping NS delete sync');
@@ -857,9 +857,13 @@ export async function deactivateLinesInNetsuite(
       return;
     }
 
-    // Pull the soft-deleted lines: the specific ids when given (single line-item delete),
-    // otherwise every inactive line of the estimate (whole-estimate delete).
+    // Pull the lines to deactivate: the specific ids when given (single line-item
+    // delete), otherwise every line of the estimate (whole-estimate delete).
+    // Normally only soft-deleted (is_active=false) lines qualify; opts.allLines
+    // drops that filter for a hard delete, where the rows are still active but are
+    // about to be removed and must be deactivated in NetSuite first.
     const ids = opts?.lineItemIds ?? [];
+    const activeFilter = opts?.allLines ? undefined : eq(estimateLineItems.isActive, false);
     const rows = await db.select({
         id      : estimateLineItems.id,
         lineNsId: estimateLineItems.netsuiteInternalId,
@@ -867,8 +871,8 @@ export async function deactivateLinesInNetsuite(
       .from(estimateLineItems)
       .where(
         ids.length > 0
-          ? and(inArray(estimateLineItems.id, ids), eq(estimateLineItems.isActive, false))
-          : and(eq(estimateLineItems.estimateId, estimateId), eq(estimateLineItems.isActive, false)),
+          ? and(inArray(estimateLineItems.id, ids), activeFilter)
+          : and(eq(estimateLineItems.estimateId, estimateId), activeFilter),
       )
       .orderBy(asc(estimateLineItems.lineNumber));
 

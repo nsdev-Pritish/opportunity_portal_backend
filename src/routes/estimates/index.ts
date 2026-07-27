@@ -33,6 +33,7 @@ import {
   updateEstimateWithItems,
   updateEstimatesPipelineFields,
   deactivateEstimate,
+  deleteEstimate,
   listDocumentNumbers,
   searchEstimatesAdvanced,
   listFailedSyncs,
@@ -514,8 +515,15 @@ export default async function estimateRoutes(app: FastifyInstance) {
     return updateEstimateWithItems(parseInt(req.params.id), headerData, lineItems, freightGroups);
   });
 
-  // DELETE /api/v1/estimates/:id — soft-delete
+  // DELETE /api/v1/estimates/:id — soft-delete (sets is_active=false)
   app.delete<{ Params: { id: string } }>('/:id', async (req) =>
     deactivateEstimate(parseInt(req.params.id)),
+  );
+
+  // DELETE /api/v1/estimates/:id/permanent — hard delete: permanently removes
+  // the estimate and, via FK cascade, all its line items, freight groups and
+  // quotes from the database.
+  app.delete<{ Params: { id: string } }>('/:id/permanent', async (req) =>
+    deleteEstimate(parseInt(req.params.id)),
   );
 }
