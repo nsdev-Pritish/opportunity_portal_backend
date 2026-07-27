@@ -703,6 +703,19 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
       .where(eq(estimates.id, existing.id));
     return { deleted: true, nsId: req.params.nsId, portalId: existing.id };
   });
+
+  // ── DELETE /api/v1/netsuite/estimates/:nsId/permanent ──────────
+  // Hard delete — permanently removes the estimate row. Its line items, freight
+  // groups and quotes are removed by the database via ON DELETE CASCADE.
+  // The delete originated in NetSuite, so no push-back sync is performed.
+  app.delete<{ Params: { nsId: string } }>('/:nsId/permanent', async (req) => {
+    const db = getDb();
+    const [existing] = await db.select({ id: estimates.id }).from(estimates)
+      .where(eq(estimates.netsuiteInternalId, req.params.nsId)).limit(1);
+    if (!existing) throw new NotFoundError('Estimate', req.params.nsId);
+    await db.delete(estimates).where(eq(estimates.id, existing.id));
+    return { deleted: true, nsId: req.params.nsId, portalId: existing.id };
+  });
 }
 
 // ─── Private helpers ──────────────────────────────────────────────
