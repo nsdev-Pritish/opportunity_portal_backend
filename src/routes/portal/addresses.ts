@@ -27,7 +27,7 @@ import {
 const CreateAddressBody = z.object({
   customerId: z.number({ required_error: 'Customer is required' }).int().positive(),
   type: z.enum(['shipping', 'billing']).optional().default('shipping'),
-  label: z.string().max(100).optional().nullable(),
+  label: z.string().max(500).optional().nullable(),
   // Country / State can be supplied either as master-dropdown ids (preferred) or as free text.
   // When ids are given the names are resolved from the master tables (see createAddress).
   countryId: z.number().int().positive().optional().nullable(),
