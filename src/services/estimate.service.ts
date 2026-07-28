@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, like, ilike, or, count, isNull, gte, lte, inArray, sql, getTableColumns } from 'drizzle-orm';
+import { eq, and, desc, asc, like, ilike, or, count, isNull, isNotNull, gte, lte, inArray, sql, getTableColumns } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '../config/database.js';
 import {
@@ -364,7 +364,7 @@ export async function getEstimate(id: number) {
 
   if (!row) throw new NotFoundError('Estimate', id);
 
-  const [allLineItemRows, freightGroups] = await Promise.all([
+  const [allLineItemRows, freightGroups, quoteRows] = await Promise.all([
     db.select()
       .from(estimateLineItems)
       .where(and(
@@ -379,6 +379,19 @@ export async function getEstimate(id: number) {
         eq(estimateFreightGroups.isActive, true),
       ))
       .orderBy(asc(estimateFreightGroups.id)),
+    // Every quote this estimate has been converted to, newest first — an estimate holds one
+    // per batch of newly-added lines. Rows NetSuite hasn't numbered yet (convert still
+    // syncing, or failed) are skipped so the lists never carry nulls.
+    db.select({
+      quoteNetsuiteInternalId: estimateQuotes.quoteNetsuiteInternalId,
+      quoteDocumentNumber    : estimateQuotes.quoteDocumentNumber,
+    })
+      .from(estimateQuotes)
+      .where(and(
+        eq(estimateQuotes.estimateId, id),
+        isNotNull(estimateQuotes.quoteDocumentNumber),
+      ))
+      .orderBy(desc(estimateQuotes.createdAt)),
   ]);
 
   // Nest components under their parent
@@ -398,6 +411,9 @@ export async function getEstimate(id: number) {
     customer: row.customers,
     lineItems,
     freightGroups,
+    // Parallel lists in the same order, so index i of one pairs with index i of the other.
+    quoteDocumentNumber     : quoteRows.map(q => q.quoteDocumentNumber),
+    quoteNetsuiteInternalId : quoteRows.map(q => q.quoteNetsuiteInternalId),
   };
 }
 
