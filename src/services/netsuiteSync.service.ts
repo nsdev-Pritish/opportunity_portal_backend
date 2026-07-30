@@ -176,6 +176,8 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
   const payload: Record<string, unknown> = {
     mode,
     internalId          : est.netsuiteInternalId ?? '',
+    // Always flag NetSuite that this estimate came from the new portal (create + update).
+    createdFromNewPortalEstNS: true,
     subsidiaryNSId      : subsidiaryNsId,
     customerNSId        : customerNsId,
     customerContactNSId : contactNsId,

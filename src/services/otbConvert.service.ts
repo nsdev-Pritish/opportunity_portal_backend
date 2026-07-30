@@ -269,6 +269,8 @@ async function otbBuildCreatePayload(estimateId: number) {
   const payload: Record<string, unknown> = {
     mode                : 'create',
     internalId          : est.netsuiteInternalId ?? '',
+    // Always flag NetSuite that this estimate came from the new portal.
+    createdFromNewPortalEstNS: true,
     subsidiaryNSId      : subsidiaryNsId,
     customerNSId        : customerNsId,
     customerContactNSId : contactNsId,
