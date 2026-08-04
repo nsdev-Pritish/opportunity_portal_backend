@@ -1238,7 +1238,15 @@ export const estimatesRelations = relations(estimates, ({ one, many }) => ({
   acctManager: one(accountManagers, { fields: [estimates.acctManagerId], references: [accountManagers.id] }),
   esStatus: one(esStatus, { fields: [estimates.esStatusId], references: [esStatus.id] }),
   lineItems: many(estimateLineItems),
+  quotes: many(estimateQuotes),
   createdByUser: one(users, { fields: [estimates.createdBy], references: [users.id] }),
+}));
+
+// One estimate → many quotes (each OTB conversion / NetSuite Quote).
+// The FK already exists on estimate_quotes.estimate_id; this declares it to the
+// ORM so estimates can be loaded with their quotes in a single relational query.
+export const estimateQuotesRelations = relations(estimateQuotes, ({ one }) => ({
+  estimate: one(estimates, { fields: [estimateQuotes.estimateId], references: [estimates.id] }),
 }));
 
 export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, many }) => ({

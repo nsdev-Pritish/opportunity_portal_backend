@@ -275,6 +275,92 @@ function afterDeleteEstimate(context) {
 
 
 // ════════════════════════════════════════════════════════════════
+//  SECTION 2.5 — BULK QUOTE SYNC (backfill every existing NS quote)
+//
+//  POST /api/v1/netsuite/estimate-quotes/sync-all
+//
+//  One-time (or scheduled) push of EVERY Quote that already exists in
+//  NetSuite. It is a bulk UPSERT keyed on quoteInternalId, so re-running it
+//  never creates duplicates — it refreshes the rows it already has.
+//
+//  Send at most 2000 quotes per call. Add ?dryRun=true to see exactly what
+//  would be created/updated without writing anything — always run that first.
+//
+//  Response (201 all good / 207 some records failed):
+//  { total, successCount, failureCount, created, updated,
+//    lineItemsMarkedConverted, succeeded: [...], failed: [...] }
+//
+//  IMPORTANT: the parent Estimate must already exist in PRISM. A quote whose
+//  estimate is missing lands in failed[] with code ESTIMATE_NOT_FOUND — the
+//  rest of the batch is still written. Run the Estimate sync first.
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * EXAMPLE 2E — Backfill all quotes from a saved search
+ *
+ * Trigger: Scheduled Script or Map/Reduce over a Quote saved search.
+ * Pages the results and posts them in chunks of 500.
+ */
+function syncAllQuotesToPrism() {
+  var search = require('N/search');
+
+  var quoteSearch = search.create({
+    type: search.Type.ESTIMATE,          // NS "Quote" transactions
+    filters: [['mainline', 'is', 'T']],
+    columns: ['internalid', 'tranid', 'custbody_created_from_estimate'],
+  });
+
+  var batch = [];
+  var CHUNK = 500;
+  var totals = { created: 0, updated: 0, failed: 0 };
+
+  quoteSearch.run().each(function (result) {
+    batch.push({
+      quoteInternalId    : String(result.id),
+      quoteDocumentNumber: result.getValue('tranid'),
+
+      // Parent estimate — send the internal id when you have it, otherwise the
+      // document number ("EST0008946"); PRISM resolves either one.
+      estimateInternalId : String(result.getValue('custbody_created_from_estimate') || ''),
+      // estimateDocumentNumber: result.getText('custbody_created_from_estimate'),
+
+      status             : 'active',     // or 'replaced'
+      lineItemInternalIds: [],           // NS ids of the estimate lines this quote covers
+    });
+
+    if (batch.length >= CHUNK) {
+      postQuoteChunk(batch, totals);
+      batch = [];
+    }
+    return true;                          // keep iterating
+  });
+
+  if (batch.length) postQuoteChunk(batch, totals);
+
+  log.audit('PRISM quote backfill complete', JSON.stringify(totals));
+}
+
+function postQuoteChunk(quotes, totals) {
+  // Drop records with no parent reference — PRISM would reject them anyway.
+  var payload = quotes.filter(function (q) {
+    return q.estimateInternalId || q.estimateDocumentNumber;
+  });
+  if (!payload.length) return;
+
+  var res = prismRequest('POST', '/estimate-quotes/sync-all', payload);
+
+  totals.created += res.created;
+  totals.updated += res.updated;
+  totals.failed  += res.failureCount;
+
+  if (res.failureCount) {
+    // failed[] = [{ index, quoteInternalId, error, code, statusCode }]
+    log.error('PRISM quote sync — failed records', JSON.stringify(res.failed));
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════
 //  SECTION 3 — READING DROPDOWNS FROM PRISM INTO NS FORM
 //  (optional — if NS form needs to show portal data)
 // ════════════════════════════════════════════════════════════════
@@ -398,6 +484,38 @@ POST /estimates
   "status": "draft",
   ...all other fields
 }
+
+POST /estimate-quotes/sync-all
+→ 201 Created (all records OK)  ·  207 Multi-Status (some failed)
+{
+  "dryRun": false,
+  "total": 500,
+  "successCount": 498,
+  "failureCount": 2,
+  "created": 471,
+  "updated": 27,
+  "lineItemsMarkedConverted": 1204,
+  "durationMs": 3820,
+  "succeeded": [
+    { "index": 0, "quoteInternalId": "5001", "quoteDocumentNumber": "QT0005001",
+      "action": "created", "quoteId": 310, "estimateId": 8410, "updatedLineItems": 3 }
+  ],
+  "failed": [
+    { "index": 12, "quoteInternalId": "5013",
+      "error": "Parent estimate '1099' not found in the portal — sync the estimate first",
+      "code": "ESTIMATE_NOT_FOUND", "statusCode": 404 }
+  ]
+}
+   action: "created" | "updated" | "adopted"   (dry run: "would_create" | "would_update")
+   "adopted" = the row already existed from an OTB conversion whose NetSuite
+   write-back never completed; the sync attached the NS quote id to it.
+
+GET /estimate-quotes?page=1&limit=50&estimateInternalId=1001&status=active
+→ 200 OK
+{ "data": [ { "id", "quoteInternalId", "quoteDocumentNumber", "status",
+              "syncStatus", "syncedAt", "estimateId", "estimateInternalId",
+              "estimateDocumentNumber", "createdAt" } ],
+  "page": 1, "limit": 50, "total": 83 }
 
 GET /dropdowns
 → 200 OK
