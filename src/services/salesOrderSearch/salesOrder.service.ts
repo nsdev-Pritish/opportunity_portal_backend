@@ -42,6 +42,9 @@ import { logger } from '../../utils/logger.js';
 export const SalesOrderCreateSchema = z.object({
   netsuiteInternalId            : z.string({ required_error: 'netsuiteInternalId is required' }).min(1).max(50),
   documentNumber                : z.string().max(100).optional(),
+  // "Created From" — source transaction as plain text (e.g. "EST0008946"), NOT
+  // an internal id: it is stored as-is, never resolved to a portal DB id.
+  createdFrom                   : z.string().max(255).optional(),
   departmentInternalId          : z.string().max(50).optional(),
   customerInternalId            : z.string().max(50).optional(),
   consolidatedCustomerInternalId: z.string().max(50).optional(),
@@ -50,8 +53,11 @@ export const SalesOrderCreateSchema = z.object({
   tranDate                      : z.string().optional(),
   expectedCloseDate             : z.string().optional(),
   promisedDeliveryDate          : z.string().optional(),
+  endDate                       : z.string().optional(),
   projectedTotal                : z.string().optional(),
   exchangeRate                  : z.string().optional(),
+  amountNet                     : z.string().optional(),
+  openAmount                    : z.string().optional(),
   currencyInternalId            : z.string().max(50).optional(),
   subsidiaryInternalId          : z.string().max(50).optional(),
   projectNameInternalId         : z.string().max(50).optional(),
@@ -76,11 +82,15 @@ export type SalesOrderUpdateInput = z.infer<typeof SalesOrderUpdateSchema>;
 
 const PASSTHROUGH_FIELDS = [
   'documentNumber',
+  'createdFrom',
   'tranDate',
   'expectedCloseDate',
   'promisedDeliveryDate',
+  'endDate',
   'projectedTotal',
   'exchangeRate',
+  'amountNet',
+  'openAmount',
 ] as const;
 
 /** Pick the passthrough columns that are present on the record. */
