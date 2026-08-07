@@ -58,6 +58,12 @@ export const BudgetCreateSchema = z.object({
   forecastScenario              : z.string().max(255).optional(),
   consolidatedCustomerText      : z.string().max(500).optional(),
 
+  // NetSuite record timestamps ("Last Modified" / "Date Created") — accepted as
+  // strings and passed straight to the timestamptz columns, same as the dates
+  // above. Not the portal's own createdAt/updatedAt.
+  lastModified                  : z.string().optional(),
+  dateCreated                   : z.string().optional(),
+
   // Reference fields — NetSuite internal ids resolved to portal DB ids
   soQtrInternalId               : z.string().max(50).optional(),
   revenueQtrInternalId          : z.string().max(50).optional(),
@@ -98,6 +104,8 @@ const PASSTHROUGH_FIELDS = [
   'projectedProfit',
   'trueGmGoal',
   'forecastScenario',
+  'lastModified',
+  'dateCreated',
   'consolidatedCustomerText',
 ] as const;
 

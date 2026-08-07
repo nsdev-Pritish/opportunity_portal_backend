@@ -42,6 +42,11 @@ import { logger } from '../../utils/logger.js';
 export const InvoiceCreateSchema = z.object({
   netsuiteInternalId            : z.string({ required_error: 'netsuiteInternalId is required' }).min(1).max(50),
   documentNumber                : z.string().max(100).optional(),
+  // Plain-text link fields — stored as-is, NOT internal ids to resolve.
+  createdFrom                   : z.string().max(255).optional(),
+  soDocumentNumber              : z.string().max(100).optional(), // "Document Number (SO)"
+  soDate                        : z.string().optional(),          // "SO Date"
+  estNumber                     : z.string().max(100).optional(), // "EST Number"
   departmentInternalId          : z.string().max(50).optional(),
   customerInternalId            : z.string().max(50).optional(),
   consolidatedCustomerInternalId: z.string().max(50).optional(),
@@ -52,6 +57,8 @@ export const InvoiceCreateSchema = z.object({
   promisedDeliveryDate          : z.string().optional(),
   projectedTotal                : z.string().optional(),
   exchangeRate                  : z.string().optional(),
+  usdInvoiceAmount              : z.string().optional(),
+  usdNetRevenue                 : z.string().optional(),
   currencyInternalId            : z.string().max(50).optional(),
   subsidiaryInternalId          : z.string().max(50).optional(),
   projectNameInternalId         : z.string().max(50).optional(),
@@ -76,11 +83,17 @@ export type InvoiceUpdateInput = z.infer<typeof InvoiceUpdateSchema>;
 
 const PASSTHROUGH_FIELDS = [
   'documentNumber',
+  'createdFrom',
+  'soDocumentNumber',
+  'soDate',
+  'estNumber',
   'tranDate',
   'expectedCloseDate',
   'promisedDeliveryDate',
   'projectedTotal',
   'exchangeRate',
+  'usdInvoiceAmount',
+  'usdNetRevenue',
 ] as const;
 
 /** Pick the passthrough columns that are present on the record. */

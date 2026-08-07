@@ -1,6 +1,6 @@
 import {
   pgTable, serial, varchar, boolean, timestamp, integer,
-  numeric, text, jsonb, date, index, uniqueIndex, pgEnum, AnyPgColumn,
+  numeric, text, jsonb, date, index, uniqueIndex, pgEnum, AnyPgColumn, uuid,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
@@ -994,6 +994,11 @@ export const salesOrderSearch = pgTable('sales_order_search', {
 
   documentNumber: varchar('document_number', { length: 100 }),
 
+  // Created From — the source transaction this SO was created from, as plain
+  // text (e.g. the Estimate's document number "EST0008946"). Free text, not a
+  // FK: it's the lifecycle link key the snapshot engine resolves anchor_id from.
+  createdFrom: varchar('created_from', { length: 255 }),
+
   departmentId: integer('department_id').references(() => departments.id),
 
   customerId: integer('customer_id').references(() => customers.id),
@@ -1005,9 +1010,12 @@ export const salesOrderSearch = pgTable('sales_order_search', {
   tranDate: date('tran_date'),
   expectedCloseDate: date('expected_close_date'),
   promisedDeliveryDate: date('promised_delivery_date'),
+  endDate: date('end_date'),                            // "End Date"
 
   projectedTotal: numeric('projected_total'),
   exchangeRate: numeric('exchange_rate'),
+  amountNet: numeric('amount_net'),                     // "Amount (Net)"
+  openAmount: numeric('open_amount'),                   // "Open Amount"
 
   currencyId: integer('currency_id').references(() => currencies.id),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
@@ -1023,6 +1031,7 @@ export const salesOrderSearch = pgTable('sales_order_search', {
   customerIdx: index('sos_customer_idx').on(t.customerId),
   statusIdx:   index('sos_status_idx').on(t.statusId),
   docNumIdx:   index('sos_doc_num_idx').on(t.documentNumber),
+  createdFromIdx: index('sos_created_from_idx').on(t.createdFrom),
 }));
 
 // ══════════════════════════════════════════════════════════════════
@@ -1034,6 +1043,20 @@ export const invoiceSearch = pgTable('invoice_search', {
   id: serial('id').primaryKey(),
 
   documentNumber: varchar('document_number', { length: 100 }),
+
+  // Created From — the source transaction this invoice was created from, as
+  // plain text (usually the SO's document number). Free text, not a FK.
+  createdFrom: varchar('created_from', { length: 255 }),
+
+  // Sales Order link — "Document Number (SO)" + "SO Date" carried as plain text
+  // /date rather than a FK into sales_order_search, so an invoice still keeps
+  // the reference when its SO row hasn't synced (or is later removed).
+  soDocumentNumber: varchar('so_document_number', { length: 100 }),
+  soDate: date('so_date'),
+
+  // EST Number — originating Estimate's document number ("EST0008946"). This is
+  // the lifecycle link key the snapshot engine resolves anchor_id from.
+  estNumber: varchar('est_number', { length: 100 }),
 
   departmentId: integer('department_id').references(() => departments.id),
 
@@ -1049,6 +1072,8 @@ export const invoiceSearch = pgTable('invoice_search', {
 
   projectedTotal: numeric('projected_total'),
   exchangeRate: numeric('exchange_rate'),
+  usdInvoiceAmount: numeric('usd_invoice_amount'),      // "USD Invoice Amount"
+  usdNetRevenue: numeric('usd_net_revenue'),            // "USD Net Revenue"
 
   currencyId: integer('currency_id').references(() => currencies.id),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
@@ -1064,6 +1089,9 @@ export const invoiceSearch = pgTable('invoice_search', {
   customerIdx: index('invs_customer_idx').on(t.customerId),
   statusIdx:   index('invs_status_idx').on(t.statusId),
   docNumIdx:   index('invs_doc_num_idx').on(t.documentNumber),
+  createdFromIdx: index('invs_created_from_idx').on(t.createdFrom),
+  soDocNumIdx:    index('invs_so_doc_num_idx').on(t.soDocumentNumber),
+  estNumberIdx:   index('invs_est_number_idx').on(t.estNumber),
 }));
 
 // ══════════════════════════════════════════════════════════════════
@@ -1116,6 +1144,17 @@ export const budgetSearch = pgTable('budget_search', {
   // Account Manager → employees
   accountManagerId: integer('account_manager_id').references(() => employees.id),
 
+  // NetSuite record timestamps — "Last Modified" / "Date Created" on the NS
+  // record itself. Distinct from syncCols' createdAt/updatedAt below, which
+  // track when the PORTAL row was written.
+  //   mode: 'string' (unlike every other timestamp in this file) because these
+  //   arrive as NetSuite datetime STRINGS and are written straight through by
+  //   the sync service. Drizzle's default Date mode calls .toISOString() on the
+  //   value, which would throw on a string; 'string' mode hands the literal to
+  //   Postgres to parse, exactly like the date() columns above.
+  lastModified: timestamp('last_modified', { withTimezone: true, mode: 'string' }),
+  dateCreated: timestamp('date_created', { withTimezone: true, mode: 'string' }),
+
   ...syncCols, // netsuiteInternalId ("Internal ID"), isActive ("Inactive" inverse), source, syncStatus, …
 }, (t) => ({
   nsIdIdx:           uniqueIndex('bs_ns_id_idx').on(t.netsuiteInternalId),
@@ -1162,6 +1201,244 @@ export const syncConflicts = pgTable('sync_conflicts', {
   resolvedBy: integer('resolved_by').references(() => users.id),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
 });
+
+// ══════════════════════════════════════════════════════════════════
+//  REVENUE ANALYTICS SNAPSHOT ENGINE
+//  fact_revenue_snapshot → revenue_comparison → fact_revenue_change_log
+//
+//  These 3 tables are deliberately NOT linked to each other or to the 4
+//  source tables (estimate_quote_search, sales_order_search, invoice_search,
+//  budget_search) via `.references()` foreign keys. They're an append-only
+//  analytical/fact layer: a comparison row is built by joining TWO different
+//  fact_revenue_snapshot rows (a prior date + a current date) that share the
+//  same anchor_id, which a single FK column cannot express. The join key
+//  across all three tables — and back to the source tables — is the plain,
+//  indexed `anchor_id` string (the originating Estimate's document number),
+//  never a numeric FK.
+// ══════════════════════════════════════════════════════════════════
+
+// ─── 1. Revenue Snapshot ───────────────────────────────────────────
+// Full historical copy of every active Pipeline/SO/Invoice/Budget record,
+// appended (never updated) on every sync run. See Fact_Revenue_Snapshot tab
+// of AI_FPA_DW_Change_Log_Rules_v4.xlsx for the source spec.
+//
+// NOTE: consolidated_customer, top_level_parent, department, sales_rep,
+// project_name, status, and stage are stored as resolved DISPLAY TEXT here,
+// not FK ids — the source tables store these as *_id FKs into master tables,
+// so the insert code must resolve each id to its label before writing a
+// snapshot row (this table is a denormalized fact table by design).
+//
+// NOTE: `internal_id` is varchar(50), not BIGINT as the source workbook
+// specifies — changed to match the existing `netsuite_internal_id` convention
+// used on every other table in this schema (estimates, estimate_quote_search,
+// sales_order_search, invoice_search, budget_search all store it as
+// varchar(50)), so joins/comparisons against those tables don't need casts.
+export const factRevenueSnapshot = pgTable('fact_revenue_snapshot', {
+  id: serial('id').primaryKey(),
+
+  // Technical
+  snapshotDate: date('snapshot_date').notNull(),
+  snapshotTs: timestamp('snapshot_ts', { withTimezone: true }).notNull(),
+  sourceType: varchar('source_type', { length: 20 }).notNull(), // PIPELINE / SO / INVOICE / BUDGET
+  sourceName: varchar('source_name', { length: 100 }), // which NetSuite saved search produced this row — traceability
+  internalId: varchar('internal_id', { length: 50 }).notNull(),
+  anchorId: varchar('anchor_id', { length: 50 }),
+  documentNumber: varchar('document_number', { length: 100 }),
+
+  // Customer
+  consolidatedCustomer: varchar('consolidated_customer', { length: 200 }),
+  topLevelParent: varchar('top_level_parent', { length: 200 }),
+  department: varchar('department', { length: 100 }),
+  salesRep: varchar('sales_rep', { length: 100 }),
+  projectName: varchar('project_name', { length: 250 }),
+
+  // Commercial
+  status: varchar('status', { length: 100 }),
+  stage: varchar('stage', { length: 100 }),
+  likelyToClose: varchar('likely_to_close', { length: 100 }), // Pipeline/SO/Invoice — used by the Original Baseline rule ("Likely to Close > 3")
+
+  // Dates
+  createdDate: date('created_date'),
+  revenueDate: date('revenue_date'),
+  revenuePeriod: date('revenue_period'), // DATE_TRUNC('month', revenue_date)
+
+  // Amounts
+  foreignAmount: numeric('foreign_amount', { precision: 18, scale: 2 }),
+  currency: varchar('currency', { length: 10 }),
+  exchangeRate: numeric('exchange_rate', { precision: 18, scale: 8 }),
+  usdAmount: numeric('usd_amount', { precision: 18, scale: 2 }),
+
+  // Derived
+  changeDriver: varchar('change_driver', { length: 30 }), // BUSINESS / FX_ONLY / BUSINESS_AND_FX
+  isActive: boolean('is_active').default(true).notNull(),
+}, (t) => ({
+  snapshotDateIdx: index('frs_snapshot_date_idx').on(t.snapshotDate),
+  sourceTypeIdx: index('frs_source_type_idx').on(t.sourceType),
+  internalIdIdx: index('frs_internal_id_idx').on(t.internalId),
+  anchorIdx: index('frs_anchor_idx').on(t.anchorId),
+  anchorSnapshotIdx: index('frs_anchor_snapshot_idx').on(t.anchorId, t.snapshotDate),
+}));
+
+// ─── 2. Revenue Comparison ─────────────────────────────────────────
+// Wide/cross-tab layout — amounts and dates broken out per source type
+// (Pipeline/Open SO/Invoice) as separate columns, rather than one generic
+// prior/current pair — per the "Comparison Table" worked example in the
+// Cons Rev & comparison tab (Partial Invoice Scenario, row 54) and the
+// consolidated business-logic writeup. Replaces the earlier narrow/generic
+// design (never applied to any database).
+export const revenueComparison = pgTable('revenue_comparison', {
+  id: serial('id').primaryKey(),
+
+  anchorId: varchar('anchor_id', { length: 50 }).notNull(),
+  reportType: varchar('report_type', { length: 10 }).notNull(), // DOD/WOW/MOM/QOQ/MTD_LY/YTD_LY/QTR_LY
+
+  priorSnapshotPeriod: date('prior_snapshot_period').notNull(),
+  currentSnapshotPeriod: date('current_snapshot_period').notNull(),
+
+  priorSourceType: varchar('prior_source_type', { length: 20 }),
+  currentSourceType: varchar('current_source_type', { length: 20 }),
+  sourceTypeChange: varchar('source_type_change', { length: 30 }), // e.g. PIPELINE_TO_SO, NO_CHANGE
+
+  priorDocument: varchar('prior_document', { length: 100 }),
+  currentDocument: varchar('current_document', { length: 100 }),
+
+  // Pipeline stage — broken out separately
+  priorPipelineAmt: numeric('prior_pipeline_amt', { precision: 18, scale: 2 }),
+  currentPipelineAmt: numeric('current_pipeline_amt', { precision: 18, scale: 2 }),
+  pipelineAmountChange: numeric('pipeline_amount_change', { precision: 18, scale: 2 }),
+
+  // Open SO stage — broken out separately
+  priorOpenSoAmt: numeric('prior_open_so_amt', { precision: 18, scale: 2 }),
+  currentOpenSoAmt: numeric('current_open_so_amt', { precision: 18, scale: 2 }),
+  openSoAmountChange: numeric('open_so_amount_change', { precision: 18, scale: 2 }),
+
+  // Invoice stage — broken out separately
+  priorInvoiceAmt: numeric('prior_invoice_amt', { precision: 18, scale: 2 }),
+  currentInvoiceAmt: numeric('current_invoice_amt', { precision: 18, scale: 2 }),
+  invoiceAmountChange: numeric('invoice_amount_change', { precision: 18, scale: 2 }),
+
+  priorRevenuePeriod: date('prior_revenue_period'),
+  currentRevenuePeriod: date('current_revenue_period'),
+  revenuePeriodShift: varchar('revenue_period_shift', { length: 50 }), // e.g. "+1 month", "No Shift"
+
+  // Totals across all 3 stages
+  totalPriorAmount: numeric('total_prior_amount', { precision: 18, scale: 2 }),
+  totalCurrentAmount: numeric('total_current_amount', { precision: 18, scale: 2 }),
+  totalAmountChange: numeric('total_amount_change', { precision: 18, scale: 2 }),
+
+  // Reconciliation: total_amount_change should equal invoiceAmountChange + openSoAmountChange.
+  // Anything other than TRUE here is a data/pipeline red flag, not a business event.
+  checkFlag: boolean('check_flag'),
+
+  lifecycleEvent: varchar('lifecycle_event', { length: 100 }), // includes DELETED — see fact_revenue_change_log notes
+
+  // Reporting attributes carried through
+  customer: varchar('customer', { length: 200 }),
+  projectName: varchar('project_name', { length: 250 }),
+  salesRep: varchar('sales_rep', { length: 100 }),
+  department: varchar('department', { length: 100 }),
+  currency: varchar('currency', { length: 10 }),
+
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  anchorIdx: index('rc_anchor_idx').on(t.anchorId),
+  reportTypeIdx: index('rc_report_type_idx').on(t.reportType),
+  currentSnapshotIdx: index('rc_current_snapshot_idx').on(t.currentSnapshotPeriod),
+  anchorReportIdx: index('rc_anchor_report_idx').on(t.anchorId, t.reportType, t.currentSnapshotPeriod),
+}));
+
+// ─── 3. Revenue Change Log ─────────────────────────────────────────
+// Reverted to the 32-column 4_Change Log Output-based design, per the
+// consolidated business-logic writeup — this replaces the brief 14-column
+// "13_Expected Outputs" sample-row version (never applied to any database).
+// change_event_id / change_group_id are app-generated UUIDs
+// (crypto.randomUUID()), not DB-default-generated, matching this schema's
+// existing style of not relying on Postgres-side generation functions.
+//
+// change_type also carries the new DELETED event: fires only on the one
+// comparison run where the prior snapshot still had the anchor_id and the
+// current snapshot doesn't (change_driver = LIFECYCLE, prior_foreign_amount
+// = last known value, current_foreign_amount = 0/null). A later run where
+// the anchor is absent from both snapshots produces no row at all — that's
+// correct behavior, not a gap, so DELETED never repeats on subsequent runs.
+export const factRevenueChangeLog = pgTable('fact_revenue_change_log', {
+  id: serial('id').primaryKey(),
+
+  changeEventId: uuid('change_event_id').notNull(),
+  changeGroupId: uuid('change_group_id').notNull(),
+  changeType: varchar('change_type', { length: 50 }).notNull(), // includes DELETED
+  changeDriver: varchar('change_driver', { length: 30 }).notNull(), // BUSINESS, FX_ONLY, BUSINESS_AND_FX, PERIOD, LIFECYCLE, DATA_QUALITY
+
+  sourceType: varchar('source_type', { length: 20 }), // Pipeline, SO, or Invoice
+  sourceRecordId: varchar('source_record_id', { length: 50 }),
+  documentNumber: varchar('document_number', { length: 100 }),
+  anchorId: varchar('anchor_id', { length: 50 }).notNull(),
+
+  fromSnapshotDate: date('from_snapshot_date').notNull(),
+  toSnapshotDate: date('to_snapshot_date').notNull(),
+
+  currency: varchar('currency', { length: 10 }),
+
+  originalForeignAmount: numeric('original_foreign_amount', { precision: 18, scale: 2 }),
+  priorForeignAmount: numeric('prior_foreign_amount', { precision: 18, scale: 2 }),
+  currentForeignAmount: numeric('current_foreign_amount', { precision: 18, scale: 2 }),
+  foreignDeltaVsPrior: numeric('foreign_delta_vs_prior', { precision: 18, scale: 2 }),
+  foreignDeltaVsOriginal: numeric('foreign_delta_vs_original', { precision: 18, scale: 2 }),
+
+  originalReportedUsdAmount: numeric('original_reported_usd_amount', { precision: 18, scale: 2 }),
+  priorReportedUsdAmount: numeric('prior_reported_usd_amount', { precision: 18, scale: 2 }),
+  currentReportedUsdAmount: numeric('current_reported_usd_amount', { precision: 18, scale: 2 }),
+
+  originalExchangeRate: numeric('original_exchange_rate', { precision: 18, scale: 8 }),
+  priorExchangeRate: numeric('prior_exchange_rate', { precision: 18, scale: 8 }),
+  currentExchangeRate: numeric('current_exchange_rate', { precision: 18, scale: 8 }),
+  reportedUsdDeltaVsPrior: numeric('reported_usd_delta_vs_prior', { precision: 18, scale: 2 }),
+
+  fxOnlyChangeFlag: boolean('fx_only_change_flag').default(false).notNull(),
+
+  originalRevenuePeriod: date('original_revenue_period'),
+  priorRevenuePeriod: date('prior_revenue_period'),
+  currentRevenuePeriod: date('current_revenue_period'),
+  monthsShiftedVsPrior: integer('months_shifted_vs_prior'),
+  monthsShiftedVsOriginal: integer('months_shifted_vs_original'),
+
+  changeDescription: text('change_description'),
+  controlSeverity: varchar('control_severity', { length: 20 }), // INFO, REVIEW, WARNING, CRITICAL
+
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  anchorIdx: index('crl_anchor_idx').on(t.anchorId),
+  groupIdx: index('crl_group_idx').on(t.changeGroupId),
+  eventIdx: uniqueIndex('crl_event_idx').on(t.changeEventId),
+  changeTypeIdx: index('crl_change_type_idx').on(t.changeType),
+  changeDriverIdx: index('crl_change_driver_idx').on(t.changeDriver),
+  snapshotRangeIdx: index('crl_snapshot_range_idx').on(t.fromSnapshotDate, t.toSnapshotDate),
+}));
+
+// ─── 4. Revenue Sync Signal Log ─────────────────────────────────────
+// Control table for the signal-driven snapshot job (src/jobs/revenueSnapshot/).
+// NetSuite calls three endpoints — "sync start", "sync end", and "sync fail"
+// — once per source per day; each call upserts one row here. sourceType is
+// one of PIPELINE / SO / INVOICE / BUDGET for the 4 real sources, plus a 5th
+// synthetic row per day with sourceType = 'ALL' that tracks the overall
+// insert job's own lifecycle (pending -> scheduled -> running -> complete /
+// failed) once all 4 real sources report 'completed'. If any real source
+// reports 'failed', that day must not be used for comparisons — the insert
+// never gets triggered, since allSourcesCompleted() only counts 'completed'
+// rows. Not read by anything else in the app.
+export const revenueSyncSignalLog = pgTable('revenue_sync_signal_log', {
+  id: serial('id').primaryKey(),
+  runDate: date('run_date').notNull(),
+  sourceType: varchar('source_type', { length: 20 }).notNull(), // PIPELINE / SO / INVOICE / BUDGET / ALL
+  status: varchar('status', { length: 20 }).default('pending').notNull(), // pending/started/completed/failed (sources) or pending/scheduled/running/complete/failed (ALL)
+  recordCount: integer('record_count'), // how many records NetSuite reported syncing — sanity-check input
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  errorMessage: text('error_message'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  runDateSourceIdx: uniqueIndex('rssl_run_date_source_idx').on(t.runDate, t.sourceType),
+}));
 
 // ══════════════════════════════════════════════════════════════════
 //  RELATIONS
