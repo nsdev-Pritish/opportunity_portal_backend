@@ -49,7 +49,7 @@ export const InvoiceCreateSchema = z.object({
   estNumber                     : z.string().max(100).optional(), // "EST Number"
   departmentInternalId          : z.string().max(50).optional(),
   customerInternalId            : z.string().max(50).optional(),
-  consolidatedCustomerInternalId: z.string().max(50).optional(),
+  consolidatedCustomerInternalId: z.string().max(500).optional(),
   topLevelParentInternalId      : z.string().max(50).optional(),
   statusInternalId              : z.string().max(50).optional(),
   tranDate                      : z.string().optional(),

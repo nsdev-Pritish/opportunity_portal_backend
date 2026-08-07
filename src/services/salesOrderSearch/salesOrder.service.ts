@@ -47,7 +47,7 @@ export const SalesOrderCreateSchema = z.object({
   createdFrom                   : z.string().max(255).optional(),
   departmentInternalId          : z.string().max(50).optional(),
   customerInternalId            : z.string().max(50).optional(),
-  consolidatedCustomerInternalId: z.string().max(50).optional(),
+  consolidatedCustomerInternalId: z.string().max(500).optional(),
   topLevelParentInternalId      : z.string().max(50).optional(),
   statusInternalId              : z.string().max(50).optional(),
   tranDate                      : z.string().optional(),

@@ -70,7 +70,7 @@ export const BudgetCreateSchema = z.object({
   forecastStatusInternalId      : z.string().max(50).optional(),
   departmentInternalId          : z.string().max(50).optional(),
   parentInternalId              : z.string().max(50).optional(),
-  consolidatedCustomerInternalId: z.string().max(50).optional(),
+  consolidatedCustomerInternalId: z.string().max(500).optional(),
   accountManagerInternalId      : z.string().max(50).optional(),
 });
 
