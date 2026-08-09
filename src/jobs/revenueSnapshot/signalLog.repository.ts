@@ -2,10 +2,20 @@
 // where source_type is PIPELINE/SO/INVOICE/BUDGET (the 4 real sources) or the
 // synthetic 'ALL' row tracking the overall insert job's own lifecycle.
 
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or, lt, inArray, isNull } from 'drizzle-orm';
 import { revenueSyncSignalLog } from '../../db/schema/index.js';
 import type { DB } from '../../config/database.js';
-import { SOURCE_TYPES, type SourceType } from './config.js';
+import { INSERT_DELAY_MS, SOURCE_TYPES, type SourceType } from './config.js';
+
+/**
+ * How long a row may sit in `scheduled` before another caller may take it
+ * over. The only thing holding a `scheduled` row is an in-process setTimeout
+ * that fires after INSERT_DELAY_MS and immediately flips the row to
+ * `running`; a row still `scheduled` well past that means the process holding
+ * the timer died (deploy, restart, crash). 5x the delay is far past any live
+ * timer, so taking over can't race one that is about to fire.
+ */
+const STALE_SCHEDULE_MS = INSERT_DELAY_MS * 5;
 
 export type SignalStatus = 'pending' | 'started' | 'completed' | 'scheduled' | 'running' | 'complete' | 'failed';
 
@@ -55,22 +65,46 @@ export async function allSourcesCompleted(db: DB, runDate: string): Promise<bool
 
 /**
  * Atomically claims the day's insert job by flipping the synthetic 'ALL' row
- * from pending -> scheduled. Ensures the row exists first. Returns true only
- * for the ONE caller that wins the race — every other concurrent caller
- * (e.g. two "sync end" signals landing at nearly the same moment) gets false
- * and must not schedule a second insert.
+ * to `scheduled`, stamping started_at so staleness is measurable. Ensures the
+ * row exists first. Returns true only for the ONE caller that wins the race —
+ * every other concurrent caller (e.g. two "sync end" signals landing at nearly
+ * the same moment) gets false and must not schedule a second insert.
+ *
+ * Claimable from three states, so a day is never a permanent dead end:
+ *   - `pending`   — the normal first claim of the day.
+ *   - `failed`    — a previous attempt threw. The insert runs in one
+ *                   transaction, so a failed attempt left NO rows behind;
+ *                   re-running it cannot duplicate anything. Any later "sync
+ *                   end" signal therefore retries the day. error_message is
+ *                   cleared so a stale reason can't outlive the retry.
+ *   - `scheduled`, stale — the process holding the setTimeout died before the
+ *                   insert ever started (see STALE_SCHEDULE_MS). started_at is
+ *                   NULL only on rows scheduled before this stamping existed,
+ *                   which by definition belong to a process that is gone.
+ *
+ * Deliberately NOT claimable from `running` (rows may already be committing —
+ * a second pass could duplicate them) or `complete` (the day is done; a late
+ * "sync end" signal must not trigger a second insert).
  */
 export async function tryClaimInsertSlot(db: DB, runDate: string): Promise<boolean> {
   await db.insert(revenueSyncSignalLog)
     .values({ runDate, sourceType: 'ALL', status: 'pending' })
     .onConflictDoNothing({ target: [revenueSyncSignalLog.runDate, revenueSyncSignalLog.sourceType] });
 
+  const staleBefore = new Date(Date.now() - STALE_SCHEDULE_MS);
+
   const claimed = await db.update(revenueSyncSignalLog)
-    .set({ status: 'scheduled' })
+    .set({ status: 'scheduled', startedAt: new Date(), errorMessage: null })
     .where(and(
       eq(revenueSyncSignalLog.runDate, runDate),
       eq(revenueSyncSignalLog.sourceType, 'ALL'),
-      eq(revenueSyncSignalLog.status, 'pending'),
+      or(
+        inArray(revenueSyncSignalLog.status, ['pending', 'failed']),
+        and(
+          eq(revenueSyncSignalLog.status, 'scheduled'),
+          or(isNull(revenueSyncSignalLog.startedAt), lt(revenueSyncSignalLog.startedAt, staleBefore)),
+        ),
+      ),
     ))
     .returning({ id: revenueSyncSignalLog.id });
 

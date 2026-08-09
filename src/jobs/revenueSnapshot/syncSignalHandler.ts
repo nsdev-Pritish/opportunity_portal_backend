@@ -35,6 +35,12 @@ export async function handleSyncStart(db: DB, sourceType: SourceType): Promise<v
  * Call when NetSuite reports today's sync for a source has finished.
  * If this happens to be the 4th source to report completion today, this
  * claims the insert slot and schedules the actual insert 1 minute later.
+ *
+ * This is also the retry entry point: if a previous attempt for the same day
+ * failed (or was abandoned when its process died), the claim below succeeds
+ * again — so re-running ANY one source's sync end-to-end retries the day. See
+ * tryClaimInsertSlot for which states are re-claimable and why that can't
+ * duplicate rows.
  */
 export async function handleSyncEnd(db: DB, sourceType: SourceType, recordCount?: number): Promise<{ scheduledInsert: boolean }> {
   const runDate = todayDateString();

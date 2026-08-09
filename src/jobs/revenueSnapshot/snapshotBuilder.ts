@@ -18,8 +18,10 @@
 //     workbook's scope (stage doesn't apply to Invoice).
 //   - Budget: project_name and currency are NULL (no source field, and
 //     currency has not been confirmed always-USD by the client yet).
-//     created_date falls back to the portal's own createdAt, since there is
-//     no true NetSuite "Date Created" field on this source yet.
+//     created_date prefers budget_search.date_created (NetSuite's own "Date
+//     Created"), falling back to the portal's own createdAt — NetSuite is not
+//     populating date_created for any Budget row yet, so today the fallback
+//     is what actually lands.
 //
 // source_name is a static per-pass label, not resolved from any source
 // column — none of the 4 tables has a field literally called "Source Name"
@@ -29,6 +31,16 @@
 // likely_to_close resolves via the same likelyToCloseId FK already present
 // on Pipeline/SO/Invoice (Budget has no such field) — used downstream by
 // the Original Baseline rule ("Likely to Close > 3").
+//
+// The whole build runs inside ONE database transaction (see
+// buildRevenueSnapshotSequential): if any chunk of any source fails partway
+// through, everything inserted so far in this attempt rolls back together,
+// rather than leaving a partial source half-inserted. That's what makes a
+// retry after a failure safe — it never risks duplicating rows that already
+// made it in before the failure. Within the transaction, each source's rows
+// are still inserted in fixed-size chunks (SNAPSHOT_INSERT_CHUNK_SIZE) —
+// a single INSERT for a large source (e.g. tens of thousands of Invoice
+// rows) would exceed Postgres's 65,535-parameter-per-query limit.
 
 import { eq } from 'drizzle-orm';
 import {
@@ -48,6 +60,11 @@ import {
   likelyToClose,
 } from '../../db/schema/index.js';
 import type { DB } from '../../config/database.js';
+import { SNAPSHOT_INSERT_CHUNK_SIZE } from './config.js';
+
+// The type of the `tx` parameter passed into db.transaction(async (tx) => ...) —
+// supports the same .select()/.insert() query-builder API as `DB` itself.
+type Tx = Parameters<Parameters<DB['transaction']>[0]>[0];
 
 const SOURCE_NAMES: Record<string, string> = {
   PIPELINE: 'Pipeline Saved Search',
@@ -60,6 +77,11 @@ type Id = number | null | undefined;
 
 function toDateOnly(d: unknown): string | null {
   if (!d) return null;
+  // Date-mode timestamp columns (e.g. syncCols.createdAt) hand back a JS Date,
+  // whose String() form is "Wed Jul 01 2026 ..." — slicing that yields
+  // "Wed Jul 01", which Postgres rejects (22007). The date()/string-mode
+  // columns already arrive ISO-shaped, so only Date needs converting.
+  if (d instanceof Date) return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
   const s = String(d);
   return s.length >= 10 ? s.slice(0, 10) : s;
 }
@@ -90,7 +112,7 @@ interface MasterLookups {
   likelyToCloseNames: Map<number, string>;
 }
 
-async function loadMasterLookups(db: DB): Promise<MasterLookups> {
+async function loadMasterLookups(db: DB | Tx): Promise<MasterLookups> {
   const [deptRows, custRows, amRows, projRows, currRows, statusRows, fcastRows, empRows, ltcRows] = await Promise.all([
     db.select({ id: departments.id, name: departments.name }).from(departments),
     db.select({ id: customers.id, name: customers.name }).from(customers),
@@ -255,7 +277,7 @@ function buildBudgetRows(
     status: get(lu.forecastStatusNames, r.forecastStatusId),
     stage: null, // not applicable to Budget
     likelyToClose: null, // Budget has no likelyToCloseId field
-    createdDate: toDateOnly(r.createdAt), // fallback — no true NetSuite "Date Created" field yet
+    createdDate: toDateOnly(r.dateCreated ?? r.createdAt), // NetSuite's own "Date Created" when sent; portal createdAt otherwise
     revenueDate: toDateOnly(r.revenuePeriod),
     revenuePeriod: toDateOnly(r.revenuePeriod), // already month-level on this source
     foreignAmount: null, // not applicable, per the workbook
@@ -272,40 +294,57 @@ export interface BuildResult {
   bySource: Record<string, number>;
 }
 
+/** Inserts rows in fixed-size chunks, sequentially — never more than one INSERT in flight. */
+async function insertInChunks(tx: Tx, rows: SnapshotRow[]): Promise<void> {
+  for (let i = 0; i < rows.length; i += SNAPSHOT_INSERT_CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + SNAPSHOT_INSERT_CHUNK_SIZE);
+    if (chunk.length > 0) await tx.insert(factRevenueSnapshot).values(chunk);
+  }
+}
+
 /**
  * Runs the 4 sources strictly one at a time — Pipeline is fully selected,
  * transformed, and inserted before Open SO's select even starts, and so on.
  * This is intentionally NOT Promise.all'd across sources, so there is never
- * more than one insert into fact_revenue_snapshot in flight at once.
+ * more than one insert into fact_revenue_snapshot in flight at once. Within
+ * each source, rows are inserted in SNAPSHOT_INSERT_CHUNK_SIZE-row batches
+ * for the same reason, one chunk at a time.
+ *
+ * The entire function runs inside one database transaction: if any chunk of
+ * any source fails partway through, everything this attempt already
+ * inserted rolls back together, so a retry never risks duplicating rows
+ * that made it in before the failure.
  */
 export async function buildRevenueSnapshotSequential(db: DB, snapshotDate: string, snapshotTs: Date): Promise<BuildResult> {
-  const lu = await loadMasterLookups(db);
-  const bySource: Record<string, number> = {};
-  let inserted = 0;
+  return db.transaction(async (tx) => {
+    const lu = await loadMasterLookups(tx);
+    const bySource: Record<string, number> = {};
+    let inserted = 0;
 
-  const pipelineSource = await db.select().from(estimateQuoteSearch).where(eq(estimateQuoteSearch.isActive, true));
-  const pipelineRows = buildPipelineRows(pipelineSource, lu, snapshotDate, snapshotTs);
-  if (pipelineRows.length > 0) await db.insert(factRevenueSnapshot).values(pipelineRows);
-  bySource.PIPELINE = pipelineRows.length;
-  inserted += pipelineRows.length;
+    const pipelineSource = await tx.select().from(estimateQuoteSearch).where(eq(estimateQuoteSearch.isActive, true));
+    const pipelineRows = buildPipelineRows(pipelineSource, lu, snapshotDate, snapshotTs);
+    await insertInChunks(tx, pipelineRows);
+    bySource.PIPELINE = pipelineRows.length;
+    inserted += pipelineRows.length;
 
-  const soSource = await db.select().from(salesOrderSearch).where(eq(salesOrderSearch.isActive, true));
-  const soRows = buildSalesOrderRows(soSource, lu, snapshotDate, snapshotTs);
-  if (soRows.length > 0) await db.insert(factRevenueSnapshot).values(soRows);
-  bySource.SO = soRows.length;
-  inserted += soRows.length;
+    const soSource = await tx.select().from(salesOrderSearch).where(eq(salesOrderSearch.isActive, true));
+    const soRows = buildSalesOrderRows(soSource, lu, snapshotDate, snapshotTs);
+    await insertInChunks(tx, soRows);
+    bySource.SO = soRows.length;
+    inserted += soRows.length;
 
-  const invoiceSource = await db.select().from(invoiceSearch).where(eq(invoiceSearch.isActive, true));
-  const invoiceRows = buildInvoiceRows(invoiceSource, lu, snapshotDate, snapshotTs);
-  if (invoiceRows.length > 0) await db.insert(factRevenueSnapshot).values(invoiceRows);
-  bySource.INVOICE = invoiceRows.length;
-  inserted += invoiceRows.length;
+    const invoiceSource = await tx.select().from(invoiceSearch).where(eq(invoiceSearch.isActive, true));
+    const invoiceRows = buildInvoiceRows(invoiceSource, lu, snapshotDate, snapshotTs);
+    await insertInChunks(tx, invoiceRows);
+    bySource.INVOICE = invoiceRows.length;
+    inserted += invoiceRows.length;
 
-  const budgetSource = await db.select().from(budgetSearch).where(eq(budgetSearch.isActive, true));
-  const budgetRows = buildBudgetRows(budgetSource, lu, snapshotDate, snapshotTs);
-  if (budgetRows.length > 0) await db.insert(factRevenueSnapshot).values(budgetRows);
-  bySource.BUDGET = budgetRows.length;
-  inserted += budgetRows.length;
+    const budgetSource = await tx.select().from(budgetSearch).where(eq(budgetSearch.isActive, true));
+    const budgetRows = buildBudgetRows(budgetSource, lu, snapshotDate, snapshotTs);
+    await insertInChunks(tx, budgetRows);
+    bySource.BUDGET = budgetRows.length;
+    inserted += budgetRows.length;
 
-  return { inserted, bySource };
+    return { inserted, bySource };
+  });
 }
