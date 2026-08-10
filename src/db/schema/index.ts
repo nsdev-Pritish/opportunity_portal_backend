@@ -1071,7 +1071,11 @@ export const invoiceSearch = pgTable('invoice_search', {
   departmentId: integer('department_id').references(() => departments.id),
 
   customerId: integer('customer_id').references(() => customers.id),
-  consolidatedCustomerId: integer('consolidated_customer_id').references(() => customers.id),
+  // Consolidated Customer — free text (was FK -> customers). NetSuite's
+  // Invoice saved search sends the DISPLAY TEXT directly, never an internal
+  // id, so the FK lookup matched nothing and this always stored null. Same
+  // fix as sales_order_search (migration 0073).
+  consolidatedCustomer: varchar('consolidated_customer', { length: 500 }),
   topLevelParentId: integer('top_level_parent_id').references(() => customers.id),
 
   statusId: integer('status_id').references(() => estimateStatuses.id),
@@ -1595,7 +1599,7 @@ export const salesOrderSearchRelations = relations(salesOrderSearch, ({ one }) =
 export const invoiceSearchRelations = relations(invoiceSearch, ({ one }) => ({
   department:           one(departments,       { fields: [invoiceSearch.departmentId],         references: [departments.id] }),
   customer:             one(customers,         { fields: [invoiceSearch.customerId],           references: [customers.id] }),
-  consolidatedCustomer: one(customers,         { fields: [invoiceSearch.consolidatedCustomerId], references: [customers.id] }),
+  // consolidatedCustomer is now a free-text column (not a FK) — no relation.
   topLevelParent:       one(customers,         { fields: [invoiceSearch.topLevelParentId],     references: [customers.id] }),
   status:               one(estimateStatuses,  { fields: [invoiceSearch.statusId],             references: [estimateStatuses.id] }),
   currency:             one(currencies,        { fields: [invoiceSearch.currencyId],           references: [currencies.id] }),

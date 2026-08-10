@@ -6,9 +6,12 @@
  * validated per-record with Zod, and run through the SAME `processBatch` flow, so
  * single and bulk share one code path.
  *
- * NetSuite is the caller, so every reference field carries a NetSuite INTERNAL id.
- * `resolveReferences` turns each into the portal DB id (via the master table's
- * unique netsuite_internal_id); an id with no match resolves to null (warning).
+ * NetSuite is the caller, so every reference field carries a NetSuite INTERNAL id,
+ * EXCEPT consolidatedCustomer: NetSuite sends display text for that field, so it
+ * is stored as-is (see migration 0076) — same as the Sales Order / Pipeline sources.
+ * `resolveReferences` turns the remaining internal ids into the portal DB id (via
+ * the master table's unique netsuite_internal_id); an id with no match resolves
+ * to null (warning).
  *
  * Mirrors src/services/estimateQuotesSearch/estimateQuote.service.ts (same column set).
  */
@@ -49,7 +52,7 @@ export const InvoiceCreateSchema = z.object({
   estNumber                     : z.string().max(100).optional(), // "EST Number"
   departmentInternalId          : z.string().max(50).optional(),
   customerInternalId            : z.string().max(50).optional(),
-  consolidatedCustomerInternalId: z.string().max(500).optional(),
+  consolidatedCustomer          : z.string().max(500).optional(), // free text (no longer resolved) — see migration 0076
   topLevelParentInternalId      : z.string().max(50).optional(),
   statusInternalId              : z.string().max(50).optional(),
   tranDate                      : z.string().optional(),
@@ -87,6 +90,7 @@ const PASSTHROUGH_FIELDS = [
   'soDocumentNumber',
   'soDate',
   'estNumber',
+  'consolidatedCustomer',
   'tranDate',
   'expectedCloseDate',
   'promisedDeliveryDate',
@@ -121,7 +125,6 @@ interface FkResolver {
 const FK_RESOLVERS: FkResolver[] = [
   { field: 'departmentInternalId',           table: departments,       column: 'departmentId',           tkey: 'departments' },
   { field: 'customerInternalId',             table: customers,         column: 'customerId',             tkey: 'customers' },
-  { field: 'consolidatedCustomerInternalId', table: customers,         column: 'consolidatedCustomerId', tkey: 'customers' },
   { field: 'topLevelParentInternalId',       table: customers,         column: 'topLevelParentId',       tkey: 'customers' },
   { field: 'statusInternalId',               table: estimateStatuses,  column: 'statusId',               tkey: 'estimateStatuses' },
   { field: 'currencyInternalId',             table: currencies,        column: 'currencyId',             tkey: 'currencies' },

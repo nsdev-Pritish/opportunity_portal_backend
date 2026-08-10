@@ -14,12 +14,13 @@
 //     exchangeRate involved. Budget has NO foreign_amount column at all and
 //     is always NULL here — no native-currency concept applies to it per
 //     the workbook.
-//   - anchor_id: SO uses its own document_number, per explicit direction —
-//     NOT the linked Estimate's document number, even though
-//     sales_order_search.created_from holds that value directly. This means
-//     anchor_id can no longer link an SO back to its originating Pipeline
-//     record. Invoice's anchor_id is still NULL — not yet decided whether it
-//     gets the same document_number treatment as SO.
+//   - anchor_id: SO and Invoice both use their own document_number, per
+//     explicit direction — NOT the linked Estimate's document number, even
+//     though sales_order_search.created_from / invoice_search.est_number
+//     hold that value directly. This means anchor_id can no longer be used
+//     to track a deal across Pipeline→SO→Invoice as one lifecycle — each
+//     stage now gets its own, unrelated anchor_id. Budget stays NULL here —
+//     there is no mapping for it, per the workbook (not lifecycle-linked).
 //   - stage: NULL for Pipeline (no source field). SO actually already has
 //     this available for free via estimate_statuses.stage (the same lookup
 //     used for `status`) — resolved below. NULL for Invoice, per the
@@ -233,9 +234,9 @@ function buildInvoiceRows(
       sourceType: 'INVOICE',
       sourceName: SOURCE_NAMES.INVOICE,
       internalId: r.netsuiteInternalId ?? '',
-      anchorId: null, // gap — no EST#/created-from link field yet
+      anchorId: r.documentNumber, // per explicit instruction: Invoice's own document number
       documentNumber: r.documentNumber,
-      consolidatedCustomer: get(lu.customerNames, r.consolidatedCustomerId),
+      consolidatedCustomer: r.consolidatedCustomer, // free text on this source — see migration 0076
       topLevelParent: get(lu.customerNames, r.topLevelParentId),
       department: get(lu.departmentNames, r.departmentId),
       salesRep: get(lu.accountManagerNames, r.salesRepId),
@@ -244,14 +245,17 @@ function buildInvoiceRows(
       stage: null, // not applicable to Invoice per the workbook's scope
       likelyToClose: get(lu.likelyToCloseNames, r.likelyToCloseId),
       createdDate: toDateOnly(r.tranDate),
-      revenueDate: toDateOnly(r.promisedDeliveryDate),
-      revenuePeriod: toMonthStart(r.promisedDeliveryDate),
+      // Invoice Date (tranDate) — the workbook maps both Created Date and
+      // Revenue Date to this same field for Invoice; there's only one
+      // relevant date on an invoice.
+      revenueDate: toDateOnly(r.tranDate),
+      revenuePeriod: toMonthStart(r.tranDate), // first day of the revenue month
       // Prefers the real foreign_amount column; falls back to the raw
       // transaction amount (projectedTotal) if that's empty; NULL if neither is set.
       foreignAmount: r.foreignAmount ?? r.projectedTotal ?? null,
       currency: get(lu.currencyCodes, r.currencyId),
       exchangeRate: r.exchangeRate, // ⚠️ verify NetSuite is actually populating this
-      usdAmount: r.projectedTotal, // ⚠️ confirm this represents "USD Net Revenue"
+      usdAmount: r.usdNetRevenue, // matches the workbook's explicit "USD Net Revenue" mapping
       changeDriver: null,
       isActive: r.isActive,
     };
@@ -270,7 +274,7 @@ function buildBudgetRows(
     sourceType: 'BUDGET',
     sourceName: SOURCE_NAMES.BUDGET,
     internalId: r.netsuiteInternalId ?? '',
-    anchorId: null, // not lifecycle-linked, per the workbook
+    anchorId: null, // not lifecycle-linked, per the workbook — no mapping for Budget
     documentNumber: r.name,
     consolidatedCustomer: r.consolidatedCustomerText ?? get(lu.customerNames, r.consolidatedCustomerId),
     topLevelParent: get(lu.customerNames, r.parentId),
@@ -282,11 +286,11 @@ function buildBudgetRows(
     likelyToClose: null, // Budget has no likelyToCloseId field
     createdDate: toDateOnly(r.dateCreated ?? r.createdAt), // NetSuite's own "Date Created" when sent; portal createdAt otherwise
     revenueDate: toDateOnly(r.revenuePeriod),
-    revenuePeriod: toDateOnly(r.revenuePeriod), // already month-level on this source
+    revenuePeriod: toMonthStart(r.revenuePeriod), // first day of the revenue month
     foreignAmount: null, // not applicable to Budget, per the workbook — no source column exists
     currency: null, // gap — no source field; not yet confirmed always-USD
     exchangeRate: null,
-    usdAmount: r.netRevenue,
+    usdAmount: r.netRevenue, // "Net Revenue (FCT)"
     changeDriver: null,
     isActive: r.isActive,
   }));
