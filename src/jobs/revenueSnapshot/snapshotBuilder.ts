@@ -5,13 +5,21 @@
 //
 // Known gaps, carried over as documented NULLs rather than guessed values —
 // see the schema/migration comments for fact_revenue_snapshot:
-//   - foreign_amount: not sent by NetSuite yet for any of the 3 sources that
-//     need it. Pipeline/SO derive an interim value (projectedTotal ÷
-//     exchangeRate); Invoice is left NULL because its exchangeRate is the
-//     field already flagged as unreliable — dividing by a bad rate would
-//     manufacture a bad number.
-//   - anchor_id: NULL for SO/Invoice — there is no "Created From Estimate"
-//     link field in either table yet, so there is nothing to resolve it from.
+//   - foreign_amount: Pipeline, SO, and Invoice each have a real
+//     foreign_amount column (added once NetSuite is able to send it). Per
+//     explicit direction, the fallback chain is: real foreign_amount column
+//     -> raw transaction amount (projectedTotal) -> NULL. This is a plain
+//     passthrough, not a currency conversion — projectedTotal is used as-is
+//     when the real foreign_amount is empty, with no division by
+//     exchangeRate involved. Budget has NO foreign_amount column at all and
+//     is always NULL here — no native-currency concept applies to it per
+//     the workbook.
+//   - anchor_id: SO uses its own document_number, per explicit direction —
+//     NOT the linked Estimate's document number, even though
+//     sales_order_search.created_from holds that value directly. This means
+//     anchor_id can no longer link an SO back to its originating Pipeline
+//     record. Invoice's anchor_id is still NULL — not yet decided whether it
+//     gets the same document_number treatment as SO.
 //   - stage: NULL for Pipeline (no source field). SO actually already has
 //     this available for free via estimate_statuses.stage (the same lookup
 //     used for `status`) — resolved below. NULL for Invoice, per the
@@ -92,14 +100,6 @@ function toMonthStart(d: unknown): string | null {
   return `${dateOnly.slice(0, 7)}-01`;
 }
 
-function deriveForeignAmount(projectedTotal: unknown, exchangeRate: unknown): string | null {
-  if (projectedTotal == null || exchangeRate == null) return null;
-  const rate = Number(exchangeRate);
-  const total = Number(projectedTotal);
-  if (!rate || Number.isNaN(rate) || Number.isNaN(total)) return null;
-  return (total / rate).toFixed(2);
-}
-
 interface MasterLookups {
   departmentNames: Map<number, string>;
   customerNames: Map<number, string>;
@@ -172,7 +172,9 @@ function buildPipelineRows(
     createdDate: toDateOnly(r.tranDate),
     revenueDate: toDateOnly(r.promisedDeliveryDate),
     revenuePeriod: toMonthStart(r.promisedDeliveryDate),
-    foreignAmount: deriveForeignAmount(r.projectedTotal, r.exchangeRate), // interim derivation — see file header
+    // Prefers the real foreign_amount column; falls back to the raw
+    // transaction amount (projectedTotal) if that's empty; NULL if neither is set.
+    foreignAmount: r.foreignAmount ?? r.projectedTotal ?? null,
     currency: get(lu.currencyCodes, r.currencyId),
     exchangeRate: r.exchangeRate,
     usdAmount: r.projectedTotal,
@@ -193,7 +195,7 @@ function buildSalesOrderRows(
     sourceType: 'SO',
     sourceName: SOURCE_NAMES.SO,
     internalId: r.netsuiteInternalId ?? '',
-    anchorId: null, // gap — no "Created From Estimate" link field yet
+    anchorId: r.documentNumber, // per explicit instruction: SO's own document number, not the linked Estimate's
     documentNumber: r.documentNumber,
     consolidatedCustomer: r.consolidatedCustomer, // already free text on this source
     topLevelParent: get(lu.customerNames, r.topLevelParentId),
@@ -204,12 +206,14 @@ function buildSalesOrderRows(
     stage: null, // gap — status is free text, so there is no estimate_statuses row to read stage from
     likelyToClose: get(lu.likelyToCloseNames, r.likelyToCloseId),
     createdDate: toDateOnly(r.tranDate),
-    revenueDate: toDateOnly(r.promisedDeliveryDate),
-    revenuePeriod: toMonthStart(r.promisedDeliveryDate),
-    foreignAmount: deriveForeignAmount(r.projectedTotal, r.exchangeRate), // interim derivation — see file header
+    revenueDate: toDateOnly(r.endDate), // workbook calls this "End Date" — sales_order_search has a dedicated column for it
+    revenuePeriod: toMonthStart(r.endDate), // same field as revenueDate, truncated to month — same pattern Pipeline uses
+    // Prefers the real foreign_amount column; falls back to the raw
+    // transaction amount (projectedTotal) if that's empty; NULL if neither is set.
+    foreignAmount: r.foreignAmount ?? r.projectedTotal ?? null,
     currency: get(lu.currencyCodes, r.currencyId),
     exchangeRate: r.exchangeRate,
-    usdAmount: r.projectedTotal, // ⚠️ confirm this is Open Amount, not full Amount (Net) — Open Item #4
+    usdAmount: r.projectedTotal,
     changeDriver: null,
     isActive: r.isActive,
   }));
@@ -242,7 +246,9 @@ function buildInvoiceRows(
       createdDate: toDateOnly(r.tranDate),
       revenueDate: toDateOnly(r.promisedDeliveryDate),
       revenuePeriod: toMonthStart(r.promisedDeliveryDate),
-      foreignAmount: null, // NOT derived — invoice exchangeRate is the flagged-unreliable field
+      // Prefers the real foreign_amount column; falls back to the raw
+      // transaction amount (projectedTotal) if that's empty; NULL if neither is set.
+      foreignAmount: r.foreignAmount ?? r.projectedTotal ?? null,
       currency: get(lu.currencyCodes, r.currencyId),
       exchangeRate: r.exchangeRate, // ⚠️ verify NetSuite is actually populating this
       usdAmount: r.projectedTotal, // ⚠️ confirm this represents "USD Net Revenue"
@@ -277,7 +283,7 @@ function buildBudgetRows(
     createdDate: toDateOnly(r.dateCreated ?? r.createdAt), // NetSuite's own "Date Created" when sent; portal createdAt otherwise
     revenueDate: toDateOnly(r.revenuePeriod),
     revenuePeriod: toDateOnly(r.revenuePeriod), // already month-level on this source
-    foreignAmount: null, // not applicable, per the workbook
+    foreignAmount: null, // not applicable to Budget, per the workbook — no source column exists
     currency: null, // gap — no source field; not yet confirmed always-USD
     exchangeRate: null,
     usdAmount: r.netRevenue,

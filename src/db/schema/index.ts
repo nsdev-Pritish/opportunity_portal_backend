@@ -956,6 +956,10 @@ export const estimateQuoteSearch = pgTable('estimate_quote_search', {
   // Amounts
   projectedTotal: numeric('projected_total'),
   exchangeRate: numeric('exchange_rate'),
+  // Foreign Amount — native transaction-currency amount, as sent by NetSuite.
+  // Falls back to a derived value (projectedTotal ÷ exchangeRate) in the
+  // snapshot builder when NetSuite hasn't populated this yet.
+  foreignAmount: numeric('foreign_amount'),
 
   // Currency → currencies
   currencyId: integer('currency_id').references(() => currencies.id),
@@ -1018,6 +1022,10 @@ export const salesOrderSearch = pgTable('sales_order_search', {
   exchangeRate: numeric('exchange_rate'),
   amountNet: numeric('amount_net'),                     // "Amount (Net)"
   openAmount: numeric('open_amount'),                   // "Open Amount"
+  // Foreign Amount — native transaction-currency amount, as sent by NetSuite.
+  // Falls back to a derived value (projectedTotal ÷ exchangeRate) in the
+  // snapshot builder when NetSuite hasn't populated this yet.
+  foreignAmount: numeric('foreign_amount'),
 
   currencyId: integer('currency_id').references(() => currencies.id),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
@@ -1076,6 +1084,10 @@ export const invoiceSearch = pgTable('invoice_search', {
   exchangeRate: numeric('exchange_rate'),
   usdInvoiceAmount: numeric('usd_invoice_amount'),      // "USD Invoice Amount"
   usdNetRevenue: numeric('usd_net_revenue'),            // "USD Net Revenue"
+  // Foreign Amount — native transaction-currency amount, as sent by NetSuite.
+  // Falls back to a derived value (projectedTotal ÷ exchangeRate) in the
+  // snapshot builder when NetSuite hasn't populated this yet.
+  foreignAmount: numeric('foreign_amount'),
 
   currencyId: integer('currency_id').references(() => currencies.id),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
