@@ -1001,11 +1001,13 @@ export const salesOrderSearch = pgTable('sales_order_search', {
 
   departmentId: integer('department_id').references(() => departments.id),
 
+  // Customer hierarchy → customers (Name / Top Level Parent are FK; Consolidated Customer is free text)
   customerId: integer('customer_id').references(() => customers.id),
-  consolidatedCustomerId: integer('consolidated_customer_id').references(() => customers.id),
+  consolidatedCustomer: varchar('consolidated_customer', { length: 500 }), // free text (was FK → customers)
   topLevelParentId: integer('top_level_parent_id').references(() => customers.id),
 
-  statusId: integer('status_id').references(() => estimateStatuses.id),
+  // Status — free text (was FK → estimate_statuses); NS sends "pendingFulfillment" etc.
+  status: varchar('status', { length: 255 }),
 
   tranDate: date('tran_date'),
   expectedCloseDate: date('expected_close_date'),
@@ -1029,7 +1031,7 @@ export const salesOrderSearch = pgTable('sales_order_search', {
   nsIdIdx:     uniqueIndex('sos_ns_id_idx').on(t.netsuiteInternalId),
   syncIdx:     index('sos_sync_idx').on(t.syncStatus),
   customerIdx: index('sos_customer_idx').on(t.customerId),
-  statusIdx:   index('sos_status_idx').on(t.statusId),
+  statusIdx:   index('sos_status_idx').on(t.status),
   docNumIdx:   index('sos_doc_num_idx').on(t.documentNumber),
   createdFromIdx: index('sos_created_from_idx').on(t.createdFrom),
 }));
@@ -1568,9 +1570,8 @@ export const estimateQuoteSearchRelations = relations(estimateQuoteSearch, ({ on
 export const salesOrderSearchRelations = relations(salesOrderSearch, ({ one }) => ({
   department:           one(departments,       { fields: [salesOrderSearch.departmentId],         references: [departments.id] }),
   customer:             one(customers,         { fields: [salesOrderSearch.customerId],           references: [customers.id] }),
-  consolidatedCustomer: one(customers,         { fields: [salesOrderSearch.consolidatedCustomerId], references: [customers.id] }),
+  // consolidatedCustomer and status are now free-text columns (not FKs) — no relations.
   topLevelParent:       one(customers,         { fields: [salesOrderSearch.topLevelParentId],     references: [customers.id] }),
-  status:               one(estimateStatuses,  { fields: [salesOrderSearch.statusId],             references: [estimateStatuses.id] }),
   currency:             one(currencies,        { fields: [salesOrderSearch.currencyId],           references: [currencies.id] }),
   subsidiary:           one(subsidiaries,      { fields: [salesOrderSearch.subsidiaryId],         references: [subsidiaries.id] }),
   projectName:          one(projectNames,      { fields: [salesOrderSearch.projectNameId],        references: [projectNames.id] }),

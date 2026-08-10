@@ -9,6 +9,8 @@
  * NetSuite is the caller, so every reference field carries a NetSuite INTERNAL id.
  * `resolveReferences` turns each into the portal DB id (via the master table's
  * unique netsuite_internal_id); an id with no match resolves to null (warning).
+ * EXCEPT consolidatedCustomer / status: NetSuite sends display text for those, so
+ * they are stored as-is (see migration 0073) — same as the Pipeline source.
  *
  * Mirrors src/services/invoiceSearch/invoice.service.ts (same column set).
  */
@@ -20,7 +22,6 @@ import {
   salesOrderSearch,
   departments,
   customers,
-  estimateStatuses,
   currencies,
   subsidiaries,
   projectNames,
@@ -47,9 +48,9 @@ export const SalesOrderCreateSchema = z.object({
   createdFrom                   : z.string().max(255).optional(),
   departmentInternalId          : z.string().max(50).optional(),
   customerInternalId            : z.string().max(50).optional(),
-  consolidatedCustomerInternalId: z.string().max(500).optional(),
+  consolidatedCustomer          : z.string().max(500).optional(), // free text (no longer resolved)
   topLevelParentInternalId      : z.string().max(50).optional(),
-  statusInternalId              : z.string().max(50).optional(),
+  status                        : z.string().max(255).optional(), // free text (no longer resolved)
   tranDate                      : z.string().optional(),
   expectedCloseDate             : z.string().optional(),
   promisedDeliveryDate          : z.string().optional(),
@@ -83,6 +84,8 @@ export type SalesOrderUpdateInput = z.infer<typeof SalesOrderUpdateSchema>;
 const PASSTHROUGH_FIELDS = [
   'documentNumber',
   'createdFrom',
+  'consolidatedCustomer',
+  'status',
   'tranDate',
   'expectedCloseDate',
   'promisedDeliveryDate',
@@ -118,9 +121,7 @@ interface FkResolver {
 const FK_RESOLVERS: FkResolver[] = [
   { field: 'departmentInternalId',           table: departments,       column: 'departmentId',           tkey: 'departments' },
   { field: 'customerInternalId',             table: customers,         column: 'customerId',             tkey: 'customers' },
-  { field: 'consolidatedCustomerInternalId', table: customers,         column: 'consolidatedCustomerId', tkey: 'customers' },
   { field: 'topLevelParentInternalId',       table: customers,         column: 'topLevelParentId',       tkey: 'customers' },
-  { field: 'statusInternalId',               table: estimateStatuses,  column: 'statusId',               tkey: 'estimateStatuses' },
   { field: 'currencyInternalId',             table: currencies,        column: 'currencyId',             tkey: 'currencies' },
   { field: 'subsidiaryInternalId',           table: subsidiaries,      column: 'subsidiaryId',           tkey: 'subsidiaries' },
   { field: 'projectNameInternalId',          table: projectNames,      column: 'projectNameId',          tkey: 'projectNames' },

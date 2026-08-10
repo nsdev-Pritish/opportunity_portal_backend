@@ -187,35 +187,32 @@ function buildSalesOrderRows(
   snapshotDate: string,
   snapshotTs: Date,
 ): SnapshotRow[] {
-  return rows.map(r => {
-    const statusRow = r.statusId != null ? lu.estimateStatuses.get(r.statusId) : undefined;
-    return {
-      snapshotDate,
-      snapshotTs,
-      sourceType: 'SO',
-      sourceName: SOURCE_NAMES.SO,
-      internalId: r.netsuiteInternalId ?? '',
-      anchorId: null, // gap — no "Created From Estimate" link field yet
-      documentNumber: r.documentNumber,
-      consolidatedCustomer: get(lu.customerNames, r.consolidatedCustomerId),
-      topLevelParent: get(lu.customerNames, r.topLevelParentId),
-      department: get(lu.departmentNames, r.departmentId),
-      salesRep: get(lu.accountManagerNames, r.salesRepId),
-      projectName: get(lu.projectNameNames, r.projectNameId),
-      status: statusRow?.name ?? null,
-      stage: statusRow?.stage ?? null, // available today via the same estimate_statuses lookup
-      likelyToClose: get(lu.likelyToCloseNames, r.likelyToCloseId),
-      createdDate: toDateOnly(r.tranDate),
-      revenueDate: toDateOnly(r.promisedDeliveryDate),
-      revenuePeriod: toMonthStart(r.promisedDeliveryDate),
-      foreignAmount: deriveForeignAmount(r.projectedTotal, r.exchangeRate), // interim derivation — see file header
-      currency: get(lu.currencyCodes, r.currencyId),
-      exchangeRate: r.exchangeRate,
-      usdAmount: r.projectedTotal, // ⚠️ confirm this is Open Amount, not full Amount (Net) — Open Item #4
-      changeDriver: null,
-      isActive: r.isActive,
-    };
-  });
+  return rows.map(r => ({
+    snapshotDate,
+    snapshotTs,
+    sourceType: 'SO',
+    sourceName: SOURCE_NAMES.SO,
+    internalId: r.netsuiteInternalId ?? '',
+    anchorId: null, // gap — no "Created From Estimate" link field yet
+    documentNumber: r.documentNumber,
+    consolidatedCustomer: r.consolidatedCustomer, // already free text on this source
+    topLevelParent: get(lu.customerNames, r.topLevelParentId),
+    department: get(lu.departmentNames, r.departmentId),
+    salesRep: get(lu.accountManagerNames, r.salesRepId),
+    projectName: get(lu.projectNameNames, r.projectNameId),
+    status: r.status, // already free text on this source
+    stage: null, // gap — status is free text, so there is no estimate_statuses row to read stage from
+    likelyToClose: get(lu.likelyToCloseNames, r.likelyToCloseId),
+    createdDate: toDateOnly(r.tranDate),
+    revenueDate: toDateOnly(r.promisedDeliveryDate),
+    revenuePeriod: toMonthStart(r.promisedDeliveryDate),
+    foreignAmount: deriveForeignAmount(r.projectedTotal, r.exchangeRate), // interim derivation — see file header
+    currency: get(lu.currencyCodes, r.currencyId),
+    exchangeRate: r.exchangeRate,
+    usdAmount: r.projectedTotal, // ⚠️ confirm this is Open Amount, not full Amount (Net) — Open Item #4
+    changeDriver: null,
+    isActive: r.isActive,
+  }));
 }
 
 function buildInvoiceRows(
