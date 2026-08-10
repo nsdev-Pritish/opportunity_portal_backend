@@ -48,6 +48,7 @@ export const EstimateQuoteCreateSchema = z.object({
   expectedCloseDate             : z.string().optional(),
   promisedDeliveryDate          : z.string().optional(),
   projectedTotal                : z.string().optional(),
+  foreignAmount                 : z.string().optional(),
   exchangeRate                  : z.string().optional(),
   currencyInternalId            : z.string().max(50).optional(),
   subsidiaryInternalId          : z.string().max(50).optional(),
@@ -79,6 +80,7 @@ const PASSTHROUGH_FIELDS = [
   'expectedCloseDate',
   'promisedDeliveryDate',
   'projectedTotal',
+  'foreignAmount',
   'exchangeRate',
 ] as const;
 
