@@ -142,16 +142,16 @@ function formatMonthShift(diff: number): string {
   return diff > 0 ? `+${diff} month${diff === 1 ? '' : 's'}` : `${diff} month${diff === -1 ? '' : 's'}`;
 }
 
-/** Pipeline/SO revenue-date-change columns (K/R on the sheet): "irrelevant" once the stage's current amount is 0, else the +/- month shift. */
+/** Pipeline/SO revenue-date-change columns (K/R on the sheet): "irrelevant" once the stage's current amount is 0, else the +/- month shift. Zero-tested via sign() — see its comment for why a strict `=== 0` misfires on a stage summed from many rows. */
 function stageDateChange(currentStageAmt: number, priorDate: string | null, currentDate: string | null): string {
-  if (currentStageAmt === 0) return 'Irrelevant';
+  if (sign(currentStageAmt) === 0) return 'Irrelevant';
   if (!priorDate || !currentDate) return 'No Shift';
   return formatMonthShift(monthDiff(priorDate, currentDate));
 }
 
 /** Invoice Revenue Period Summary (Y on the sheet): compares the invoice's OWN current date against the SO's current revenue date, not against the invoice's prior date. */
 function invoiceRevenuePeriodSummary(currentInvoiceAmt: number, currentInvoiceDate: string | null, currentSoRevDate: string | null): string {
-  if (currentInvoiceAmt === 0) return 'Irrelevant';
+  if (sign(currentInvoiceAmt) === 0) return 'Irrelevant';
   if (!currentInvoiceDate || !currentSoRevDate) return 'No comparison SO revenue date available';
   return formatMonthShift(monthDiff(currentSoRevDate, currentInvoiceDate));
 }
@@ -162,6 +162,22 @@ function buildRevenueDateChangeSummary(parts: { pipeline: string; so: string; in
   if (parts.so !== 'Irrelevant' && parts.so !== 'No Shift') bits.push(`SO ${parts.so}`);
   if (parts.invoice !== 'Irrelevant' && parts.invoice !== 'No comparison SO revenue date available') bits.push(`Invoice ${parts.invoice}`);
   return bits.length > 0 ? bits.join('; ') : 'No revenue date changes';
+}
+
+// Half a cent of tolerance on every zero/sign test below. Not a business
+// threshold — it absorbs floating-point summation noise: aggregateStage()
+// sums potentially hundreds of per-row amounts (one real anchor has 480
+// invoice rows), and summing that many floats in JS can leave a delta like
+// 4.5e-13 where the true business answer is exactly 0. Confirmed against
+// production data: rows where prior/current invoice_amount_change both
+// round to "0.00" for display were still failing a strict `=== 0` check
+// here and falling through to OTHER_CHANGE. sign() centralizes the fix so
+// every comparison in this function gets the same tolerance consistently.
+const AMOUNT_EPSILON = 0.01;
+function sign(n: number): -1 | 0 | 1 {
+  if (n > AMOUNT_EPSILON) return 1;
+  if (n < -AMOUNT_EPSILON) return -1;
+  return 0;
 }
 
 /**
@@ -177,36 +193,40 @@ function classifyLifecycleEvent(input: {
   priorOpenSoAmt: number; currentOpenSoAmt: number; soChange: number;
   priorInvoiceAmt: number; currentInvoiceAmt: number; invoiceChange: number;
 }): string {
-  const {
-    priorPipelineAmt, currentPipelineAmt, pipelineChange,
-    priorOpenSoAmt, currentOpenSoAmt, soChange,
-    priorInvoiceAmt, currentInvoiceAmt, invoiceChange,
-  } = input;
+  const priorPipeline = sign(input.priorPipelineAmt);
+  const currentPipeline = sign(input.currentPipelineAmt);
+  const pipelineChange = sign(input.pipelineChange);
+  const priorOpenSo = sign(input.priorOpenSoAmt);
+  const currentOpenSo = sign(input.currentOpenSoAmt);
+  const soChange = sign(input.soChange);
+  const priorInvoice = sign(input.priorInvoiceAmt);
+  const currentInvoice = sign(input.currentInvoiceAmt);
+  const invoiceChange = sign(input.invoiceChange);
 
   // Pipeline -> SO: "Prior period SO = 0 and Current Period SO > 0" (row 82 footnote).
-  if (priorOpenSoAmt === 0 && currentOpenSoAmt > 0 && invoiceChange === 0) {
-    return priorPipelineAmt > 0 ? 'PIPELINE_CONVERTED_TO_SO' : 'ADDED_TO_SO_NO_PIPELINE';
+  if (priorOpenSo === 0 && currentOpenSo > 0 && invoiceChange === 0) {
+    return priorPipeline > 0 ? 'PIPELINE_CONVERTED_TO_SO' : 'ADDED_TO_SO_NO_PIPELINE';
   }
 
   // SO -> Invoice: "Open SO > 0 and Invoiced Current > 0" (partial) / "Open SO = 0 and Invoiced > 0" (full) — row 83/84 footnotes.
-  if (priorInvoiceAmt === 0 && currentInvoiceAmt > 0) {
-    if (currentOpenSoAmt > 0 && soChange < 0) return 'SO_PARTIALLY_INVOICED';
-    if (currentOpenSoAmt === 0 && soChange < 0) return 'SO_FULLY_INVOICED';
+  if (priorInvoice === 0 && currentInvoice > 0) {
+    if (currentOpenSo > 0 && soChange < 0) return 'SO_PARTIALLY_INVOICED';
+    if (currentOpenSo === 0 && soChange < 0) return 'SO_FULLY_INVOICED';
     return 'INVOICED_NO_LINKED_SO';
   }
 
-  if (priorOpenSoAmt > 0 && currentOpenSoAmt === 0 && currentInvoiceAmt === 0) return 'SO_DELETED';
+  if (priorOpenSo > 0 && currentOpenSo === 0 && currentInvoice === 0) return 'SO_DELETED';
 
-  if (priorPipelineAmt === 0 && currentPipelineAmt > 0 && currentOpenSoAmt === 0 && currentInvoiceAmt === 0) return 'ADDED_TO_PIPELINE';
-  if (priorPipelineAmt > 0 && currentPipelineAmt === 0 && currentOpenSoAmt === 0 && currentInvoiceAmt === 0) return 'PIPELINE_DELETED';
+  if (priorPipeline === 0 && currentPipeline > 0 && currentOpenSo === 0 && currentInvoice === 0) return 'ADDED_TO_PIPELINE';
+  if (priorPipeline > 0 && currentPipeline === 0 && currentOpenSo === 0 && currentInvoice === 0) return 'PIPELINE_DELETED';
 
-  if (currentPipelineAmt > 0 && soChange === 0 && invoiceChange === 0) {
+  if (currentPipeline > 0 && soChange === 0 && invoiceChange === 0) {
     if (pipelineChange > 0) return 'PIPELINE_AMOUNT_INCREASED';
     if (pipelineChange < 0) return 'PIPELINE_AMOUNT_DECREASED';
     return 'PIPELINE_OPEN_NO_CHANGE';
   }
 
-  if (currentOpenSoAmt > 0 && pipelineChange === 0 && invoiceChange === 0) {
+  if (currentOpenSo > 0 && pipelineChange === 0 && invoiceChange === 0) {
     if (soChange > 0) return 'SO_AMOUNT_INCREASED';
     if (soChange < 0) return 'SO_AMOUNT_DECREASED';
     return 'SO_OPEN_NOT_INVOICED';
@@ -216,9 +236,9 @@ function classifyLifecycleEvent(input: {
   return 'OTHER_CHANGE';
 }
 
-/** Reconciliation control (AD column): total_amount_change must equal invoice + open-SO change, since total deliberately excludes Pipeline. */
+/** Reconciliation control (AD column): total_amount_change must equal invoice + open-SO change, since total deliberately excludes Pipeline. Same AMOUNT_EPSILON tolerance as sign() — see its comment. */
 function computeCheckFlag(totalAmountChange: number, invoiceAmountChange: number, openSoAmountChange: number): boolean {
-  return Math.abs(totalAmountChange - (invoiceAmountChange + openSoAmountChange)) < 0.01;
+  return Math.abs(totalAmountChange - (invoiceAmountChange + openSoAmountChange)) < AMOUNT_EPSILON;
 }
 
 /** Reporting attributes (customer/parent/project/etc.) carried through from whichever stage is most current — prefers Invoice, then SO, then Pipeline; falls back to the prior snapshot if the anchor has no row at all in the current one (e.g. deleted this period). */
