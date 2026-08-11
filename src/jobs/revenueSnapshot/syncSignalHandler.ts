@@ -17,6 +17,7 @@ import {
 } from './signalLog.repository.js';
 import { buildRevenueSnapshotSequential } from './snapshotBuilder.js';
 import { runAllComparisons } from '../revenueComparison/index.js';
+import { buildChangeLog } from '../revenueChangeLog/changeLogBuilder.js';
 import { INSERT_DELAY_MS, type SourceType } from './config.js';
 import type { DB } from '../../config/database.js';
 
@@ -90,7 +91,23 @@ async function runScheduledInsert(db: DB, runDate: string): Promise<void> {
     // runAllComparisons never throws and isolates each report type
     // internally, so a comparison problem is logged but cannot flip this
     // day's snapshot — already committed and marked complete — to failed.
-    await runAllComparisons(db, runDate);
+    const outcomes = await runAllComparisons(db, runDate);
+
+    // The change log reads revenue_comparison's own DOD row for its lifecycle
+    // detection (see changeLogBuilder.ts), so it only ever runs off the DOD
+    // outcome specifically — WOW/MOM/QOQ are broader rollups that don't map
+    // to "what happened on this one day" the way the change log needs.
+    // Isolated in its own try/catch for the same reason runAllComparisons is:
+    // a change-log problem must not be reported as a snapshot failure.
+    const dod = outcomes.find(o => o.reportType === 'DOD');
+    if (dod?.status === 'ok') {
+      try {
+        const clResult = await buildChangeLog(db, dod.priorDate, dod.currentDate);
+        console.log(`[revenue-change-log] ${dod.priorDate} -> ${dod.currentDate} — OK: ${clResult.inserted} row(s)`);
+      } catch (clErr) {
+        console.error(`[revenue-change-log] ${dod.priorDate} -> ${dod.currentDate} — FAILED:`, clErr);
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await markInsertFailed(db, runDate, message);

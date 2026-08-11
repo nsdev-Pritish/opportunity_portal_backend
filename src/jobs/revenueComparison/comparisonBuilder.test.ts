@@ -157,11 +157,29 @@ describe('runComparison', { skip: TEST_DATABASE_URL ? false : 'set TEST_DATABASE
     assert.equal(num(row.currentOpenSoAmt), 100000);
     assert.equal(num(row.openSoAmountChange), 100000);
 
-    assert.equal(num(row.totalPriorAmount), 100000);
+    // Totals exclude Pipeline (see totalPriorAmount in comparisonBuilder.ts),
+    // so the prior side is 0 even though 100000 of pipeline existed then: the
+    // conversion is what first makes this deal committed revenue, and the
+    // totals are meant to show exactly that step up from 0 to 100000.
+    assert.equal(num(row.totalPriorAmount), 0);
     assert.equal(num(row.totalCurrentAmount), 100000);
-    assert.equal(num(row.totalAmountChange), 0);
+    assert.equal(num(row.totalAmountChange), 100000);
+    // Reconciliation holds: 100000 total == 0 invoice + 100000 open-SO change.
+    assert.equal(row.checkFlag, true);
 
-    assert.equal(row.soRevenueDateChange, '+1 month');
+    // 'No Shift', not '+1 month': so_revenue_date_change compares the SO
+    // stage's OWN prior and current dates, and on a fresh conversion there is
+    // no prior SO date to compare against (the 1990-03-01 date belonged to the
+    // pipeline leg). Only the invoice column does a cross-stage comparison
+    // (invoiceRevenuePeriodSummary, invoice vs SO) — the SO column does not.
+    //
+    // ⚠ OPEN BUSINESS QUESTION: a converted deal whose revenue date slipped
+    // Mar -> Apr arguably HAS shifted, and this column stays silent about it.
+    // If the intended behaviour is to fall back to the pipeline's prior date,
+    // the change belongs in stageDateChange() in comparisonBuilder.ts, not
+    // here. Confirm with the FP&A owner before relying on this column for a
+    // conversion.
+    assert.equal(row.soRevenueDateChange, 'No Shift');
     assert.equal(row.lifecycleEvent, 'PIPELINE_CONVERTED_TO_SO');
   });
 
@@ -207,9 +225,13 @@ describe('runComparison', { skip: TEST_DATABASE_URL ? false : 'set TEST_DATABASE
     assert.equal(num(row.currentOpenSoAmt), 0);
     assert.equal(num(row.currentInvoiceAmt), 0);
 
-    assert.equal(num(row.totalPriorAmount), 50000);
+    // All zero, not -50000: the deleted value was PIPELINE, which the total
+    // columns exclude, so no committed revenue was lost. The deletion is
+    // reported by lifecycle_event (and by revenue_change_log's 'Deleted'
+    // event), not by a total movement.
+    assert.equal(num(row.totalPriorAmount), 0);
     assert.equal(num(row.totalCurrentAmount), 0);
-    assert.equal(num(row.totalAmountChange), -50000);
+    assert.equal(num(row.totalAmountChange), 0);
 
     assert.equal(row.lifecycleEvent, 'PIPELINE_DELETED');
   });
@@ -233,7 +255,12 @@ describe('runComparison', { skip: TEST_DATABASE_URL ? false : 'set TEST_DATABASE
 
     assert.equal(num(row.priorPipelineAmt), 0);
     assert.equal(num(row.currentPipelineAmt), 15000);
-    assert.equal(num(row.totalAmountChange), 15000);
+    // 0, NOT 15000: this anchor has only a Pipeline row, and the total columns
+    // deliberately exclude Pipeline ("not committed revenue" — see
+    // totalPriorAmount in comparisonBuilder.ts). check_flag's reconciliation
+    // control depends on that exclusion, so a nonzero total here would mean
+    // the totals had started counting uncommitted pipeline value.
+    assert.equal(num(row.totalAmountChange), 0);
     assert.equal(row.lifecycleEvent, 'ADDED_TO_PIPELINE');
   });
 

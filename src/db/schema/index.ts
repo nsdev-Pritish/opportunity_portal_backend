@@ -1,6 +1,7 @@
 import {
   pgTable, serial, varchar, boolean, timestamp, integer,
-  numeric, text, jsonb, date, index, uniqueIndex, pgEnum, AnyPgColumn, uuid,
+  numeric, text, jsonb, date, index, uniqueIndex, unique, pgEnum, AnyPgColumn, uuid,
+  bigserial, bigint,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
@@ -1441,6 +1442,71 @@ export const factRevenueChangeLog = pgTable('fact_revenue_change_log', {
   changeTypeIdx: index('crl_change_type_idx').on(t.changeType),
   changeDriverIdx: index('crl_change_driver_idx').on(t.changeDriver),
   snapshotRangeIdx: index('crl_snapshot_range_idx').on(t.fromSnapshotDate, t.toSnapshotDate),
+}));
+
+// ─── 3b. Revenue Change Log (anchor grain) ─────────────────────────
+// Built off revenue_comparison rows rather than off fact_revenue_snapshot
+// records — one row per meaningful business event per anchor, per report
+// type, per snapshot date. See src/jobs/revenueChangeLog/revenueChangeLog.ts
+// for the priority-ordered rule engine that populates it, and migration
+// 0081 for how this relates to (and differs from) fact_revenue_change_log
+// above: that one is per-source-record and DOD-only with snake_case codes;
+// this one is per-anchor, covers all 4 report types, and stores prose
+// change_type values so BI tools can read them directly.
+//
+// Never carries a "no change" row — if no rule matched, nothing is written.
+export const revenueChangeLog = pgTable('revenue_change_log', {
+  changeEventId: bigserial('change_event_id', { mode: 'number' }).primaryKey(),
+  changeGroupId: uuid('change_group_id').notNull(), // one UUID per runChangeLogForBatch() call
+  changeType: varchar('change_type', { length: 50 }).notNull(), // prose, e.g. 'Revenue Increase', 'SO partially invoiced'
+  changeDriver: varchar('change_driver', { length: 30 }).notNull(), // BUSINESS / FX_ONLY / BUSINESS_AND_FX / PERIOD / LIFECYCLE / DATA_QUALITY
+
+  sourceType: varchar('source_type', { length: 20 }),
+  // BIGINT per the agreed column spec. fact_revenue_snapshot.internal_id is
+  // varchar(50), so the job only populates this when that value is actually
+  // numeric — non-numeric NetSuite ids resolve to null rather than throwing.
+  sourceRecordId: bigint('source_record_id', { mode: 'number' }),
+  documentNumber: varchar('document_number', { length: 50 }),
+  anchorId: varchar('anchor_id', { length: 50 }).notNull(),
+
+  fromSnapshotDate: date('from_snapshot_date').notNull(), // = revenue_comparison.prior_snapshot_period
+  toSnapshotDate: date('to_snapshot_date').notNull(), // = revenue_comparison.current_snapshot_period
+  reportType: varchar('report_type', { length: 10 }).notNull(), // DOD/WOW/MOM/QOQ
+
+  originalForeignAmount: numeric('original_foreign_amount', { precision: 18, scale: 2 }),
+  priorForeignAmount: numeric('prior_foreign_amount', { precision: 18, scale: 2 }),
+  currentForeignAmount: numeric('current_foreign_amount', { precision: 18, scale: 2 }),
+  foreignDeltaVsPrior: numeric('foreign_delta_vs_prior', { precision: 18, scale: 2 }),
+  foreignDeltaVsOriginal: numeric('foreign_delta_vs_original', { precision: 18, scale: 2 }),
+
+  originalReportedUsdAmount: numeric('original_reported_usd_amount', { precision: 18, scale: 2 }),
+  priorReportedUsdAmount: numeric('prior_reported_usd_amount', { precision: 18, scale: 2 }),
+  currentReportedUsdAmount: numeric('current_reported_usd_amount', { precision: 18, scale: 2 }),
+  reportedUsdDeltaVsPrior: numeric('reported_usd_delta_vs_prior', { precision: 18, scale: 2 }),
+
+  originalExchangeRate: numeric('original_exchange_rate', { precision: 18, scale: 8 }),
+  priorExchangeRate: numeric('prior_exchange_rate', { precision: 18, scale: 8 }),
+  currentExchangeRate: numeric('current_exchange_rate', { precision: 18, scale: 8 }),
+  fxOnlyChangeFlag: boolean('fx_only_change_flag').default(false),
+
+  originalRevenuePeriod: date('original_revenue_period'),
+  priorRevenuePeriod: date('prior_revenue_period'),
+  currentRevenuePeriod: date('current_revenue_period'),
+  monthsShiftedVsPrior: integer('months_shifted_vs_prior'),
+  monthsShiftedVsOriginal: integer('months_shifted_vs_original'),
+
+  changeDescription: text('change_description'), // fully worded — dashboards read this as-is
+  controlSeverity: varchar('control_severity', { length: 10 }), // INFO / REVIEW / WARNING / CRITICAL
+
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => ({
+  anchorIdx: index('idx_change_log_anchor').on(t.anchorId),
+  severityIdx: index('idx_change_log_severity').on(t.controlSeverity, t.toSnapshotDate),
+  // The ON CONFLICT DO NOTHING target that makes re-running a batch a no-op.
+  // change_type is part of the key so rule 7's extra 'Revenue Shift' row can
+  // coexist with the amount/FX row for the same anchor and date.
+  reportAnchorDateTypeKey: unique('revenue_change_log_report_anchor_date_type_key')
+    .on(t.reportType, t.anchorId, t.toSnapshotDate, t.changeType),
 }));
 
 // ─── 4. Revenue Sync Signal Log ─────────────────────────────────────

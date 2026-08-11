@@ -20,6 +20,7 @@ import { eq, and } from 'drizzle-orm';
 import { revenueSyncSignalLog } from '../../db/schema/index.js';
 import type { DB } from '../../config/database.js';
 import { runComparison, type ComparisonResult } from './comparisonBuilder.js';
+import { runChangeLogForBatch } from '../revenueChangeLog/revenueChangeLog.js';
 import { MONTHS_BACK, type ReportType } from './config.js';
 import { addDays, addMonths, isMonday, isFirstOfMonth, isQuarterStart } from './dateMath.js';
 
@@ -112,6 +113,19 @@ export async function runAllComparisons(db: DB, currentDate: string): Promise<Co
         `[revenue-comparison] ${reportType} ${window} — OK: ${result.inserted} row(s) inserted, ${result.labelled} labelled`,
       );
       outcomes.push({ status: 'ok', ...result });
+
+      // revenue_change_log is derived straight from the rows runComparison
+      // just wrote, so it runs here — immediately after this report type's
+      // comparison succeeded — rather than on its own schedule. Isolated in
+      // its own try/catch: the comparison itself is already committed and
+      // reported OK above, and a change-log problem must not retroactively
+      // turn this comparison into a failure or stop the next report type.
+      try {
+        await runChangeLogForBatch(db, reportType, currentDate);
+      } catch (clErr) {
+        const message = clErr instanceof Error ? clErr.message : String(clErr);
+        console.error(`[revenue-change-log] ${reportType} ${window} — FAILED: ${message}`);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[revenue-comparison] ${reportType} ${window} — FAILED: ${message}`);
