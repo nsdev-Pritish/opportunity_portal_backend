@@ -1269,6 +1269,7 @@ export const factRevenueSnapshot = pgTable('fact_revenue_snapshot', {
   department: varchar('department', { length: 100 }),
   salesRep: varchar('sales_rep', { length: 100 }),
   projectName: varchar('project_name', { length: 250 }),
+  subsidiary: varchar('subsidiary', { length: 100 }), // Pipeline/SO/Invoice only — Budget has no subsidiaryId source field
 
   // Commercial
   status: varchar('status', { length: 100 }),
@@ -1308,53 +1309,57 @@ export const revenueComparison = pgTable('revenue_comparison', {
   id: serial('id').primaryKey(),
 
   anchorId: varchar('anchor_id', { length: 50 }).notNull(),
-  reportType: varchar('report_type', { length: 10 }).notNull(), // DOD/WOW/MOM/QOQ/MTD_LY/YTD_LY/QTR_LY
+  reportType: varchar('report_type', { length: 10 }).notNull(), // DOD/WOW/MOM/QOQ
 
   priorSnapshotPeriod: date('prior_snapshot_period').notNull(),
   currentSnapshotPeriod: date('current_snapshot_period').notNull(),
-
-  priorSourceType: varchar('prior_source_type', { length: 20 }),
-  currentSourceType: varchar('current_source_type', { length: 20 }),
-  sourceTypeChange: varchar('source_type_change', { length: 30 }), // e.g. PIPELINE_TO_SO, NO_CHANGE
-
-  priorDocument: varchar('prior_document', { length: 100 }),
-  currentDocument: varchar('current_document', { length: 100 }),
 
   // Pipeline stage — broken out separately
   priorPipelineAmt: numeric('prior_pipeline_amt', { precision: 18, scale: 2 }),
   currentPipelineAmt: numeric('current_pipeline_amt', { precision: 18, scale: 2 }),
   pipelineAmountChange: numeric('pipeline_amount_change', { precision: 18, scale: 2 }),
+  priorPipelineRevDate: date('prior_pipeline_rev_date'),
+  currentPipelineRevDate: date('current_pipeline_rev_date'),
+  pipelineRevenueDateChange: varchar('pipeline_revenue_date_change', { length: 50 }),
 
   // Open SO stage — broken out separately
   priorOpenSoAmt: numeric('prior_open_so_amt', { precision: 18, scale: 2 }),
   currentOpenSoAmt: numeric('current_open_so_amt', { precision: 18, scale: 2 }),
   openSoAmountChange: numeric('open_so_amount_change', { precision: 18, scale: 2 }),
+  usdSoAmountChange: numeric('usd_so_amount_change', { precision: 18, scale: 2 }),
+  priorSoRevDate: date('prior_so_rev_date'),
+  currentSoRevDate: date('current_so_rev_date'),
+  soRevenueDateChange: varchar('so_revenue_date_change', { length: 50 }),
 
   // Invoice stage — broken out separately
   priorInvoiceAmt: numeric('prior_invoice_amt', { precision: 18, scale: 2 }),
   currentInvoiceAmt: numeric('current_invoice_amt', { precision: 18, scale: 2 }),
   invoiceAmountChange: numeric('invoice_amount_change', { precision: 18, scale: 2 }),
-
-  priorRevenuePeriod: date('prior_revenue_period'),
-  currentRevenuePeriod: date('current_revenue_period'),
-  revenuePeriodShift: varchar('revenue_period_shift', { length: 50 }), // e.g. "+1 month", "No Shift"
+  usdInvoiceAmountChange: numeric('usd_invoice_amount_change', { precision: 18, scale: 2 }),
+  priorInvoiceDate: date('prior_invoice_date'),
+  currentInvoiceDate: date('current_invoice_date'),
+  invoiceRevenuePeriodSummary: varchar('invoice_revenue_period_summary', { length: 50 }),
 
   // Totals across all 3 stages
-  totalPriorAmount: numeric('total_prior_amount', { precision: 18, scale: 2 }),
-  totalCurrentAmount: numeric('total_current_amount', { precision: 18, scale: 2 }),
-  totalAmountChange: numeric('total_amount_change', { precision: 18, scale: 2 }),
+  totalPriorAmount: numeric('total_prior_amount', { precision: 18, scale: 2 }), // col K + col H
+  totalCurrentAmount: numeric('total_current_amount', { precision: 18, scale: 2 }), // col M + col I
+  totalAmountChange: numeric('total_amount_change', { precision: 18, scale: 2 }), // col O - col N
+  usdTotalAmountChange: numeric('usd_total_amount_change', { precision: 18, scale: 2 }),
 
   // Reconciliation: total_amount_change should equal invoiceAmountChange + openSoAmountChange.
   // Anything other than TRUE here is a data/pipeline red flag, not a business event.
   checkFlag: boolean('check_flag'),
 
   lifecycleEvent: varchar('lifecycle_event', { length: 100 }), // includes DELETED — see fact_revenue_change_log notes
+  revenueDateChangeSummary: varchar('revenue_date_change_summary', { length: 100 }),
 
   // Reporting attributes carried through
-  customer: varchar('customer', { length: 200 }),
+  customerName: varchar('customer_name', { length: 200 }), // Consolidated Customer
+  parent: varchar('parent', { length: 200 }),
   projectName: varchar('project_name', { length: 250 }),
-  salesRep: varchar('sales_rep', { length: 100 }),
+  salesRep: varchar('sales_rep', { length: 100 }), // Sales Rep / Account Manager
   department: varchar('department', { length: 100 }),
+  subsidiary: varchar('subsidiary', { length: 100 }),
   currency: varchar('currency', { length: 10 }),
 
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -1363,6 +1368,11 @@ export const revenueComparison = pgTable('revenue_comparison', {
   reportTypeIdx: index('rc_report_type_idx').on(t.reportType),
   currentSnapshotIdx: index('rc_current_snapshot_idx').on(t.currentSnapshotPeriod),
   anchorReportIdx: index('rc_anchor_report_idx').on(t.anchorId, t.reportType, t.currentSnapshotPeriod),
+  // One row per (anchor, report type, date pair) — lets the builder upsert
+  // instead of duplicating a row if it's ever re-run for the same comparison.
+  anchorReportPeriodUidx: uniqueIndex('rc_anchor_report_period_uidx').on(t.anchorId, t.reportType, t.priorSnapshotPeriod, t.currentSnapshotPeriod),
+  // Serves "every row for this report type as of this run" lookups.
+  reportTypeCurrentIdx: index('rc_report_type_current_idx').on(t.reportType, t.currentSnapshotPeriod),
 }));
 
 // ─── 3. Revenue Change Log ─────────────────────────────────────────

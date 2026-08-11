@@ -16,6 +16,7 @@ import {
   markInsertFailed,
 } from './signalLog.repository.js';
 import { buildRevenueSnapshotSequential } from './snapshotBuilder.js';
+import { runAllComparisons } from '../revenueComparison/index.js';
 import { INSERT_DELAY_MS, type SourceType } from './config.js';
 import type { DB } from '../../config/database.js';
 
@@ -81,6 +82,15 @@ async function runScheduledInsert(db: DB, runDate: string): Promise<void> {
     const result = await buildRevenueSnapshotSequential(db, runDate, new Date());
     await markInsertComplete(db, runDate);
     console.log(`[revenue-snapshot] ${runDate} — inserted ${result.inserted} rows`, result.bySource);
+
+    // Comparisons run off the snapshot that just committed — never on their
+    // own schedule. Deliberately AFTER markInsertComplete: runAllComparisons
+    // checks revenue_sync_signal_log to confirm both snapshot dates are
+    // complete before comparing, so today's row has to be marked first.
+    // runAllComparisons never throws and isolates each report type
+    // internally, so a comparison problem is logged but cannot flip this
+    // day's snapshot — already committed and marked complete — to failed.
+    await runAllComparisons(db, runDate);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await markInsertFailed(db, runDate, message);

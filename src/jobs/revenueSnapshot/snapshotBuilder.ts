@@ -14,13 +14,20 @@
 //     exchangeRate involved. Budget has NO foreign_amount column at all and
 //     is always NULL here — no native-currency concept applies to it per
 //     the workbook.
-//   - anchor_id: SO and Invoice both use their own document_number, per
-//     explicit direction — NOT the linked Estimate's document number, even
-//     though sales_order_search.created_from / invoice_search.est_number
-//     hold that value directly. This means anchor_id can no longer be used
-//     to track a deal across Pipeline→SO→Invoice as one lifecycle — each
-//     stage now gets its own, unrelated anchor_id. Budget stays NULL here —
-//     there is no mapping for it, per the workbook (not lifecycle-linked).
+//   - anchor_id: resolves to the originating Estimate's document number —
+//     sales_order_search.created_from for SO, invoice_search.est_number
+//     (chained through the linked SO's own already-resolved anchor when
+//     est_number is empty) for Invoice — so the same anchor_id threads a deal
+//     across Pipeline→SO→Invoice, matching the schema comments on those two
+//     columns ("the lifecycle link key the snapshot engine resolves anchor_id
+//     from"). created_from arrives as NetSuite's rendered reference label
+//     ("Opportunity #EST0001114", "Sales Order #SO9451115"), not a bare
+//     document number — parseReferenceNumber() strips everything up to and
+//     including the last '#' before use; est_number is already bare. Falls
+//     back to the record's own document number when there is no linked
+//     Estimate/SO at all (a walk-in SO/invoice with no pipeline history), so
+//     anchor_id is never null for an active SO/Invoice row. Budget stays NULL
+//     here — there is no mapping for it, per the workbook (not lifecycle-linked).
 //   - stage: NULL for Pipeline (no source field). SO actually already has
 //     this available for free via estimate_statuses.stage (the same lookup
 //     used for `status`) — resolved below. NULL for Invoice, per the
@@ -67,6 +74,7 @@ import {
   forecastStatuses,
   employees,
   likelyToClose,
+  subsidiaries,
 } from '../../db/schema/index.js';
 import type { DB } from '../../config/database.js';
 import { SNAPSHOT_INSERT_CHUNK_SIZE } from './config.js';
@@ -101,6 +109,21 @@ function toMonthStart(d: unknown): string | null {
   return `${dateOnly.slice(0, 7)}-01`;
 }
 
+/**
+ * sales_order_search.created_from / invoice_search.created_from arrive as
+ * NetSuite's rendered record-reference label — "Opportunity #EST0001114",
+ * "Sales Order #SO9451115" — not a bare document number. Confirmed against
+ * live data: 100% of populated created_from values on both tables carry this
+ * "Record Type #" prefix. The lifecycle number is everything after the last
+ * '#'; est_number does NOT need this (it's already a bare "EST0000265").
+ */
+function parseReferenceNumber(ref: string | null | undefined): string | null {
+  if (!ref) return null;
+  const hashIndex = ref.lastIndexOf('#');
+  const stripped = hashIndex >= 0 ? ref.slice(hashIndex + 1).trim() : ref.trim();
+  return stripped.length > 0 ? stripped : null;
+}
+
 interface MasterLookups {
   departmentNames: Map<number, string>;
   customerNames: Map<number, string>;
@@ -111,10 +134,11 @@ interface MasterLookups {
   forecastStatusNames: Map<number, string>;
   employeeNames: Map<number, string | null>;
   likelyToCloseNames: Map<number, string>;
+  subsidiaryNames: Map<number, string>;
 }
 
 async function loadMasterLookups(db: DB | Tx): Promise<MasterLookups> {
-  const [deptRows, custRows, amRows, projRows, currRows, statusRows, fcastRows, empRows, ltcRows] = await Promise.all([
+  const [deptRows, custRows, amRows, projRows, currRows, statusRows, fcastRows, empRows, ltcRows, subRows] = await Promise.all([
     db.select({ id: departments.id, name: departments.name }).from(departments),
     db.select({ id: customers.id, name: customers.name }).from(customers),
     db.select({ id: accountManagers.id, name: accountManagers.name }).from(accountManagers),
@@ -124,6 +148,7 @@ async function loadMasterLookups(db: DB | Tx): Promise<MasterLookups> {
     db.select({ id: forecastStatuses.id, name: forecastStatuses.name }).from(forecastStatuses),
     db.select({ id: employees.id, name: employees.name }).from(employees),
     db.select({ id: likelyToClose.id, name: likelyToClose.name }).from(likelyToClose),
+    db.select({ id: subsidiaries.id, name: subsidiaries.name }).from(subsidiaries),
   ]);
   // Master/dropdown lookups only — no data from the 4 source tables is read here,
   // so loading these once up front does not affect the one-source-at-a-time guarantee below.
@@ -138,6 +163,7 @@ async function loadMasterLookups(db: DB | Tx): Promise<MasterLookups> {
     forecastStatusNames: new Map(fcastRows.map(r => [r.id, r.name])),
     employeeNames: new Map(empRows.map(r => [r.id, r.name])),
     likelyToCloseNames: new Map(ltcRows.map(r => [r.id, r.name])),
+    subsidiaryNames: new Map(subRows.map(r => [r.id, r.name])),
   };
 }
 
@@ -167,6 +193,7 @@ function buildPipelineRows(
     department: get(lu.departmentNames, r.departmentId),
     salesRep: get(lu.accountManagerNames, r.salesRepId),
     projectName: get(lu.projectNameNames, r.projectNameId),
+    subsidiary: get(lu.subsidiaryNames, r.subsidiaryId),
     status: r.status, // already free text on this source
     stage: null, // gap — no source field
     likelyToClose: get(lu.likelyToCloseNames, r.likelyToCloseId),
@@ -196,13 +223,14 @@ function buildSalesOrderRows(
     sourceType: 'SO',
     sourceName: SOURCE_NAMES.SO,
     internalId: r.netsuiteInternalId ?? '',
-    anchorId: r.documentNumber, // per explicit instruction: SO's own document number, not the linked Estimate's
+    anchorId: parseReferenceNumber(r.createdFrom) ?? r.documentNumber, // linked Estimate when one exists, else this SO's own number
     documentNumber: r.documentNumber,
     consolidatedCustomer: r.consolidatedCustomer, // already free text on this source
     topLevelParent: get(lu.customerNames, r.topLevelParentId),
     department: get(lu.departmentNames, r.departmentId),
     salesRep: get(lu.accountManagerNames, r.salesRepId),
     projectName: get(lu.projectNameNames, r.projectNameId),
+    subsidiary: get(lu.subsidiaryNames, r.subsidiaryId),
     status: r.status, // already free text on this source
     stage: null, // gap — status is free text, so there is no estimate_statuses row to read stage from
     likelyToClose: get(lu.likelyToCloseNames, r.likelyToCloseId),
@@ -225,22 +253,32 @@ function buildInvoiceRows(
   lu: MasterLookups,
   snapshotDate: string,
   snapshotTs: Date,
+  soAnchorByDocNumber: Map<string, string>,
 ): SnapshotRow[] {
   return rows.map(r => {
     const statusRow = r.statusId != null ? lu.estimateStatuses.get(r.statusId) : undefined;
+    // est_number is the direct, already-bare link to the originating Estimate — confirmed
+    // populated on ~63% of invoices in production. When it's missing, created_from usually
+    // still points to the SO instead ("Sales Order #SO9451115"); chaining through that SO's
+    // OWN already-resolved anchor (see buildSalesOrderRows) recovers the same Estimate-level
+    // anchor the SO row carries, rather than anchoring the invoice on the SO's document number
+    // and silently splitting it into a different lifecycle group than its own SO.
+    const linkedSoDocNumber = parseReferenceNumber(r.createdFrom);
+    const anchorViaSo = linkedSoDocNumber ? soAnchorByDocNumber.get(linkedSoDocNumber) : undefined;
     return {
       snapshotDate,
       snapshotTs,
       sourceType: 'INVOICE',
       sourceName: SOURCE_NAMES.INVOICE,
       internalId: r.netsuiteInternalId ?? '',
-      anchorId: r.documentNumber, // per explicit instruction: Invoice's own document number
+      anchorId: r.estNumber ?? anchorViaSo ?? linkedSoDocNumber ?? r.documentNumber,
       documentNumber: r.documentNumber,
       consolidatedCustomer: r.consolidatedCustomer, // free text on this source — see migration 0076
       topLevelParent: get(lu.customerNames, r.topLevelParentId),
       department: get(lu.departmentNames, r.departmentId),
       salesRep: get(lu.accountManagerNames, r.salesRepId),
       projectName: get(lu.projectNameNames, r.projectNameId),
+      subsidiary: get(lu.subsidiaryNames, r.subsidiaryId),
       status: statusRow?.name ?? null,
       stage: null, // not applicable to Invoice per the workbook's scope
       likelyToClose: get(lu.likelyToCloseNames, r.likelyToCloseId),
@@ -281,6 +319,7 @@ function buildBudgetRows(
     department: get(lu.departmentNames, r.departmentId),
     salesRep: get(lu.employeeNames, r.accountManagerId),
     projectName: null, // gap — no source field
+    subsidiary: null, // gap — no subsidiaryId field on budget_search
     status: get(lu.forecastStatusNames, r.forecastStatusId),
     stage: null, // not applicable to Budget
     likelyToClose: null, // Budget has no likelyToCloseId field
@@ -340,8 +379,15 @@ export async function buildRevenueSnapshotSequential(db: DB, snapshotDate: strin
     bySource.SO = soRows.length;
     inserted += soRows.length;
 
+    // Lets Invoice rows without their own est_number inherit the SAME anchor
+    // their originating SO already resolved to, instead of a different one.
+    const soAnchorByDocNumber = new Map(
+      soRows.filter((r): r is typeof r & { documentNumber: string; anchorId: string } => r.documentNumber != null && r.anchorId != null)
+        .map(r => [r.documentNumber, r.anchorId]),
+    );
+
     const invoiceSource = await tx.select().from(invoiceSearch).where(eq(invoiceSearch.isActive, true));
-    const invoiceRows = buildInvoiceRows(invoiceSource, lu, snapshotDate, snapshotTs);
+    const invoiceRows = buildInvoiceRows(invoiceSource, lu, snapshotDate, snapshotTs, soAnchorByDocNumber);
     await insertInChunks(tx, invoiceRows);
     bySource.INVOICE = invoiceRows.length;
     inserted += invoiceRows.length;
