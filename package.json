@@ -10,10 +10,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio",
-    "test": "tsx --test src/jobs/revenueComparison/dateMath.test.ts src/jobs/revenueComparison/comparisonBuilder.test.ts src/jobs/revenueChangeLog/revenueChangeLog.test.ts",
-    "test:e2e": "tsx --test src/jobs/revenueComparison/endToEnd.test.ts",
-    "test:e2e:changelog": "tsx --test src/jobs/revenueChangeLog/endToEnd.test.ts"
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1063.0",
