@@ -28,6 +28,10 @@
 //     Estimate/SO at all (a walk-in SO/invoice with no pipeline history), so
 //     anchor_id is never null for an active SO/Invoice row. Budget stays NULL
 //     here — there is no mapping for it, per the workbook (not lifecycle-linked).
+//   - usd_amount: Pipeline uses projected_total, Invoice uses usd_net_revenue,
+//     Budget uses net_revenue. SO uses sales_order_search.open_amount ("Open
+//     Amount") — NetSuite does not populate projected_total on the Open SO
+//     saved search, so reading it left usd_amount NULL on every SO row.
 //   - stage: NULL for Pipeline (no source field). SO actually already has
 //     this available for free via estimate_statuses.stage (the same lookup
 //     used for `status`) — resolved below. NULL for Invoice, per the
@@ -242,7 +246,7 @@ function buildSalesOrderRows(
     foreignAmount: r.foreignAmount ?? r.projectedTotal ?? null,
     currency: get(lu.currencyCodes, r.currencyId),
     exchangeRate: r.exchangeRate,
-    usdAmount: r.projectedTotal,
+    usdAmount: r.openAmount, // sales_order_search."Open Amount" — the still-unfulfilled/unbilled value NetSuite actually populates on SO (projected_total arrives empty)
     changeDriver: null,
     isActive: r.isActive,
   }));
