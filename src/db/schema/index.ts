@@ -980,6 +980,23 @@ export const estimateQuoteSearch = pgTable('estimate_quote_search', {
   // Likely To Close → likely_to_close
   likelyToCloseId: integer('likely_to_close_id').references(() => likelyToClose.id),
 
+  // ── Line item fields (Gina Chang, "column add pipeline and so") ──────────
+  lineUniqueKey: varchar('line_unique_key', { length: 50 }),
+  lineNumber: integer('line_number'),
+  createdFromDirect: varchar('created_from_direct', { length: 255 }),
+  itemId: integer('item_id').references(() => csItems.id),
+  itemName: varchar('item_name', { length: 255 }),
+  itemType: varchar('item_type', { length: 100 }),
+  quantity: numeric('quantity'),
+  quantityBackOrdered: numeric('quantity_back_ordered'),
+  unitSalesPrice: numeric('unit_sales_price'),
+  lineAmount: numeric('line_amount'),
+  shortDescription: varchar('short_description', { length: 500 }),
+  vendorCurrency: varchar('vendor_currency', { length: 100 }),
+  description: text('description'),
+  lineProjectId: integer('line_project_id').references(() => projectNames.id),
+  lineProjectTypeId: integer('line_project_type_id').references(() => projectTypes.id),
+
   ...syncCols, // netsuiteInternalId ("Internal ID"), source, syncStatus, timestamps, …
 }, (t) => ({
   nsIdIdx:     uniqueIndex('eqs_ns_id_idx').on(t.netsuiteInternalId),
@@ -1034,6 +1051,23 @@ export const salesOrderSearch = pgTable('sales_order_search', {
   businessVerticalId: integer('business_vertical_id').references(() => businessVerticals.id),
   salesRepId: integer('sales_rep_id').references(() => accountManagers.id),
   likelyToCloseId: integer('likely_to_close_id').references(() => likelyToClose.id),
+
+  // ── Line item fields (Gina Chang, "column add pipeline and so") ──────────
+  lineUniqueKey: varchar('line_unique_key', { length: 50 }),
+  lineNumber: integer('line_number'),
+  createdFromDirect: varchar('created_from_direct', { length: 255 }),
+  itemId: integer('item_id').references(() => csItems.id),
+  itemName: varchar('item_name', { length: 255 }),
+  itemType: varchar('item_type', { length: 100 }),
+  quantity: numeric('quantity'),
+  quantityBackOrdered: numeric('quantity_back_ordered'),
+  unitSalesPrice: numeric('unit_sales_price'),
+  lineAmount: numeric('line_amount'),
+  shortDescription: varchar('short_description', { length: 500 }),
+  vendorCurrency: varchar('vendor_currency', { length: 100 }),
+  description: text('description'),
+  lineProjectId: integer('line_project_id').references(() => projectNames.id),
+  lineProjectTypeId: integer('line_project_type_id').references(() => projectTypes.id),
 
   ...syncCols,
 }, (t) => ({

@@ -25,6 +25,8 @@ import {
   currencies,
   subsidiaries,
   projectNames,
+  projectTypes,
+  csItems,
   businessVerticals,
   accountManagers,
   likelyToClose,
@@ -40,6 +42,7 @@ import { logger } from '../../utils/logger.js';
  * REQUIRED. Every `*InternalId` is a NetSuite internal id resolved to a portal DB
  * id before storing. documentNumber / dates / amounts are stored as-is.
  */
+
 export const SalesOrderCreateSchema = z.object({
   netsuiteInternalId            : z.string({ required_error: 'netsuiteInternalId is required' }).min(1).max(50),
   documentNumber                : z.string().max(100).optional(),
@@ -66,6 +69,23 @@ export const SalesOrderCreateSchema = z.object({
   businessVerticalInternalId    : z.string().max(50).optional(),
   salesRepInternalId            : z.string().max(50).optional(),
   likelyToCloseInternalId       : z.string().max(50).optional(),
+
+  // ── Line item fields (Gina Chang, "column add pipeline and so") ──────────
+  lineUniqueKey                 : z.string().max(50).optional(),
+  lineNumber                    : z.string().max(50).optional(),
+  createdFromDirect             : z.string().max(255).optional(),
+  itemInternalId                : z.string().max(50).optional(),
+  itemName                      : z.string().max(255).optional(),
+  itemType                      : z.string().max(100).optional(),
+  quantity                      : z.string().optional(),
+  quantityBackOrdered           : z.string().optional(),
+  unitSalesPrice                : z.string().optional(),
+  lineAmount                    : z.string().optional(),
+  shortDescription               : z.string().max(500).optional(),
+  vendorCurrency                 : z.string().max(100).optional(),
+  description                    : z.string().optional(),
+  lineProjectInternalId          : z.string().max(50).optional(),
+  lineProjectTypeInternalId      : z.string().max(50).optional(),
 });
 
 /**
@@ -96,6 +116,18 @@ const PASSTHROUGH_FIELDS = [
   'exchangeRate',
   'amountNet',
   'openAmount',
+  'lineUniqueKey',
+  'lineNumber',
+  'createdFromDirect',
+  'itemName',
+  'itemType',
+  'quantity',
+  'quantityBackOrdered',
+  'unitSalesPrice',
+  'lineAmount',
+  'shortDescription',
+  'vendorCurrency',
+  'description',
 ] as const;
 
 /** Pick the passthrough columns that are present on the record. */
@@ -130,6 +162,9 @@ const FK_RESOLVERS: FkResolver[] = [
   { field: 'businessVerticalInternalId',     table: businessVerticals, column: 'businessVerticalId',     tkey: 'businessVerticals' },
   { field: 'salesRepInternalId',             table: accountManagers,   column: 'salesRepId',             tkey: 'accountManagers' },
   { field: 'likelyToCloseInternalId',        table: likelyToClose,     column: 'likelyToCloseId',        tkey: 'likelyToClose' },
+  { field: 'itemInternalId',                 table: csItems,           column: 'itemId',                 tkey: 'csItems' },
+  { field: 'lineProjectInternalId',          table: projectNames,      column: 'lineProjectId',           tkey: 'projectNames' },
+  { field: 'lineProjectTypeInternalId',      table: projectTypes,      column: 'lineProjectTypeId',       tkey: 'projectTypes' },
 ];
 
 /** Shared across a batch so a repeated NetSuite id is queried only once. */
