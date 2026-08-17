@@ -148,6 +148,9 @@ const CreateEstimateSchema = z.object({
   // Twelve Pays — YES/NO flags (custbody_twelve_pays_import_frt / custbody_twelve_pays_ship_to_cust)
   twelvePaysImportFrt  : z.enum(['YES', 'NO']).optional().nullable(),
   twelvePaysShipToCust : z.enum(['YES', 'NO']).optional().nullable(),
+
+  // Divisional Budget — free text (custbody_divisional_budget)
+  divisionalBudget     : z.string().max(255).optional().nullable(),
 });
 
 // Update allows all the same fields but nothing is required
@@ -771,6 +774,7 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     memo                 : body.memo,
     twelvePaysImportFrt  : body.twelvePaysImportFrt,
     twelvePaysShipToCust : body.twelvePaysShipToCust,
+    divisionalBudget     : body.divisionalBudget,
     source               : 'netsuite' as const,
     // Record came FROM NetSuite → it is in sync at this moment. Mirrors the line-item
     // + freight-group builders, which already stamp 'synced'. Without this the header
@@ -803,7 +807,7 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
     'projectedTotalAmt','estimatedQty','deckRequest','artSetupRequest',
     'pkgDeckRequest','pkgArtSetupRequest','sampleOnlyOrder','reOrder','bibleLink','memo',
     'notesClosedLostReason','projectHoldDate','shipTo','billTo',
-    'twelvePaysImportFrt','twelvePaysShipToCust'];
+    'twelvePaysImportFrt','twelvePaysShipToCust','divisionalBudget'];
   for (const k of scalars) {
     if (k in body) updates[k] = body[k];
   }

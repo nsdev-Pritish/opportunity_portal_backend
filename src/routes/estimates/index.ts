@@ -202,6 +202,11 @@ const EstimateHeaderSchema = z.object({
   // Twelve Pays — YES/NO dropdowns; sync to NetSuite custom body fields
   twelvePaysImportFrt: z.enum(['YES', 'NO']).optional(),   // custbody_twelve_pays_import_frt
   twelvePaysShipToCust: z.enum(['YES', 'NO']).optional(),  // custbody_twelve_pays_ship_to_cust
+
+  // Divisional Budget — conditional field, shown by the frontend for L'Oréal
+  // customers only; syncs to NetSuite custbody_divisional_budget.
+  divisionalBudget: z.string().max(255).optional(),        // custbody_divisional_budget
+
   attachments: z.array(z.object({                     // File upload metadata
     name: z.string(),
     url: z.string(),

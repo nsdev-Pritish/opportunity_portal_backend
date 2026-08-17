@@ -689,6 +689,11 @@ export const estimates = pgTable('estimates', {
   twelvePaysImportFrt: varchar('twelve_pays_import_frt', { length: 3 }),
   twelvePaysShipToCust: varchar('twelve_pays_ship_to_cust', { length: 3 }),
 
+  // Divisional Budget — free text (NULL when unset). The frontend only shows this
+  // field for L'Oréal customers; the backend stores whatever is sent, for anyone.
+  // Syncs to the NetSuite custom body field custbody_divisional_budget.
+  divisionalBudget: varchar('divisional_budget', { length: 255 }),
+
   // Status & Sync
   status: estimateStatusEnum('status').default('draft').notNull(),
   isActive: boolean('is_active').default(true).notNull(),

@@ -219,6 +219,8 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     // Twelve Pays YES/NO flags → custbody_twelve_pays_import_frt / custbody_twelve_pays_ship_to_cust
     twelvePaysImportFrtNS        : est.twelvePaysImportFrt ?? '',
     twelvePaysShipToCustNS       : est.twelvePaysShipToCust ?? '',
+    // Divisional Budget → custbody_divisional_budget (L'Oréal-only field in the UI)
+    divisionalBudgetNS           : est.divisionalBudget ?? '',
     statusNSId                   : estimateStatusNsId,
     esStatusNSId                 : esStatusNsId,
     closedLostReasonNSId         : closedLostReasonNsId,
