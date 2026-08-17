@@ -6,7 +6,10 @@ import {
 } from '../../services/masterData.service.js';
 import { getAllEstimateQuoteMappings } from '../../services/estimateQuote.service.js';
 import { getDb } from '../../config/database.js';
-import { type MasterEntityKey, MASTER_TABLES, esStatus, classes, drayage } from '../../db/schema/index.js';
+import {type MasterEntityKey, MASTER_TABLES, esStatus, classes, drayage,
+  creativeRequestTypes, creativeRequestCategories, newClients, creativeRequestAssets,
+  creativeRequestScopeWork, aboutUsInfo, requestors,
+} from '../../db/schema/index.js';
 import { ValidationError } from '../../utils/errors.js';
 
 const VALID_ENTITIES = Object.keys(MASTER_TABLES) as MasterEntityKey[];
@@ -63,6 +66,36 @@ export default async function masterRoutes(app: FastifyInstance) {
 
   // GET /api/v1/master/estimate-quotes — all Estimate ↔ Quote mappings
   app.get('/estimate-quotes', async () => getAllEstimateQuoteMappings());
+
+  // ── Wrike request lists — ALL rows (active + inactive), for the admin screens.
+  // The active-only dropdown feeds are served by the generic GET /:entity below.
+  app.get('/creative-request-types', async () =>
+    getDb().select().from(creativeRequestTypes).orderBy(asc(creativeRequestTypes.name)),
+  );
+
+  app.get('/creative-request-categories', async () =>
+    getDb().select().from(creativeRequestCategories).orderBy(asc(creativeRequestCategories.name)),
+  );
+
+  app.get('/new-clients', async () =>
+    getDb().select().from(newClients).orderBy(asc(newClients.name)),
+  );
+
+  app.get('/creative-request-assets', async () =>
+    getDb().select().from(creativeRequestAssets).orderBy(asc(creativeRequestAssets.name)),
+  );
+
+  app.get('/creative-request-scope-work', async () =>
+    getDb().select().from(creativeRequestScopeWork).orderBy(asc(creativeRequestScopeWork.name)),
+  );
+
+  app.get('/about-us-info', async () =>
+    getDb().select().from(aboutUsInfo).orderBy(asc(aboutUsInfo.name)),
+  );
+
+  app.get('/requestors', async () =>
+    getDb().select().from(requestors).orderBy(asc(requestors.name)),
+  );
 
   // GET /api/v1/master/:entity — list active (dropdown)
   app.get<{ Params: { entity: string }; Querystring: { scopeId?: string } }>(

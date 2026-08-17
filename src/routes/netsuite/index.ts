@@ -100,6 +100,9 @@ import clientShippingMethodRoutes   from './client-shipping-billing/clientShippi
 // List imports (Quarter / Forecast Status / Employee)
 import listRoutes from './list/index.js';
 
+// Wrike request list imports
+import wrikeRoutes from './wrike/index.js';
+
 // Cost Sheet imports
 import costSheetRoutes from './cost-sheet/index.js';
 
@@ -152,6 +155,9 @@ export default async function netsuiteRoutes(app: FastifyInstance) {
 
   // List (Quarter / Forecast Status / Employee)
   await app.register(listRoutes, { prefix: '/list' });
+
+  // Wrike request lists (creative request types/categories/assets/scope, new client, about us info, requestors)
+  await app.register(wrikeRoutes, { prefix: '/wrike' });
 
   // Cost Sheet
   await app.register(costSheetRoutes, { prefix: '/cost-sheet' });

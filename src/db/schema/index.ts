@@ -294,6 +294,69 @@ export const forecastStatuses = pgTable('forecast_statuses', {
   nsIdIdx: uniqueIndex('forecast_statuses_ns_id_idx').on(t.netsuiteInternalId),
 }));
 
+// ─── Wrike request master lists (NetSuite custom lists) ───────────
+// Migration: src/db/migrations/0084_wrike_request_tables.sql
+export const creativeRequestTypes = pgTable('creative_request_types', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('creative_request_types_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const creativeRequestCategories = pgTable('creative_request_categories', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('creative_request_categories_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+// Yes/No list — `name` holds the label ('Yes' / 'No').
+export const newClients = pgTable('new_clients', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('new_clients_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const creativeRequestAssets = pgTable('creative_request_assets', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('creative_request_assets_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+export const creativeRequestScopeWork = pgTable('creative_request_scope_work', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('creative_request_scope_work_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+// Yes/No list — `name` holds the label ('Yes' / 'No').
+export const aboutUsInfo = pgTable('about_us_info', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('about_us_info_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
+// Requestor — same list shape plus the Wrike user id used when pushing to Wrike.
+export const requestors = pgTable('requestors', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  wrikeId: varchar('wrike_id', { length: 100 }),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('requestors_ns_id_idx').on(t.netsuiteInternalId),
+  wrikeIdIdx: index('requestors_wrike_id_idx').on(t.wrikeId),
+}));
+
 export const hkPartners = pgTable('hk_partners', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
@@ -1754,6 +1817,13 @@ export const MASTER_TABLES = {
   employees,
   quarters,
   forecast_statuses: forecastStatuses,
+  creative_request_types: creativeRequestTypes,
+  creative_request_categories: creativeRequestCategories,
+  new_clients: newClients,
+  creative_request_assets: creativeRequestAssets,
+  creative_request_scope_work: creativeRequestScopeWork,
+  about_us_info: aboutUsInfo,
+  requestors,
   hk_partners: hkPartners,
   ops_partners: opsPartners,
   compliance_partners: compliancePartners,
