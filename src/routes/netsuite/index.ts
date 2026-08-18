@@ -23,6 +23,7 @@
  * classification/compliancePartners.ts   → /compliance-partners
  * classification/accountManager.ts       → /account-managers
  * classification/productDeveloper.ts     → /product-developers
+ * classification/divisionalBudgets.ts    → /divisional-budgets
  *
  * CLIENT SHIPPING & BILLING (client-shipping-billing/)
  * client-shipping-billing/billingAddresses.ts    → /client-billing-addresses
@@ -68,6 +69,7 @@ import opsPartnerRoutes         from './classification/opsPartners.js';
 import compliancePartnerRoutes  from './classification/compliancePartners.js';
 import accountManagerRoutes     from './classification/accountManager.js';
 import productDeveloperRoutes   from './classification/productDeveloper.js';
+import divisionalBudgetRoutes   from './classification/divisionalBudgets.js';
 import statusRoutes             from './classification/status.js';
 import itemTypeRoutes           from './itemTypes.js';
 import productClassRoutes       from './productClasses.js';
@@ -132,6 +134,7 @@ export default async function netsuiteRoutes(app: FastifyInstance) {
   await app.register(compliancePartnerRoutes, { prefix: '/compliance-partners' });
   await app.register(accountManagerRoutes,    { prefix: '/account-managers' });
   await app.register(productDeveloperRoutes,  { prefix: '/product-developers' });
+  await app.register(divisionalBudgetRoutes,  { prefix: '/divisional-budgets' });
   await app.register(statusRoutes,            { prefix: '/statuses' });
   await app.register(itemTypeRoutes,          { prefix: '/item-types' });
   await app.register(productClassRoutes,      { prefix: '/product-classes' });

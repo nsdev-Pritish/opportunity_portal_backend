@@ -8,7 +8,7 @@ import { getAllEstimateQuoteMappings } from '../../services/estimateQuote.servic
 import { getDb } from '../../config/database.js';
 import {type MasterEntityKey, MASTER_TABLES, esStatus, classes, drayage,
   creativeRequestTypes, creativeRequestCategories, newClients, creativeRequestAssets,
-  creativeRequestScopeWork, aboutUsInfo, requestors,
+  creativeRequestScopeWork, aboutUsInfo, requestors, divisionalBudgets,
 } from '../../db/schema/index.js';
 import { ValidationError } from '../../utils/errors.js';
 
@@ -95,6 +95,12 @@ export default async function masterRoutes(app: FastifyInstance) {
 
   app.get('/requestors', async () =>
     getDb().select().from(requestors).orderBy(asc(requestors.name)),
+  );
+
+  // GET /api/v1/master/divisional-budgets — ALL rows (active + inactive), for the admin screen.
+  // The active-only dropdown feed is served by the generic GET /:entity below.
+  app.get('/divisional-budgets', async () =>
+    getDb().select().from(divisionalBudgets).orderBy(asc(divisionalBudgets.name)),
   );
 
   // GET /api/v1/master/:entity — list active (dropdown)

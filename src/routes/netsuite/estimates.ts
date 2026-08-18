@@ -21,7 +21,7 @@ import { getDb } from '../../config/database.js';
 import {
   estimates, estimateLineItems,
   customers, contacts, currencies, projectTypes, likelyToClose,
-  departments, salesChannels, businessVerticals, businessTypes,
+  departments, salesChannels, businessVerticals, businessTypes, divisionalBudgets,
   accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
   subsidiaries, estimateStatuses, esStatus, closedLostReasons, clientPursuitAlternatives,
   clientIncoterms, clientShippingMethods, addresses,
@@ -149,7 +149,10 @@ const CreateEstimateSchema = z.object({
   twelvePaysImportFrt  : z.enum(['YES', 'NO']).optional().nullable(),
   twelvePaysShipToCust : z.enum(['YES', 'NO']).optional().nullable(),
 
-  // Divisional Budget — free text (custbody_divisional_budget)
+  // Divisional Budget (custbody_divisional_budget) — internal id of the list value
+  // and/or the label. Either may be sent; the id wins for the FK, the label is
+  // stored as-is for backward compatibility.
+  divisionalBudgetNsId : z.string().optional().nullable(),
   divisionalBudget     : z.string().max(255).optional().nullable(),
 });
 
@@ -774,6 +777,7 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     memo                 : body.memo,
     twelvePaysImportFrt  : body.twelvePaysImportFrt,
     twelvePaysShipToCust : body.twelvePaysShipToCust,
+    divisionalBudgetId   : await resolveNsId(divisionalBudgets, body.divisionalBudgetNsId),
     divisionalBudget     : body.divisionalBudget,
     source               : 'netsuite' as const,
     // Record came FROM NetSuite → it is in sync at this moment. Mirrors the line-item
@@ -826,6 +830,7 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
     [salesChannels,      'salesChannelNsId',       'salesChannelId'],
     [businessVerticals,  'businessVerticalNsId',   'businessVerticalId'],
     [businessTypes,      'businessTypeNsId',       'businessTypeId'],
+    [divisionalBudgets,  'divisionalBudgetNsId',   'divisionalBudgetId'],
     [accountManagers,    'acctManagerNsId',        'acctManagerId'],
     [currencies,         'sellCurrencyNsId',       'sellCurrencyId'],
     [clientIncoterms,       'clientIncotermsNsId',    'clientIncotermsId'],

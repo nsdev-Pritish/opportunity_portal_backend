@@ -255,6 +255,17 @@ export const businessTypes = pgTable('business_types', {
   ...syncCols,
 });
 
+// Divisional Budget dropdown (NetSuite list). The estimate still stores the
+// chosen label in estimates.divisional_budget — this table only feeds the list.
+// Migration: src/db/migrations/0085_divisional_budgets.sql
+export const divisionalBudgets = pgTable('divisional_budgets', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('divisional_budgets_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
 export const employees = pgTable('employees', {
   id: serial('id').primaryKey(),
   employeeId: varchar('employee_id', { length: 100 }),     // NetSuite "Employee ID" (entityId), distinct from internal id
@@ -752,9 +763,13 @@ export const estimates = pgTable('estimates', {
   twelvePaysImportFrt: varchar('twelve_pays_import_frt', { length: 3 }),
   twelvePaysShipToCust: varchar('twelve_pays_ship_to_cust', { length: 3 }),
 
-  // Divisional Budget — free text (NULL when unset). The frontend only shows this
-  // field for L'Oréal customers; the backend stores whatever is sent, for anyone.
-  // Syncs to the NetSuite custom body field custbody_divisional_budget.
+  // Divisional Budget — dropdown selection (FK) plus the free-text column it grew
+  // out of. The frontend only shows this field for L'Oréal customers; the backend
+  // stores whatever is sent, for anyone. Both sync to the NetSuite custom body
+  // field custbody_divisional_budget: the id goes out as divisionalBudgetNSId and
+  // the label as divisionalBudgetNS. When only the id is set the label is derived
+  // from it, so old text-only callers keep working.
+  divisionalBudgetId: integer('divisional_budget_id').references(() => divisionalBudgets.id),
   divisionalBudget: varchar('divisional_budget', { length: 255 }),
 
   // Status & Sync
@@ -1814,6 +1829,7 @@ export const MASTER_TABLES = {
   sales_channels: salesChannels,
   business_verticals: businessVerticals,
   business_types: businessTypes,
+  divisional_budgets: divisionalBudgets,
   employees,
   quarters,
   forecast_statuses: forecastStatuses,

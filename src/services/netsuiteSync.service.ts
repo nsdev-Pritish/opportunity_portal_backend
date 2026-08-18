@@ -19,7 +19,7 @@ import { getDb } from '../config/database.js';
 import {
   estimates, estimateLineItems, estimateQuotes,
   subsidiaries, customers, contacts, currencies, projectNames, projectTypes, likelyToClose,
-  departments, salesChannels, businessVerticals, businessTypes,
+  departments, salesChannels, businessVerticals, businessTypes, divisionalBudgets,
   accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
   clientIncoterms, clientShippingMethods, addresses,
   csItems, vendors, sustainabilityOptions, productClasses, productClassesEu, vendorIncoterms, factories,
@@ -122,6 +122,19 @@ async function getNsId(table: any, portalId: number | null | undefined): Promise
   return row?.nsId ?? '';
 }
 
+// Same lookup, but for the display label. Used for dropdowns that NetSuite also
+// wants as text (Divisional Budget → custbody_divisional_budget).
+async function getNsName(table: any, portalId: number | null | undefined): Promise<string> {
+  if (!portalId) return '';
+  const db = getDb();
+  const [row] = await db
+    .select({ name: table.name })
+    .from(table)
+    .where(eq(table.id, portalId))
+    .limit(1);
+  return row?.name ?? '';
+}
+
 // ── Build the suitelet payload ─────────────────────────────────────────────────
 
 async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'convert', lineItemIds?: number[]) {
@@ -139,7 +152,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     acctMgrNsId, hkPartnerNsId, ops1NsId, ops2NsId, complianceNsId,
     shipTermsNsId, shipMethodNsId, shipAddrNsId, billAddrNsId,
     estimateStatusNsId, closedLostReasonNsId, clientPursuitAltNsId,
-    esStatusNsId,
+    esStatusNsId, divisionalBudgetNsId, divisionalBudgetName,
   ] = await Promise.all([
     getNsId(subsidiaries,                est.subsidiaryId),
     getNsId(customers,                   est.customerId),
@@ -165,6 +178,8 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     getNsId(closedLostReasons,           est.closedLostReasonId),
     getNsId(clientPursuitAlternatives,   est.clientPursuitAlternativeId),
     getNsId(esStatus,                    est.esStatusId),
+    getNsId(divisionalBudgets,           est.divisionalBudgetId),
+    getNsName(divisionalBudgets,         est.divisionalBudgetId),
   ]);
 
   // Resolve NS IDs for all product developers in parallel
@@ -219,8 +234,11 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     // Twelve Pays YES/NO flags → custbody_twelve_pays_import_frt / custbody_twelve_pays_ship_to_cust
     twelvePaysImportFrtNS        : est.twelvePaysImportFrt ?? '',
     twelvePaysShipToCustNS       : est.twelvePaysShipToCust ?? '',
-    // Divisional Budget → custbody_divisional_budget (L'Oréal-only field in the UI)
-    divisionalBudgetNS           : est.divisionalBudget ?? '',
+    // Divisional Budget → custbody_divisional_budget (L'Oréal-only field in the UI).
+    // Id for the list value, plus the label so the existing text-based script keeps
+    // working. The label falls back to the free-text column when no id is selected.
+    divisionalBudgetNSId         : divisionalBudgetNsId,
+    divisionalBudgetNS           : divisionalBudgetName || (est.divisionalBudget ?? ''),
     statusNSId                   : estimateStatusNsId,
     esStatusNSId                 : esStatusNsId,
     closedLostReasonNSId         : closedLostReasonNsId,

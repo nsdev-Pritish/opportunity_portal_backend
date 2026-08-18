@@ -205,6 +205,10 @@ const EstimateHeaderSchema = z.object({
 
   // Divisional Budget — conditional field, shown by the frontend for L'Oréal
   // customers only; syncs to NetSuite custbody_divisional_budget.
+  // Send divisionalBudgetId (dropdown row from /api/v1/master/divisional_budgets);
+  // divisionalBudget is the legacy free-text form, still accepted. When only the
+  // id is sent the label is resolved from the master list on the way to NetSuite.
+  divisionalBudgetId: z.number().int().positive().optional(),  // FK → divisional_budgets.id
   divisionalBudget: z.string().max(255).optional(),        // custbody_divisional_budget
 
   attachments: z.array(z.object({                     // File upload metadata
