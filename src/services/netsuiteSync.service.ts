@@ -457,7 +457,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
           : {}),
         previousLineIDNS      : li.previousLineId ?? null,
         additionalFeeInfoNS   : li.additionalFeeInfo ?? '',
-        countryOriginNSId     : li.countryOrigin ?? '',
+        countryOriginNS     : li.countryOfOrigin  ?? '',
         classNSId             : isEu ? (productClassEuNsId ? Number(productClassEuNsId) : null) : (productClassNsId ? Number(productClassNsId) : null),
         classItemNSId         : isEu ? (productClassEuNsId ? Number(productClassEuNsId) : null) : (productClassNsId ? Number(productClassNsId) : null),
         vendorSKUNS           : li.vendorSku ?? '',
