@@ -368,6 +368,112 @@ export const requestors = pgTable('requestors', {
   wrikeIdIdx: index('requestors_wrike_id_idx').on(t.wrikeId),
 }));
 
+// ══════════════════════════════════════════════════════════════════
+//  CREATIVE REQUESTS  — the Estimate's "Creative Requests" tab
+//
+//  Four independent toggles (Deck·Product, Setup·Product, Deck·Packaging,
+//  Setup·Packaging). Every toggle that is ON yields ONE creativeRequest header
+//  row + ONE detail row (deck or setup). A toggle that is OFF yields nothing.
+//
+//  Migration: 0087_creative_requests.sql
+// ══════════════════════════════════════════════════════════════════
+
+export const creativeRequest = pgTable('creative_request', {
+  id: serial('id').primaryKey(),
+  estimateId: integer('estimate_id').references(() => estimates.id, { onDelete: 'cascade' }).notNull(),
+  requestType: varchar('request_type', { length: 10 }).notNull(),   // 'deck' | 'setup'
+  category: varchar('category', { length: 12 }).notNull(),          // 'product' | 'packaging'
+
+  // Requestor is per-request. Deck and Setup each carry their OWN value — never shared.
+  // Plain values, not resolved against the requestors master — Wrike is columns-only.
+  requestorWrikeId: varchar('requestor_wrike_id', { length: 50 }).notNull(),
+  requestorName: varchar('requestor_name', { length: 120 }).notNull(),
+
+  dueDate: date('due_date').notNull(),
+
+  // Plain column, no FK — there is no user management in the portal yet.
+  submittedByUserId: integer('submitted_by_user_id'),
+  submittedAt: timestamp('submitted_at', { withTimezone: true }).defaultNow().notNull(),
+
+  netsuiteRecordId: varchar('netsuite_record_id', { length: 50 }),
+  // Created but never written — the Wrike push is a separate, later feature.
+  wrikeTaskId: varchar('wrike_task_id', { length: 50 }),
+  wrikePermalink: text('wrike_permalink'),
+
+  // 'draft' | 'pending' | 'synced' | 'failed' — independent of the syncStatusEnum used
+  // elsewhere (that enum has no 'draft' value).
+  syncStatus: varchar('sync_status', { length: 20 }).default('draft').notNull(),
+  lastSyncAttemptAt: timestamp('last_sync_attempt_at', { withTimezone: true }),
+  lastSyncError: text('last_sync_error'),
+
+  isLocked: boolean('is_locked').default(false).notNull(),
+  idempotencyKey: varchar('idempotency_key', { length: 64 }).unique(),
+
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  // One active request per toggle per estimate — the basis of upsert-by-toggle.
+  toggleUniq: unique('creative_request_estimate_toggle_uniq').on(t.estimateId, t.requestType, t.category),
+  estimateIdx: index('idx_creative_request_estimate').on(t.estimateId),
+  syncStatusIdx: index('idx_creative_request_sync_status').on(t.syncStatus),
+}));
+
+export const creativeRequestDeck = pgTable('creative_request_deck', {
+  requestId: integer('request_id').primaryKey().references(() => creativeRequest.id, { onDelete: 'cascade' }),
+  itemBudget: text('item_budget').notNull(),
+  scope: text('scope'),
+  intent: text('intent'),
+  meetingDetail: text('meeting_detail'),
+  isFirstTimeClient: varchar('is_first_time_client', { length: 3 }).notNull(),  // 'Yes' | 'No'
+  includeAboutUs: varchar('include_about_us', { length: 3 }),                   // 'Yes' | 'No'
+  formattingPref: text('formatting_pref'),
+  dropboxLink: text('dropbox_link'),
+});
+
+export const creativeRequestSetup = pgTable('creative_request_setup', {
+  requestId: integer('request_id').primaryKey().references(() => creativeRequest.id, { onDelete: 'cascade' }),
+  numberOfSetups: integer('number_of_setups').notNull(),
+  designTrackerLink: text('design_tracker_link'),
+  whereToSaveLink: text('where_to_save_link'),
+  notes: text('notes'),
+  dropboxLink: text('dropbox_link'),
+});
+
+// ── Per-request child tables ──────────────────────────────────────
+// These already exist in the database (not created by 0087). Shape is HYBRID: a nullable
+// FK to the master list plus a NOT NULL snapshot of the label, so a request keeps its
+// original wording even if the master row is later renamed. A free-text entry that matches
+// no master row is still storable — the id is simply left null.
+//
+// Careful with the names: `creativeRequestAssets` / `creativeRequestScopeWork` (above) are
+// the MASTER dropdown lists; the two below are the per-request selections.
+
+export const creativeRequestAsset = pgTable('creative_request_asset', {
+  id: serial('id').primaryKey(),
+  requestId: integer('request_id').references(() => creativeRequest.id, { onDelete: 'cascade' }).notNull(),
+  assetId: integer('asset_id').references(() => creativeRequestAssets.id),
+  assetValue: text('asset_value').notNull(),
+});
+
+export const creativeRequestScopeWorkItem = pgTable('creative_request_scope_work_item', {
+  id: serial('id').primaryKey(),
+  requestId: integer('request_id').references(() => creativeRequest.id, { onDelete: 'cascade' }).notNull(),
+  scopeWorkId: integer('scope_work_id').references(() => creativeRequestScopeWork.id),
+  scopeValue: text('scope_value').notNull(),
+});
+
+// Append-only during a normal save — never deleted here (files may already live in Wrike).
+export const creativeRequestAttachment = pgTable('creative_request_attachment', {
+  id: serial('id').primaryKey(),
+  requestId: integer('request_id').references(() => creativeRequest.id, { onDelete: 'cascade' }).notNull(),
+  fileName: varchar('file_name', { length: 255 }).notNull(),
+  fileSizeBytes: bigint('file_size_bytes', { mode: 'number' }),
+  storageUri: text('storage_uri'),
+  netsuiteFileId: varchar('netsuite_file_id', { length: 50 }),
+  wrikeAttachmentId: varchar('wrike_attachment_id', { length: 50 }),
+  uploadedAt: timestamp('uploaded_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const hkPartners = pgTable('hk_partners', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),

@@ -26,6 +26,8 @@ import {
   vendorAddresses, componentKitItems,
   closedLostReasons, clientPursuitAlternatives, estimateStatuses, esStatus,
   estimateFreightGroups, drayage,
+  creativeRequest, creativeRequestDeck, creativeRequestSetup,
+  creativeRequestAsset, creativeRequestScopeWorkItem,
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -133,6 +135,82 @@ async function getNsName(table: any, portalId: number | null | undefined): Promi
     .where(eq(table.id, portalId))
     .limit(1);
   return row?.name ?? '';
+}
+
+// ── Creative Requests → the `creativeRequests` array on the estimate payload ──
+//
+// Creative requests are NOT a separate NetSuite call — they ride along inside the same
+// estimate create/update payload, as an array of per-request objects. The NetSuite script
+// resolves the requestor itself by NAME (searching customrecord_mw_wrike_requestor), so we
+// send `requestor` as the display name and never a Wrike id.
+//
+// Deck and Setup entries carry different keys — note in particular that the deck due date
+// is `dueDate1` while the setup due date is `dueDate`. Assets and scope of work are sent as
+// LABEL strings (the values stored on the child rows), not internal ids.
+async function buildCreativeRequestsPayload(estimateId: number): Promise<Record<string, unknown>[]> {
+  const db = getDb();
+
+  const requests = await db.select()
+    .from(creativeRequest)
+    .where(eq(creativeRequest.estimateId, estimateId))
+    .orderBy(asc(creativeRequest.id));
+
+  if (requests.length === 0) return [];
+
+  const out: Record<string, unknown>[] = [];
+
+  for (const r of requests) {
+    const base = {
+      requestType: r.requestType,
+      category   : r.category,
+      requestor  : r.requestorName ?? '',   // resolved to a Wrike id by the NS script
+    };
+
+    if (r.requestType === 'deck') {
+      const [d] = await db.select().from(creativeRequestDeck)
+        .where(eq(creativeRequestDeck.requestId, r.id)).limit(1);
+
+      const assets = await db.select({ value: creativeRequestAsset.assetValue })
+        .from(creativeRequestAsset)
+        .where(eq(creativeRequestAsset.requestId, r.id));
+
+      out.push({
+        ...base,
+        dueDate1   : formatNsDate(r.dueDate),
+        itemBudget : d?.itemBudget ?? '',
+        firstTime  : d?.isFirstTimeClient ?? '',
+        deck       : d?.includeAboutUs ?? '',   // "include About Us deck" Yes/No
+        assets     : assets.map(a => a.value),
+        scope      : d?.scope ?? '',
+        intent     : d?.intent ?? '',
+        meet       : d?.meetingDetail ?? '',
+        format     : d?.formattingPref ?? '',
+        dropbox    : d?.dropboxLink ?? '',
+        attachWrike: [],   // shape not yet confirmed — see note in the service header
+      });
+    } else {
+      const [s] = await db.select().from(creativeRequestSetup)
+        .where(eq(creativeRequestSetup.requestId, r.id)).limit(1);
+
+      const scopeWork = await db.select({ value: creativeRequestScopeWorkItem.scopeValue })
+        .from(creativeRequestScopeWorkItem)
+        .where(eq(creativeRequestScopeWorkItem.requestId, r.id));
+
+      out.push({
+        ...base,
+        dueDate    : formatNsDate(r.dueDate),
+        setups     : s?.numberOfSetups ?? null,
+        scopeWork  : scopeWork.map(x => x.value),
+        tracker    : s?.designTrackerLink ?? '',
+        save       : s?.whereToSaveLink ?? '',
+        notes      : s?.notes ?? '',
+        dropbox    : s?.dropboxLink ?? '',
+        attachSetup: [],   // shape not yet confirmed — see note in the service header
+      });
+    }
+  }
+
+  return out;
 }
 
 // ── Build the suitelet payload ─────────────────────────────────────────────────
@@ -246,6 +324,9 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     projectHoldDateNS            : formatNsDate(est.projectHoldDate),
     notesClosedLostReasonNS      : est.notesClosedLostReason ?? '',
     attachmentsNS                : Array.isArray(est.attachments) ? est.attachments : [],
+    // Creative Requests ride along inside this same payload — one entry per ACTIVE toggle.
+    // Empty array when no toggle is on.
+    creativeRequests             : await buildCreativeRequestsPayload(estimateId),
   };
 
   // Phase 2 – Line items (for 'convert' mode only the target lineItemIds are sent).
@@ -476,6 +557,17 @@ async function markEstimateChildrenSync(
   const set: Record<string, unknown> = { syncStatus, syncError };
   if (syncStatus === 'synced') set.syncedAt = new Date();
 
+  // Creative requests are pushed in the same payload, so they share the same outcome.
+  // Their status column is a separate varchar with its own error/attempt columns.
+  const crSet: Record<string, unknown> = {
+    syncStatus       : syncStatus,
+    lastSyncError    : syncError,
+    lastSyncAttemptAt: new Date(),
+    updatedAt        : new Date(),
+  };
+  // A synced request is locked so a later estimate save can never silently overwrite it.
+  if (syncStatus === 'synced') crSet.isLocked = true;
+
   await Promise.all([
     db.update(estimateLineItems)
       .set(set as any)
@@ -486,6 +578,9 @@ async function markEstimateChildrenSync(
         eq(estimateFreightGroups.estimateId, estimateId),
         eq(estimateFreightGroups.isActive, true),
       )),
+    db.update(creativeRequest)
+      .set(crSet as any)
+      .where(eq(creativeRequest.estimateId, estimateId)),
   ]);
 }
 

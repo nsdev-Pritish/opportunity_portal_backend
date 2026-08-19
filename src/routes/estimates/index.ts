@@ -255,14 +255,34 @@ const FreightGroupSchema = z.object({
   customNotes:    z.string().optional(),
 });
 
+// ── Creative Requests ────────────────────────────────────────────────────────
+// Four independent toggles. `null` means the toggle is OFF and its form data — stray or
+// otherwise — is ignored entirely. Kept permissive here on purpose: per-field validation
+// happens inside saveCreativeRequests so that ONE malformed toggle is reported as a failed
+// toggle in the response rather than 400-ing the whole estimate save.
+const CreativeRequestFormSchema = z.record(z.unknown());
+const CreativeRequestsSchema = z.object({
+  deckProduct:    CreativeRequestFormSchema.nullish(),
+  setupProduct:   CreativeRequestFormSchema.nullish(),
+  deckPackaging:  CreativeRequestFormSchema.nullish(),
+  setupPackaging: CreativeRequestFormSchema.nullish(),
+  // Accepted aliases — the client spec uses "artSetup*" for the Setup toggles.
+  artSetupProduct:   CreativeRequestFormSchema.nullish(),
+  artSetupPackaging: CreativeRequestFormSchema.nullish(),
+}).partial();
+
 // ── Header + line items + freight groups ─────────────────────────────────────
 const CreateEstimateSchema = EstimateHeaderSchema.extend({
   lineItems: z.array(LineItemSchema).max(400).optional(),
   freightGroups: z.array(FreightGroupSchema).max(50).optional(),
+  creativeRequests: CreativeRequestsSchema.nullish(),
+  submittedByUserId: z.number().int().positive().optional(),
 });
 const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
   lineItems: z.array(LineItemSchema).max(400).optional(),
   freightGroups: z.array(FreightGroupSchema).max(50).optional(),
+  creativeRequests: CreativeRequestsSchema.nullish(),
+  submittedByUserId: z.number().int().positive().optional(),
 });
 
 // ── Pipeline grid bulk-update schema ─────────────────────────────────────────
@@ -371,8 +391,13 @@ export default async function estimateRoutes(app: FastifyInstance) {
     const raw = req.headers['content-type']?.startsWith('multipart/form-data')
       ? await parseMultipartEstimate(req)
       : req.body as Record<string, unknown>;
-    const { lineItems, freightGroups, ...headerData } = CreateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
-    const result = await createEstimateWithItems(headerData, lineItems ?? [], freightGroups ?? []);
+    const { lineItems, freightGroups, creativeRequests, submittedByUserId, ...headerData } =
+      CreateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
+    // submittedByUserId is stored verbatim if the caller sends it. There is no user
+    // management in the portal yet, so nothing is derived or looked up here.
+    const result = await createEstimateWithItems(
+      headerData, lineItems ?? [], freightGroups ?? [], creativeRequests, submittedByUserId ?? null,
+    );
     return reply.status(201).send(result);
   });
 
@@ -520,8 +545,11 @@ export default async function estimateRoutes(app: FastifyInstance) {
     const raw = req.headers['content-type']?.startsWith('multipart/form-data')
       ? await parseMultipartEstimate(req)
       : req.body as Record<string, unknown>;
-    const { lineItems, freightGroups, ...headerData } = UpdateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
-    return updateEstimateWithItems(parseInt(req.params.id), headerData, lineItems, freightGroups);
+    const { lineItems, freightGroups, creativeRequests, submittedByUserId, ...headerData } =
+      UpdateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
+    return updateEstimateWithItems(
+      parseInt(req.params.id), headerData, lineItems, freightGroups, creativeRequests, submittedByUserId ?? null,
+    );
   });
 
   // DELETE /api/v1/estimates/:id — soft-delete (sets is_active=false)

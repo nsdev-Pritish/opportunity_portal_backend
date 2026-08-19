@@ -11,6 +11,7 @@ import { cacheDel, CacheKeys } from '../utils/cache.js';
 import { NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { syncEstimateToNetsuite, deactivateLinesInNetsuite } from './netsuiteSync.service.js';
+import { saveCreativeRequests, type CreativeRequestsInput, type CreativeRequestResult } from './creativeRequest.service.js';
 
 type RawLineItem = Record<string, unknown> & { components?: Record<string, unknown>[] };
 
@@ -806,6 +807,8 @@ export async function createEstimateWithItems(
   headerData: Record<string, unknown>,
   lineItems: RawLineItem[],
   freightGroups: Record<string, unknown>[] = [],
+  creativeRequests?: CreativeRequestsInput,
+  submittedByUserId?: number | null,
 ) {
   const db = getDb();
   const startTime = Date.now();
@@ -840,13 +843,22 @@ export async function createEstimateWithItems(
     // Step 3 – Freight groups (links resolved against the inserted parents)
     const insertedGroups = await persistFreightGroups(tx, estimate.id, freightGroups, parents);
 
-    const duration = Date.now() - startTime;
-    logger.info({ estimateId: estimate.id, lineItemCount: parents.length + components.length, freightGroupCount: insertedGroups.length, durationMs: duration }, 'Estimate created');
+    // Step 4 – Creative Requests (up to 4 independent toggles).
+    // Runs inside the same transaction as the rest of the save; each toggle gets its own
+    // savepoint internally, so one toggle failing never rolls back the estimate or its
+    // sibling toggles. Per-toggle outcomes come back for the response.
+    const creativeRequestResults = await saveCreativeRequests(
+      tx, estimate.id, submittedByUserId ?? null, creativeRequests,
+    );
 
-    return { estimate, lineItems: [...parents, ...components], freightGroups: insertedGroups };
+    const duration = Date.now() - startTime;
+    logger.info({ estimateId: estimate.id, lineItemCount: parents.length + components.length, freightGroupCount: insertedGroups.length, creativeRequestCount: creativeRequestResults.length, durationMs: duration }, 'Estimate created');
+
+    return { estimate, lineItems: [...parents, ...components], freightGroups: insertedGroups, creativeRequests: creativeRequestResults };
   }).then((result) => {
     // Fire-and-forget: NS sync errors are caught inside syncEstimateToNetsuite;
     // the portal response must not block on or fail due to NS availability.
+    // Creative requests are included in this same payload — no separate push.
     syncEstimateToNetsuite(result.estimate.id, 'create').catch(() => {/* already logged + recorded */});
     return result;
   });
@@ -859,6 +871,8 @@ export async function updateEstimateWithItems(
   headerData: Record<string, unknown>,
   newLineItems?: RawLineItem[],
   newFreightGroups?: Record<string, unknown>[],
+  creativeRequests?: CreativeRequestsInput,
+  submittedByUserId?: number | null,
 ) {
   const db = getDb();
   const startTime = Date.now();
@@ -899,7 +913,15 @@ export async function updateEstimateWithItems(
       await persistFreightGroups(tx, id, newFreightGroups, parents);
     }
 
-    return { estimate: updated, lineItems: allLineItems };
+    // Step 4 – Creative Requests. Insert-only: this creates requests for toggles that have
+    // none yet, and leaves any existing request completely untouched. Skipped entirely when
+    // the caller didn't send creativeRequests, so a header-only / line-only update does no
+    // needless work.
+    const creativeRequestResults = creativeRequests !== undefined
+      ? await saveCreativeRequests(tx, id, submittedByUserId ?? null, creativeRequests)
+      : [];
+
+    return { estimate: updated, lineItems: allLineItems, creativeRequests: creativeRequestResults };
   });
 
   await cacheDel(CacheKeys.estimate(id));
