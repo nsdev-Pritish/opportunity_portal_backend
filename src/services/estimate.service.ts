@@ -14,6 +14,7 @@ import { syncEstimateToNetsuite, deactivateLinesInNetsuite } from './netsuiteSyn
 import {
   saveCreativeRequests,
   getCreativeRequestsForEstimate,
+  getCreativeRequestsForEstimates,
   type CreativeRequestsInput,
   type CreativeRequestResult,
 } from './creativeRequest.service.js';
@@ -233,9 +234,10 @@ export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
   const estimateIds = rows.map(r => r.id);
   let lineItemsByEstimate: Record<number, any[]> = {};
   let freightGroupsByEstimate: Record<number, any[]> = {};
+  let creativeRequestsByEstimate: Record<number, any[]> = {};
 
   if (estimateIds.length > 0) {
-    const [allLineItems, allFreightGroups] = await Promise.all([
+    const [allLineItems, allFreightGroups, crByEstimate] = await Promise.all([
       db.select()
         .from(estimateLineItems)
         .where(and(
@@ -250,7 +252,11 @@ export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
           eq(estimateFreightGroups.isActive, true),
         ))
         .orderBy(asc(estimateFreightGroups.estimateId), asc(estimateFreightGroups.id)),
+      // Batched the same way as line items/freight groups above — one query set for the
+      // whole page, not one getCreativeRequestsForEstimate() call per row.
+      getCreativeRequestsForEstimates(db as any, estimateIds),
     ]);
+    creativeRequestsByEstimate = crByEstimate;
 
     // Nest components under their parent, group by estimateId
     for (const li of allLineItems) {
@@ -276,6 +282,7 @@ export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
     ...r,
     lineItems: lineItemsByEstimate[r.id] ?? [],
     freightGroups: freightGroupsByEstimate[r.id] ?? [],
+    creativeRequests: creativeRequestsByEstimate[r.id] ?? [],
   }));
 
   return { data, pagination: { page: opts.page, limit: opts.limit, total: Number(total) } };

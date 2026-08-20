@@ -641,16 +641,19 @@ export async function addAttachmentsToRequest(
 // ── Read helper — used by the estimate detail endpoint ──────────────────────
 
 /**
- * Every creative request on an estimate, with its detail row and all three child
- * collections nested. Without this the attachments written during a save are unreadable —
- * the estimate detail endpoint returned nothing about creative requests at all.
+ * Shared by getCreativeRequestsForEstimate (one estimate) and getCreativeRequestsForEstimates
+ * (many estimates, batched) — the query shape is identical, only the estimateId filter
+ * differs, so both call this with a list and split the result themselves.
  *
- * Four queries total regardless of request count, not one per request.
+ * Four queries total regardless of request count, not one per request — and not one per
+ * estimate either, since the header query itself takes every estimateId at once.
  */
-export async function getCreativeRequestsForEstimate(db: Executor, estimateId: number) {
+async function fetchCreativeRequestRows(db: Executor, estimateIds: number[]) {
+  if (estimateIds.length === 0) return [];
+
   const headers = await db.select()
     .from(creativeRequest)
-    .where(eq(creativeRequest.estimateId, estimateId))
+    .where(inArray(creativeRequest.estimateId, estimateIds))
     .orderBy(creativeRequest.id);
 
   const rows = headers as any[];
@@ -691,4 +694,27 @@ export async function getCreativeRequestsForEstimate(db: Executor, estimateId: n
       attachments: files[r.id] ?? [],
     };
   });
+}
+
+/**
+ * Every creative request on ONE estimate, with its detail row and all three child
+ * collections nested. Without this the attachments written during a save are unreadable —
+ * the estimate detail endpoint returned nothing about creative requests at all.
+ */
+export async function getCreativeRequestsForEstimate(db: Executor, estimateId: number) {
+  return fetchCreativeRequestRows(db, [estimateId]);
+}
+
+/**
+ * Same data as getCreativeRequestsForEstimate, but for MANY estimates at once — grouped by
+ * estimateId — so the search/list endpoint (which returns a page of estimates in one call)
+ * doesn't run one query set per row.
+ */
+export async function getCreativeRequestsForEstimates(
+  db: Executor, estimateIds: number[],
+): Promise<Record<number, Awaited<ReturnType<typeof fetchCreativeRequestRows>>>> {
+  const rows = await fetchCreativeRequestRows(db, estimateIds);
+  const byEstimate: Record<number, typeof rows> = {};
+  for (const r of rows) (byEstimate[r.estimateId] ??= []).push(r);
+  return byEstimate;
 }
