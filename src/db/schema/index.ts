@@ -440,7 +440,9 @@ export const creativeRequestSetup = pgTable('creative_request_setup', {
 });
 
 // ── Per-request child tables ──────────────────────────────────────
-// These already exist in the database (not created by 0087). Shape is HYBRID: a nullable
+// Created by migration 0088 (they predate it in the deployed database, where they were
+// applied by hand; 0088 is an IF NOT EXISTS backfill so fresh environments match).
+// Shape is HYBRID: a nullable
 // FK to the master list plus a NOT NULL snapshot of the label, so a request keeps its
 // original wording even if the master row is later renamed. A free-text entry that matches
 // no master row is still storable — the id is simply left null.
@@ -462,12 +464,18 @@ export const creativeRequestScopeWorkItem = pgTable('creative_request_scope_work
   scopeValue: text('scope_value').notNull(),
 });
 
-// Append-only during a normal save — never deleted here (files may already live in Wrike).
+// Append-only — never deleted here (files may already live in Wrike). One row per file
+// sent, with no dedupe: the same name+size can legitimately be two different files.
 export const creativeRequestAttachment = pgTable('creative_request_attachment', {
   id: serial('id').primaryKey(),
   requestId: integer('request_id').references(() => creativeRequest.id, { onDelete: 'cascade' }).notNull(),
-  fileName: varchar('file_name', { length: 255 }).notNull(),
+  // 500, not the spec's 255: the deployed column is varchar(500). Kept in sync on purpose —
+  // a `db:push` from a 255 declaration would try to SHRINK a column that already has rows.
+  fileName: varchar('file_name', { length: 500 }).notNull(),
   fileSizeBytes: bigint('file_size_bytes', { mode: 'number' }),
+  // Client-reported MIME type, stored as received (migration 0089). Descriptive only —
+  // never used to decide whether a file is safe to serve.
+  mimeType: varchar('mime_type', { length: 255 }),
   storageUri: text('storage_uri'),
   netsuiteFileId: varchar('netsuite_file_id', { length: 50 }),
   wrikeAttachmentId: varchar('wrike_attachment_id', { length: 50 }),

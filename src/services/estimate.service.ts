@@ -11,7 +11,12 @@ import { cacheDel, CacheKeys } from '../utils/cache.js';
 import { NotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { syncEstimateToNetsuite, deactivateLinesInNetsuite } from './netsuiteSync.service.js';
-import { saveCreativeRequests, type CreativeRequestsInput, type CreativeRequestResult } from './creativeRequest.service.js';
+import {
+  saveCreativeRequests,
+  getCreativeRequestsForEstimate,
+  type CreativeRequestsInput,
+  type CreativeRequestResult,
+} from './creativeRequest.service.js';
 
 type RawLineItem = Record<string, unknown> & { components?: Record<string, unknown>[] };
 
@@ -365,7 +370,7 @@ export async function getEstimate(id: number) {
 
   if (!row) throw new NotFoundError('Estimate', id);
 
-  const [allLineItemRows, freightGroups, quoteRows] = await Promise.all([
+  const [allLineItemRows, freightGroups, quoteRows, creativeRequests] = await Promise.all([
     db.select()
       .from(estimateLineItems)
       .where(and(
@@ -393,6 +398,10 @@ export async function getEstimate(id: number) {
         isNotNull(estimateQuotes.quoteDocumentNumber),
       ))
       .orderBy(desc(estimateQuotes.createdAt)),
+    // Creative requests with their detail row, selected assets, scope of work and
+    // attachments. Without this the attachments written during a save were unreadable —
+    // the detail endpoint returned nothing about creative requests at all.
+    getCreativeRequestsForEstimate(db as any, id),
   ]);
 
   // Nest components under their parent
@@ -412,6 +421,7 @@ export async function getEstimate(id: number) {
     customer: row.customers,
     lineItems,
     freightGroups,
+    creativeRequests,
     // Parallel lists in the same order, so index i of one pairs with index i of the other.
     quoteDocumentNumber     : quoteRows.map(q => q.quoteDocumentNumber),
     quoteNetsuiteInternalId : quoteRows.map(q => q.quoteNetsuiteInternalId),

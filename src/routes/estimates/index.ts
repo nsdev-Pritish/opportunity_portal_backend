@@ -1,7 +1,12 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { uploadToR2 } from '../../services/r2.service.js';
+import { uploadToR2, uploadCreativeRequestFile, materializeAttachment } from '../../services/r2.service.js';
 import { AppError } from '../../utils/errors.js';
+import {
+  CREATIVE_REQUEST_TOGGLES,
+  resolveToggle,
+  addAttachmentsToRequest,
+} from '../../services/creativeRequest.service.js';
 
 // Recursively convert "" / null to undefined so Zod number fields accept blank frontend values
 function stripEmpty(val: unknown): unknown {
@@ -42,6 +47,7 @@ import {
   listEstimateQuotes,
 } from '../../services/estimate.service.js';
 import { createEstimateAndConvertToOtb } from '../../services/otbConvert.service.js';
+import { previewNsPayload } from '../../services/netsuiteSync.service.js';
 
 // ── Component schema — all detail fields shared by both item levels ──────────
 // Components (Component Kit Items) carry purchase/landed/classification/packing
@@ -310,20 +316,66 @@ const PipelineBulkSchema = z.object({
 // ── Multipart helper ─────────────────────────────────────────────────────────
 // Parses a multipart/form-data request into a plain object.
 // Expects:  data (Text) = JSON string of estimate fields
-//           file (File, optional, repeatable) = attachments to upload to R2
-async function parseMultipartEstimate(req: FastifyRequest): Promise<Record<string, unknown>> {
+//           file (File, optional, repeatable) = estimate-level attachments, uploaded to R2
+//           crFile:<toggle> (File, optional, repeatable) = creative-request attachments,
+//                 e.g. crFile:deckProduct — routed to that toggle's attachments array
+//
+// `estimateId` is only known on PATCH; on POST it is null and creative-request files are
+// keyed without an estimate segment in R2 — creative-requests/{toggle}/...
+const CR_FILE_PREFIX = 'crFile:';
+
+async function parseMultipartEstimate(
+  req: FastifyRequest,
+  estimateId: number | null = null,
+): Promise<Record<string, unknown>> {
   const parts = req.parts();
   let raw: Record<string, unknown> = {};
   const uploaded: Array<{ name: string; url: string; size: number; type: string }> = [];
+  // Creative-request files are buffered by toggle rather than written straight into `raw`:
+  // req.parts() is a stream and the `data` part may arrive AFTER the files, so `raw` is not
+  // yet populated inside this loop. Same reason `uploaded` exists.
+  const crFiles: Record<string, Array<{ name: string; url: string; size: number; type: string }>> = {};
   let lineItemImage: { name: string; url: string; size: number; type: string } | null = null;
   let lineItemImageId: number | null = null;
 
   for await (const part of parts) {
     if (part.type === 'file') {
       const buf = await part.toBuffer();
-      if (buf.length === 0) continue;
+      // Empty parts are skipped for the generic fields — an unfilled form row is normal —
+      // but NOT for crFile:*, which is handled explicitly below.
+      if (buf.length === 0 && !part.fieldname.startsWith(CR_FILE_PREFIX)) continue;
       if (part.fieldname === 'lineItemImage') {
         lineItemImage = await uploadToR2(buf, part.filename ?? 'file', part.mimetype);
+      } else if (part.fieldname.startsWith(CR_FILE_PREFIX)) {
+        // An EMPTY crFile part is an ERROR, not something to skip. The generic `file` field
+        // above tolerates empty parts because an unfilled form row is normal there, but
+        // naming a specific toggle states intent: the caller believes they are sending a
+        // file. Postman sends an empty part when its stored path has gone stale (the file was
+        // moved or deleted — it shows a warning icon on the row), and skipping that silently
+        // returned 200 with action "inserted" while the attachment quietly disappeared. That
+        // is the invisible data loss this route guards against everywhere else.
+        //
+        // Thrown immediately rather than collected: parts already seen are uploaded, so
+        // failing on the first empty one leaves the fewest orphaned objects in R2.
+        if (buf.length === 0) {
+          throw new AppError(
+            `Field "${part.fieldname}" was sent with no file content. If you are using Postman, the file reference has gone stale — click "Select Files" and pick the file again.`,
+            400, 'EMPTY_FILE',
+          );
+        }
+        const toggleName = part.fieldname.slice(CR_FILE_PREFIX.length);
+        // Validated here, before the upload, so a typo'd toggle fails loudly instead of
+        // leaving an orphaned object in R2 and silently dropping the file.
+        const def = resolveToggle(toggleName);
+        if (!def) {
+          throw new AppError(
+            `Unknown creative request toggle "${toggleName}" in field "${part.fieldname}"`,
+            400, 'UNKNOWN_TOGGLE',
+          );
+        }
+        (crFiles[toggleName] ??= []).push(
+          await uploadCreativeRequestFile(buf, part.filename ?? 'file', part.mimetype, estimateId, def.key),
+        );
       } else {
         uploaded.push(await uploadToR2(buf, part.filename ?? 'file', part.mimetype));
       }
@@ -340,6 +392,23 @@ async function parseMultipartEstimate(req: FastifyRequest): Promise<Record<strin
     raw.attachments = [...existing, ...uploaded];
   }
 
+  // Merge creative-request files into the toggle objects now that `data` has been parsed.
+  for (const [toggleName, files] of Object.entries(crFiles)) {
+    const def = resolveToggle(toggleName)!;   // already validated above
+    const cr = (raw.creativeRequests ??= {}) as Record<string, unknown>;
+
+    // Write into the spelling the client actually used in `data`, falling back to the
+    // canonical key. Writing to a second spelling would create two entries for one toggle,
+    // and saveCreativeRequests() reads the canonical key first — so the form fields sent
+    // under an alias would be ignored and the request saved with attachments but no data.
+    const key = [def.key, ...(CREATIVE_REQUEST_TOGGLES.find(t => t.key === def.key)?.aliases ?? [])]
+      .find(k => cr[k] !== undefined && cr[k] !== null) ?? def.key;
+
+    const form = (cr[key] ??= {}) as Record<string, unknown>;
+    const existing = Array.isArray(form.attachments) ? (form.attachments as unknown[]) : [];
+    form.attachments = [...existing, ...files];
+  }
+
   if (lineItemImage && lineItemImageId) {
     const lineItems = Array.isArray(raw.lineItems) ? (raw.lineItems as Record<string, unknown>[]) : [];
     const li = lineItems.find(item => Number(item.id) === lineItemImageId);
@@ -353,6 +422,81 @@ async function parseMultipartEstimate(req: FastifyRequest): Promise<Record<strin
   }
 
   return raw;
+}
+
+// ── Inline attachment materialisation ────────────────────────────────────────
+
+/**
+ * Field names that carry an attachment list.
+ *
+ * `attachWrike` is the legacy RESTlet spelling; `attachSetup` was the setup-toggle variant.
+ * Both are accepted on either toggle type, so payloads written against either name keep
+ * working — note the OUTBOUND payload now emits `attachWrike` for both types.
+ *
+ * All spellings are concatenated into one list. Since deduplication was removed, listing the
+ * same file under two different keys stores it TWICE — send each file under one key only.
+ */
+const ATTACHMENT_LIST_KEYS = [
+  'attachments', 'attachWrike', 'attach_wrike', 'attachmentsWrike', 'attachSetup', 'attach_setup',
+];
+
+/**
+ * Upload any inline (base64 data: URI) attachments to R2 and rewrite each toggle's list to
+ * plain {name, url, size, type} metadata, which is what the service layer stores.
+ *
+ * Runs in the ROUTE, after Zod validation and BEFORE the service opens its transaction, for
+ * two reasons:
+ *   - a payload that fails SCHEMA validation never uploads anything
+ *   - the R2 round-trip does not happen while a database transaction is held open
+ *
+ * ORPHANS: per-toggle field validation (requestor, due date, item budget) happens later,
+ * inside saveOneToggle, because it needs master-list lookups. A toggle that uploads
+ * successfully and then fails validation — or that is skipped because the request already
+ * exists — leaves its R2 object with no row pointing at it. That is the deliberate trade for
+ * not holding a transaction open across a network call. If orphans need reclaiming, do it
+ * with an R2 lifecycle rule on the creative-requests/ prefix or a reconciliation sweep
+ * comparing keys against storage_uri; do not move the upload inside the transaction.
+ *
+ * Mutates `creativeRequests` in place. Entries that already carry a `url` are passed through
+ * without a second upload, so the multipart path and POST /upload/file both still work.
+ */
+async function materializeCreativeRequestAttachments(
+  creativeRequests: Record<string, unknown> | null | undefined,
+  estimateId: number | null,
+): Promise<void> {
+  if (!creativeRequests || typeof creativeRequests !== 'object') return;
+
+  for (const [key, form] of Object.entries(creativeRequests)) {
+    if (!form || typeof form !== 'object' || Array.isArray(form)) continue;
+    // An unknown key is left alone — saveCreativeRequests ignores it too, so uploading its
+    // files would put objects in R2 that no row will ever reference.
+    const def = resolveToggle(key);
+    if (!def) continue;
+
+    const f = form as Record<string, unknown>;
+
+    // Collect every spelling into one list. A single object rather than an array is
+    // tolerated, because a caller sending exactly one file often omits the brackets.
+    const collected: unknown[] = [];
+    for (const name of ATTACHMENT_LIST_KEYS) {
+      const v = f[name];
+      if (Array.isArray(v)) collected.push(...v);
+      else if (v && typeof v === 'object') collected.push(v);
+    }
+    if (collected.length === 0) continue;
+
+    const materialized: unknown[] = [];
+    for (const entry of collected) {
+      materialized.push(await materializeAttachment(entry, estimateId, def.key));
+    }
+
+    // Normalise onto `attachments` and drop the aliases, so the service reads one list and
+    // cannot double-count a file that arrived under two names.
+    f.attachments = materialized;
+    for (const name of ATTACHMENT_LIST_KEYS) {
+      if (name !== 'attachments') delete f[name];
+    }
+  }
 }
 
 // ── Query helpers ─────────────────────────────────────────────────────────────
@@ -393,6 +537,9 @@ export default async function estimateRoutes(app: FastifyInstance) {
       : req.body as Record<string, unknown>;
     const { lineItems, freightGroups, creativeRequests, submittedByUserId, ...headerData } =
       CreateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
+    // Inline base64 attachments become R2 objects here. estimateId is null: the estimate has
+    // no id until the transaction below commits, so the key omits the estimate segment.
+    await materializeCreativeRequestAttachments(creativeRequests as Record<string, unknown> | undefined, null);
     // submittedByUserId is stored verbatim if the caller sends it. There is no user
     // management in the portal yet, so nothing is derived or looked up here.
     const result = await createEstimateWithItems(
@@ -523,6 +670,27 @@ export default async function estimateRoutes(app: FastifyInstance) {
     listEstimateQuotes(parseInt(req.params.id)),
   );
 
+  // GET /api/v1/estimates/:id/netsuite-payload — inspect the NetSuite payload WITHOUT sending
+  //
+  // Read-only dry run. NS_SUITELET_URL points at a live restlet, so before this endpoint the
+  // only way to see what NetSuite receives was to actually post it and mutate a real record.
+  // Nothing is logged with the body either, so this is the way to verify creativeRequests[]
+  // and its attachWrike / attachSetup arrays.
+  //
+  // ?mode=create|update|convert (default: update) — only affects a few header fields.
+  //
+  // Registered BEFORE '/:id' so "netsuite-payload" is not swallowed as an estimate id.
+  app.get<{ Params: { id: string }; Querystring: { mode?: string } }>(
+    '/:id/netsuite-payload',
+    async (req) => {
+      const mode = req.query.mode ?? 'update';
+      if (mode !== 'create' && mode !== 'update' && mode !== 'convert') {
+        throw new AppError('mode must be one of: create, update, convert', 400, 'INVALID_MODE');
+      }
+      return previewNsPayload(parseInt(req.params.id), mode);
+    },
+  );
+
   // GET /api/v1/estimates/:id — full estimate with line items
   app.get<{ Params: { id: string } }>('/:id', async (req) =>
     getEstimate(parseInt(req.params.id)),
@@ -543,14 +711,82 @@ export default async function estimateRoutes(app: FastifyInstance) {
   // PATCH /api/v1/estimates/:id — accepts JSON or multipart/form-data
   app.patch<{ Params: { id: string }; Body: unknown }>('/:id', async (req) => {
     const raw = req.headers['content-type']?.startsWith('multipart/form-data')
-      ? await parseMultipartEstimate(req)
+      ? await parseMultipartEstimate(req, parseInt(req.params.id))
       : req.body as Record<string, unknown>;
     const { lineItems, freightGroups, creativeRequests, submittedByUserId, ...headerData } =
       UpdateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
+    await materializeCreativeRequestAttachments(
+      creativeRequests as Record<string, unknown> | undefined, parseInt(req.params.id),
+    );
     return updateEstimateWithItems(
       parseInt(req.params.id), headerData, lineItems, freightGroups, creativeRequests, submittedByUserId ?? null,
     );
   });
+
+  // POST /api/v1/estimates/:id/creative-requests/:toggle/attachments
+  //
+  // Add files to a creative request that ALREADY EXISTS. This endpoint exists because the
+  // estimate save is insert-only for creative requests: saveOneToggle() returns
+  // skipped_exists before it reaches the attachment step, so a file sent with a later
+  // PATCH would be silently discarded. Adding files after creation has to come through here.
+  //
+  // Accepts either shape:
+  //   multipart/form-data — one or more file parts, any field name, uploaded to R2 here
+  //   application/json    — { "attachments": [{ name, url, size }] } for callers that
+  //                         already uploaded via POST /api/v1/upload/file
+  app.post<{ Params: { id: string; toggle: string }; Body: unknown }>(
+    '/:id/creative-requests/:toggle/attachments',
+    async (req, reply) => {
+      const estimateId = parseInt(req.params.id);
+      if (!Number.isInteger(estimateId) || estimateId < 1) {
+        throw new AppError('Invalid estimate id', 400, 'INVALID_ID');
+      }
+
+      // Resolved before any upload so an unknown toggle costs nothing.
+      const def = resolveToggle(req.params.toggle);
+      if (!def) {
+        throw new AppError(
+          `Unknown creative request toggle "${req.params.toggle}". Expected one of: ${CREATIVE_REQUEST_TOGGLES.map(t => t.key).join(', ')}`,
+          400, 'UNKNOWN_TOGGLE',
+        );
+      }
+
+      let attachments: unknown[];
+      if (req.headers['content-type']?.startsWith('multipart/form-data')) {
+        const collected: unknown[] = [];
+        for await (const part of req.parts()) {
+          if (part.type !== 'file') continue;
+          const buf = await part.toBuffer();
+          if (buf.length === 0) continue;
+          collected.push(
+            await uploadCreativeRequestFile(buf, part.filename ?? 'file', part.mimetype, estimateId, def.key),
+          );
+        }
+        attachments = collected;
+      } else {
+        // JSON body. Accepts every attachment-list spelling, and each entry may be either
+        // already-uploaded metadata or an inline base64 data: URI.
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        const collected: unknown[] = [];
+        for (const name of ATTACHMENT_LIST_KEYS) {
+          const v = body[name];
+          if (Array.isArray(v)) collected.push(...v);
+          else if (v && typeof v === 'object') collected.push(v);
+        }
+        attachments = [];
+        for (const entry of collected) {
+          attachments.push(await materializeAttachment(entry, estimateId, def.key));
+        }
+      }
+
+      if (attachments.length === 0) {
+        throw new AppError('No files provided', 400, 'FILE_REQUIRED');
+      }
+
+      const result = await addAttachmentsToRequest(estimateId, def.key, attachments);
+      return reply.status(201).send(result);
+    },
+  );
 
   // DELETE /api/v1/estimates/:id — soft-delete (sets is_active=false)
   app.delete<{ Params: { id: string } }>('/:id', async (req) =>

@@ -27,7 +27,7 @@ import {
   closedLostReasons, clientPursuitAlternatives, estimateStatuses, esStatus,
   estimateFreightGroups, drayage,
   creativeRequest, creativeRequestDeck, creativeRequestSetup,
-  creativeRequestAsset, creativeRequestScopeWorkItem,
+  creativeRequestAsset, creativeRequestScopeWorkItem, creativeRequestAttachment,
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -147,6 +147,28 @@ async function getNsName(table: any, portalId: number | null | undefined): Promi
 // Deck and Setup entries carry different keys — note in particular that the deck due date
 // is `dueDate1` while the setup due date is `dueDate`. Assets and scope of work are sent as
 // LABEL strings (the values stored on the child rows), not internal ids.
+//
+// ATTACHMENTS: sent as `attachWrike` on BOTH deck and setup entries, each an array of
+//   { name, url, size, type, netsuiteFileId? }
+//
+// One key for both request types, by explicit request. This service previously emitted
+// `attachSetup` on setup entries; if the receiving restlet still reads that name, setup
+// attachments will not be picked up until it is updated to read `attachWrike`. The inbound
+// side still ACCEPTS both spellings (see ATTACHMENT_LIST_KEYS in routes/estimates), so a
+// payload written against the old name keeps working in the other direction.
+//
+// A URL, never base64. The bytes already live in R2 and re-encoding a 10 MB design into the
+// estimate payload would bloat every sync of every estimate; NetSuite fetches the URL and
+// creates its own File Cabinet record. This mirrors `attachmentsNS`, which sends the
+// estimate-level attachments in the same {name, url, size, type} shape.
+//
+// `netsuiteFileId` is included only when already known, so a re-sync tells NetSuite "you
+// already have this file" instead of prompting a duplicate File Cabinet entry. Nothing
+// writes that column back yet — it is populated by whatever consumes this payload.
+//
+// NOTE the URL is a public r2.dev link today, so NetSuite needs no credentials to fetch it.
+// If the bucket is ever made private, this becomes a presigned URL with an expiry long
+// enough for NetSuite to download inside its own retry window.
 async function buildCreativeRequestsPayload(estimateId: number): Promise<Record<string, unknown>[]> {
   const db = getDb();
 
@@ -156,6 +178,26 @@ async function buildCreativeRequestsPayload(estimateId: number): Promise<Record<
     .orderBy(asc(creativeRequest.id));
 
   if (requests.length === 0) return [];
+
+  // One query for every request's files, rather than one per request inside the loop.
+  const attachmentRows = await db.select()
+    .from(creativeRequestAttachment)
+    .where(inArray(creativeRequestAttachment.requestId, requests.map(r => r.id)))
+    .orderBy(asc(creativeRequestAttachment.id));
+
+  const filesByRequest: Record<number, Record<string, unknown>[]> = {};
+  for (const a of attachmentRows) {
+    // A row with no storage_uri has no file NetSuite could fetch — metadata arrived but the
+    // upload never landed. Skipped rather than sent as an entry with an empty url.
+    if (!a.storageUri) continue;
+    (filesByRequest[a.requestId] ??= []).push({
+      name: a.fileName,
+      url : a.storageUri,
+      size: a.fileSizeBytes ?? null,
+      type: a.mimeType ?? '',
+      ...(a.netsuiteFileId ? { netsuiteFileId: toNsNum(a.netsuiteFileId) } : {}),
+    });
+  }
 
   const out: Record<string, unknown>[] = [];
 
@@ -186,7 +228,7 @@ async function buildCreativeRequestsPayload(estimateId: number): Promise<Record<
         meet       : d?.meetingDetail ?? '',
         format     : d?.formattingPref ?? '',
         dropbox    : d?.dropboxLink ?? '',
-        attachWrike: [],   // shape not yet confirmed — see note in the service header
+        attachWrike: filesByRequest[r.id] ?? [],
       });
     } else {
       const [s] = await db.select().from(creativeRequestSetup)
@@ -205,12 +247,32 @@ async function buildCreativeRequestsPayload(estimateId: number): Promise<Record<
         save       : s?.whereToSaveLink ?? '',
         notes      : s?.notes ?? '',
         dropbox    : s?.dropboxLink ?? '',
-        attachSetup: [],   // shape not yet confirmed — see note in the service header
+        // Same key as the deck entry above — NOT attachSetup. See the note in the header.
+        attachWrike: filesByRequest[r.id] ?? [],
       });
     }
   }
 
   return out;
+}
+
+// ── Payload preview (read-only) ────────────────────────────────────────────────
+
+/**
+ * Build the suitelet payload and return it WITHOUT posting anything to NetSuite.
+ *
+ * Exists because the payload is otherwise unobservable: syncEstimateToNetsuite logs the URL
+ * and a truncated auth header but never the body, so the only way to see what NetSuite
+ * receives was to actually send it — and NS_SUITELET_URL points at a live restlet, so that
+ * means mutating a real NetSuite record just to inspect a field.
+ *
+ * Read-only: builds from the database and returns. Makes no HTTP call and writes nothing.
+ */
+export async function previewNsPayload(
+  estimateId: number,
+  mode: 'create' | 'update' | 'convert' = 'update',
+): Promise<Record<string, unknown>> {
+  return await buildNsPayload(estimateId, mode) as Record<string, unknown>;
 }
 
 // ── Build the suitelet payload ─────────────────────────────────────────────────

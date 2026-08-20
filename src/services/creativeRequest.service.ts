@@ -46,6 +46,8 @@ import {
   aboutUsInfo,
 } from '../db/schema/index.js';
 import { logger } from '../utils/logger.js';
+import { ValidationError, NotFoundError, ConflictError } from '../utils/errors.js';
+import { getDb } from '../config/database.js';
 
 // ── Toggle definitions ───────────────────────────────────────────────────────
 
@@ -252,20 +254,61 @@ async function resolveRequestor(
   }
 
   const wrikeId = str(rawWrike);
-  if (!wrikeId) throw new ToggleValidationError('Requestor is required (requestorId or requestorWrikeId)');
-  if (!rawName) throw new ToggleValidationError('Requestor is required (requestorName)');
-  return { wrikeId, name: rawName };
+  if (wrikeId) {
+    if (!rawName) throw new ToggleValidationError('Requestor is required (requestorName)');
+    return { wrikeId, name: rawName };
+  }
+
+  // NAME ONLY — the legacy RESTlet sends `requestor: "Brooke Lucks"` with no id. Look the
+  // name up in the requestors master to recover the Wrike id, which the column requires.
+  //
+  // 9 names in the master are currently duplicated (e.g. "Cally Carbone"), so a name is NOT
+  // a reliable key. An exact single match is used; two or more matches are refused rather
+  // than silently picking the lowest id and filing the request under the wrong person.
+  if (!rawName) {
+    throw new ToggleValidationError('Requestor is required (requestorId, requestorWrikeId, or requestorName)');
+  }
+
+  const matches = await tx.select({ id: requestors.id, wrikeId: requestors.wrikeId, name: requestors.name })
+    .from(requestors)
+    .where(eq(requestors.name, rawName));
+
+  const found = matches as { id: number; wrikeId: string | null; name: string }[];
+  if (found.length === 1) {
+    return { wrikeId: found[0].wrikeId ?? String(found[0].id), name: found[0].name };
+  }
+  if (found.length > 1) {
+    throw new ToggleValidationError(
+      `Requestor "${rawName}" matches ${found.length} rows in the requestors master (ids ${found.map(f => f.id).join(', ')}). Send requestorId or requestorWrikeId to disambiguate.`,
+    );
+  }
+  throw new ToggleValidationError(
+    `Requestor "${rawName}" was not found in the requestors master. Send requestorId or requestorWrikeId, or add the requestor first.`,
+  );
 }
 
 // ── Per-toggle field extraction + validation ─────────────────────────────────
 
 function extractDueDate(form: Record<string, unknown>): string {
-  const dueDate = str(pick(form, 'dueDate', 'due_date'));
+  // dueDate1 is the legacy RESTlet spelling — the trailing 1 is a form-field artefact.
+  const dueDate = str(pick(form, 'dueDate', 'due_date', 'dueDate1', 'due_date1'));
   if (!dueDate) throw new ToggleValidationError('Due date is required');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
-    throw new ToggleValidationError(`Due date must be YYYY-MM-DD, received "${dueDate}"`);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return dueDate;
+
+  // MM/DD/YYYY — what the legacy payload sends. US order, not DD/MM: the source system is
+  // NetSuite with a US locale. Converted rather than rejected, but validated first so
+  // "13/05/2026" fails loudly instead of silently becoming an impossible date.
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(dueDate);
+  if (us) {
+    const [, mm, dd, yyyy] = us;
+    const month = Number(mm), day = Number(dd);
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+      throw new ToggleValidationError(`Due date "${dueDate}" is not a valid MM/DD/YYYY date`);
+    }
+    return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
   }
-  return dueDate;
+
+  throw new ToggleValidationError(`Due date must be YYYY-MM-DD or MM/DD/YYYY, received "${dueDate}"`);
 }
 
 async function extractDeckDetail(tx: Executor, form: Record<string, unknown>) {
@@ -273,7 +316,7 @@ async function extractDeckDetail(tx: Executor, form: Record<string, unknown>) {
   if (!itemBudget) throw new ToggleValidationError('Estimated item budget is required');
 
   const isFirstTimeClient = await resolveYesNo(
-    tx, newClients, pick(form, 'isFirstTimeClient', 'is_first_time_client', 'firstTimeClient', 'newClient', 'newClientId'), 'first-time client',
+    tx, newClients, pick(form, 'isFirstTimeClient', 'is_first_time_client', 'firstTimeClient', 'firstTime', 'first_time', 'newClient', 'newClientId'), 'first-time client',
   );
   if (!isFirstTimeClient) throw new ToggleValidationError('First-time client is required (Yes/No)');
 
@@ -293,11 +336,12 @@ async function extractDeckDetail(tx: Executor, form: Record<string, unknown>) {
     itemBudget,
     scope,
     intent:         str(pick(form, 'intent')),
-    meetingDetail:  str(pick(form, 'meetingDetail', 'meeting_detail')),
+    // meet / format / dropbox are the legacy RESTlet spellings.
+    meetingDetail:  str(pick(form, 'meetingDetail', 'meeting_detail', 'meet')),
     isFirstTimeClient,
     includeAboutUs,
-    formattingPref: str(pick(form, 'formattingPref', 'formatting_pref', 'formatting')),
-    dropboxLink:    str(pick(form, 'dropboxLink', 'dropbox_link')),
+    formattingPref: str(pick(form, 'formattingPref', 'formatting_pref', 'formatting', 'format')),
+    dropboxLink:    str(pick(form, 'dropboxLink', 'dropbox_link', 'dropbox')),
   };
 }
 
@@ -320,22 +364,18 @@ function extractSetupDetail(form: Record<string, unknown>) {
 // ── Attachments — additive only ──────────────────────────────────────────────
 
 /**
- * Insert rows only for files not already attached to this request, matched on
- * (file_name, file_size_bytes). Existing rows are NEVER deleted here: a file may already
- * be uploaded to Wrike/NetSuite, so removal is a separate explicit feature.
+ * Insert one row per attachment sent. Existing rows are NEVER deleted here: a file may
+ * already be uploaded to Wrike/NetSuite, so removal is a separate explicit feature.
+ *
+ * NO DEDUPLICATION. Sending the same file twice stores it twice, deliberately: the previous
+ * (file_name, file_size_bytes) match rejected genuinely distinct files that happened to
+ * share a name and length, and it made an upload's outcome depend on what was already
+ * attached. Every call now has the same, predictable result — one row per entry.
+ *
+ * Returns the inserted rows.
  */
-async function addNewAttachments(tx: Executor, requestId: number, attachments: unknown): Promise<number> {
-  if (!Array.isArray(attachments) || attachments.length === 0) return 0;
-
-  const existing = await tx.select({
-    fileName: creativeRequestAttachment.fileName,
-    fileSizeBytes: creativeRequestAttachment.fileSizeBytes,
-  }).from(creativeRequestAttachment).where(eq(creativeRequestAttachment.requestId, requestId));
-
-  const seen = new Set(
-    (existing as { fileName: string; fileSizeBytes: number | null }[])
-      .map(r => `${r.fileName}::${r.fileSizeBytes ?? ''}`),
-  );
+export async function addNewAttachments(tx: Executor, requestId: number, attachments: unknown): Promise<any[]> {
+  if (!Array.isArray(attachments) || attachments.length === 0) return [];
 
   const toInsert: Record<string, unknown>[] = [];
   for (const a of attachments) {
@@ -350,22 +390,22 @@ async function addNewAttachments(tx: Executor, requestId: number, attachments: u
     const parsedSize = sizeRaw === undefined ? null : Number(sizeRaw);
     const fileSizeBytes = parsedSize !== null && Number.isFinite(parsedSize) ? parsedSize : null;
 
-    const key = `${fileName}::${fileSizeBytes ?? ''}`;
-    if (seen.has(key)) continue;   // already attached — skip, never duplicate
-    seen.add(key);
+    // `type` is the legacy RESTlet spelling; the multipart path supplies mimetype.
+    const mimeType = str(pick(rec, 'mimeType', 'mime_type', 'type', 'contentType', 'content_type'));
 
     toInsert.push({
       requestId,
       fileName,
       fileSizeBytes,
+      mimeType,
       storageUri:        str(pick(rec, 'storageUri', 'storage_uri', 'url')),
       netsuiteFileId:    str(pick(rec, 'netsuiteFileId', 'netsuite_file_id')),
       wrikeAttachmentId: str(pick(rec, 'wrikeAttachmentId', 'wrike_attachment_id')),
     });
   }
 
-  if (toInsert.length) await tx.insert(creativeRequestAttachment).values(toInsert as any);
-  return toInsert.length;
+  if (!toInsert.length) return [];
+  return await tx.insert(creativeRequestAttachment).values(toInsert as any).returning();
 }
 
 // ── Single-toggle insert ─────────────────────────────────────────────────────
@@ -455,7 +495,13 @@ async function saveOneToggle(
   }
 
   // ── Attachments ───────────────────────────────────────────────────────────
-  await addNewAttachments(tx, requestId, pick(form, 'attachments'));
+  // attachWrike (deck) / attachSetup (setup) are the legacy RESTlet spellings — the same
+  // names netsuiteSync emits outbound. The route normalises inline base64 entries onto
+  // `attachments` before this runs, but the aliases are read here too so a caller that hits
+  // the service directly with already-uploaded metadata still works.
+  await addNewAttachments(tx, requestId, pick(
+    form, 'attachments', 'attachWrike', 'attach_wrike', 'attachSetup', 'attach_setup',
+  ));
 
   return { ...base, action: 'inserted', requestId };
 }
@@ -521,11 +567,128 @@ export async function saveCreativeRequests(
   return results;
 }
 
+// ── Toggle name resolution ───────────────────────────────────────────────────
+
+/**
+ * Resolve a toggle name — canonical or any accepted alias — to its definition.
+ * Returns null for an unknown name so callers can 400 rather than silently no-op.
+ */
+export function resolveToggle(name: string): ToggleDef | null {
+  const wanted = name.trim();
+  const def = CREATIVE_REQUEST_TOGGLES.find(
+    d => d.key === wanted || d.aliases.includes(wanted),
+  );
+  return def ? { key: def.key, requestType: def.requestType, category: def.category } : null;
+}
+
+// ── Attachments on an EXISTING request ───────────────────────────────────────
+
+/**
+ * Attach files to a creative request that already exists.
+ *
+ * This exists because saveOneToggle() is INSERT-ONLY: it returns skipped_exists before ever
+ * reaching addNewAttachments(), so a file sent with a later estimate save would be silently
+ * dropped. Adding files after the request was created has to go through its own path.
+ *
+ * A locked request is refused rather than appended to — it has already reached NetSuite, so
+ * quietly adding a file here would leave the two systems disagreeing about the file list.
+ */
+export async function addAttachmentsToRequest(
+  estimateId: number,
+  toggleName: string,
+  attachments: unknown,
+  executor?: Executor,
+): Promise<{ toggle: string; requestId: number; inserted: any[] }> {
+  const db: Executor = executor ?? (getDb() as unknown as Executor);
+  const def = resolveToggle(toggleName);
+  if (!def) {
+    throw new ValidationError(
+      `Unknown creative request toggle "${toggleName}". Expected one of: ${CREATIVE_REQUEST_TOGGLES.map(t => t.key).join(', ')}`,
+    );
+  }
+
+  const rows = await db.select({ id: creativeRequest.id, isLocked: creativeRequest.isLocked })
+    .from(creativeRequest)
+    .where(and(
+      eq(creativeRequest.estimateId, estimateId),
+      eq(creativeRequest.requestType, def.requestType),
+      eq(creativeRequest.category, def.category),
+    ))
+    .limit(1);
+
+  const request = (rows as { id: number; isLocked: boolean }[])[0];
+  if (!request) {
+    throw new NotFoundError(`Creative request "${def.key}" on estimate ${estimateId}`);
+  }
+  if (request.isLocked) {
+    throw new ConflictError(
+      `Creative request "${def.key}" is locked (already synced) and cannot take new attachments`,
+    );
+  }
+
+  // `requested` can still exceed inserted.length: an entry with no usable file name is
+  // skipped so one malformed item cannot fail the whole request. That is validation, not
+  // deduplication — there is no dedupe any more.
+  const requested = Array.isArray(attachments) ? attachments.length : 0;
+  const inserted = await addNewAttachments(db, request.id, attachments);
+
+  logger.info({ estimateId, toggle: def.key, requestId: request.id, requested, inserted: inserted.length },
+    'Attachments added to existing creative request');
+
+  return { toggle: def.key, requestId: request.id, inserted };
+}
+
 // ── Read helper — used by the estimate detail endpoint ──────────────────────
 
+/**
+ * Every creative request on an estimate, with its detail row and all three child
+ * collections nested. Without this the attachments written during a save are unreadable —
+ * the estimate detail endpoint returned nothing about creative requests at all.
+ *
+ * Four queries total regardless of request count, not one per request.
+ */
 export async function getCreativeRequestsForEstimate(db: Executor, estimateId: number) {
-  const rows = await db.select()
+  const headers = await db.select()
     .from(creativeRequest)
-    .where(eq(creativeRequest.estimateId, estimateId));
-  return rows;
+    .where(eq(creativeRequest.estimateId, estimateId))
+    .orderBy(creativeRequest.id);
+
+  const rows = headers as any[];
+  if (rows.length === 0) return [];
+
+  const ids = rows.map(r => r.id);
+  const [deckRows, setupRows, assetRows, scopeRows, attachmentRows] = await Promise.all([
+    db.select().from(creativeRequestDeck).where(inArray(creativeRequestDeck.requestId, ids)),
+    db.select().from(creativeRequestSetup).where(inArray(creativeRequestSetup.requestId, ids)),
+    db.select().from(creativeRequestAsset).where(inArray(creativeRequestAsset.requestId, ids)),
+    db.select().from(creativeRequestScopeWorkItem).where(inArray(creativeRequestScopeWorkItem.requestId, ids)),
+    db.select().from(creativeRequestAttachment).where(inArray(creativeRequestAttachment.requestId, ids)),
+  ]);
+
+  const byRequest = <T extends { requestId: number }>(list: T[]) => {
+    const map: Record<number, T[]> = {};
+    for (const r of list) (map[r.requestId] ??= []).push(r);
+    return map;
+  };
+
+  const decks = byRequest(deckRows as any[]);
+  const setups = byRequest(setupRows as any[]);
+  const assets = byRequest(assetRows as any[]);
+  const scopes = byRequest(scopeRows as any[]);
+  const files = byRequest(attachmentRows as any[]);
+
+  return rows.map(r => {
+    // The toggle key the frontend uses, derived from the stored type+category pair.
+    const def = CREATIVE_REQUEST_TOGGLES.find(
+      t => t.requestType === r.requestType && t.category === r.category,
+    );
+    return {
+      ...r,
+      toggle: def?.key ?? null,
+      detail: (r.requestType === 'deck' ? decks[r.id]?.[0] : setups[r.id]?.[0]) ?? null,
+      selectedAssets: assets[r.id] ?? [],
+      selectedScopeWork: scopes[r.id] ?? [],
+      attachments: files[r.id] ?? [],
+    };
+  });
 }
