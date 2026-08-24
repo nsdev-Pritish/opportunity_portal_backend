@@ -8,7 +8,7 @@ import {
   projectTypes, currencies, salesChannels, esStatus,
 } from '../db/schema/index.js';
 import { cacheDel, CacheKeys } from '../utils/cache.js';
-import { NotFoundError } from '../utils/errors.js';
+import { NotFoundError, AppError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { syncEstimateToNetsuite, deactivateLinesInNetsuite } from './netsuiteSync.service.js';
 import {
@@ -890,6 +890,7 @@ export async function updateEstimateWithItems(
   newFreightGroups?: Record<string, unknown>[],
   creativeRequests?: CreativeRequestsInput,
   submittedByUserId?: number | null,
+  opts?: { awaitSync?: boolean },
 ) {
   const db = getDb();
   const startTime = Date.now();
@@ -949,12 +950,27 @@ export async function updateEstimateWithItems(
   // NS sync. When lines were soft-deleted this update, run the two NS writes in sequence —
   // first push the header + surviving active lines, then deactivate the removed lines —
   // so NetSuite never receives two concurrent edits to the same record.
-  if (deletedLineIds.length > 0) {
-    syncEstimateToNetsuite(id, 'update')
-      .then(() => deactivateLinesInNetsuite(id, { lineItemIds: deletedLineIds }))
-      .catch(() => {/* already logged + recorded */});
+  const runSync = async () => {
+    await syncEstimateToNetsuite(id, 'update');
+    if (deletedLineIds.length > 0) {
+      await deactivateLinesInNetsuite(id, { lineItemIds: deletedLineIds });
+    }
+  };
+
+  if (opts?.awaitSync) {
+    // Caller (e.g. convert-to-quote) needs NetSuite to actually hold the new lines
+    // before proceeding, so await the sync and surface failure instead of swallowing it.
+    await runSync();
+    const [refreshed] = await db.select({ syncStatus: estimates.syncStatus, syncError: estimates.syncError })
+      .from(estimates).where(eq(estimates.id, id)).limit(1);
+    if (refreshed?.syncStatus === 'failed') {
+      throw new AppError(
+        `Failed to sync line items to NetSuite: ${refreshed.syncError ?? 'unknown error'}`,
+        502, 'NS_SYNC_FAILED',
+      );
+    }
   } else {
-    syncEstimateToNetsuite(id, 'update').catch(() => {/* already logged + recorded */});
+    runSync().catch(() => {/* already logged + recorded */});
   }
 
   return result;
@@ -1083,6 +1099,22 @@ export async function convertEstimateToOtb(
     throw new Error('Estimate has not been synced to NetSuite yet. Save the estimate first before converting to OTB.');
   }
 
+  // Defensive re-sync: push whatever currently sits in Postgres (e.g. a line item saved
+  // moments ago by a PATCH whose own NS sync was fire-and-forget) to NetSuite and wait for
+  // it, so the convert step below never races an in-flight/incomplete prior sync — no matter
+  // whether the caller saved edits via this same request or a separate preceding call.
+  await syncEstimateToNetsuite(id, 'update');
+  const [preConvertState] = await db
+    .select({ syncStatus: estimates.syncStatus, syncError: estimates.syncError })
+    .from(estimates).where(eq(estimates.id, id)).limit(1);
+  if (preConvertState?.syncStatus === 'failed') {
+    throw new AppError(
+      `Could not confirm the estimate's latest line items are synced to NetSuite before converting: `
+      + `${preConvertState.syncError ?? 'unknown error'}. Save again and retry Create Quote.`,
+      502, 'NS_SYNC_FAILED',
+    );
+  }
+
   const target = opts?.target ?? 'new';
 
   // ── Option B: add newly-added lines to the EXISTING quote ───────────────────
@@ -1113,19 +1145,29 @@ export async function convertEstimateToOtb(
       .set({ status: 'otb', syncStatus: 'pending', otbConvertedAt: new Date(), updatedAt: new Date() } as any)
       .where(eq(estimates.id, id));
 
-    syncEstimateToNetsuite(id, 'convertToExisting', {
+    await syncEstimateToNetsuite(id, 'convertToExisting', {
       quoteId    : activeQuote.id,                       // portal quote row to refresh
       quoteNsId  : activeQuote.quoteNetsuiteInternalId,  // NS quote id sent in payload
       lineItemIds: targetIds,                            // lines to mark converted=true
-    }).catch(() => {/* already logged + recorded */});
+    });
+
+    const [quoteAfter] = await db.select().from(estimateQuotes)
+      .where(eq(estimateQuotes.id, activeQuote.id)).limit(1);
+    if (quoteAfter?.syncStatus === 'failed') {
+      throw new AppError(
+        `Line items were saved, but adding them to the existing quote failed in NetSuite: `
+        + `${quoteAfter.syncError ?? 'unknown error'}. Click Create Quote again to retry.`,
+        502, 'NS_CONVERT_FAILED',
+      );
+    }
 
     return {
       id,
       quoteId        : activeQuote.id,
       mode           : 'convertToExisting',
       targetLineItems: targetIds.length,
-      syncStatus     : 'pending',
-      message        : `Adding ${targetIds.length} line item(s) to existing quote ${activeQuote.quoteDocumentNumber ?? activeQuote.quoteNetsuiteInternalId}`,
+      syncStatus     : quoteAfter?.syncStatus ?? 'pending',
+      message        : `Added ${targetIds.length} line item(s) to existing quote ${quoteAfter?.quoteDocumentNumber ?? quoteAfter?.quoteNetsuiteInternalId ?? activeQuote.quoteNetsuiteInternalId}`,
     };
   }
 
@@ -1150,17 +1192,56 @@ export async function convertEstimateToOtb(
     .set({ status: 'otb', syncStatus: 'pending', otbConvertedAt: new Date(), updatedAt: new Date() } as any)
     .where(eq(estimates.id, id));
 
-  syncEstimateToNetsuite(id, 'convert', { quoteId: newQuote.id, lineItemIds: targetIds })
-    .catch(() => {/* already logged + recorded */});
+  await syncEstimateToNetsuite(id, 'convert', { quoteId: newQuote.id, lineItemIds: targetIds });
+
+  const [quoteAfter] = await db.select().from(estimateQuotes)
+    .where(eq(estimateQuotes.id, newQuote.id)).limit(1);
+  if (quoteAfter?.syncStatus === 'failed') {
+    throw new AppError(
+      `Line items were saved, but quote creation failed in NetSuite: `
+      + `${quoteAfter.syncError ?? 'unknown error'}. Click Create Quote again to retry.`,
+      502, 'NS_CONVERT_FAILED',
+    );
+  }
 
   return {
     id,
     quoteId        : newQuote.id,
     mode           : 'convert',
     targetLineItems: targetIds.length,
-    syncStatus     : 'pending',
-    message        : `New quote triggered for ${targetIds.length} line item(s)`,
+    syncStatus     : quoteAfter?.syncStatus ?? 'pending',
+    message        : `Quote ${quoteAfter?.quoteDocumentNumber ?? quoteAfter?.quoteNetsuiteInternalId ?? ''} created for ${targetIds.length} line item(s)`,
   };
+}
+
+// ── "Create Quote" from the Edit page: save any pending header/line-item edits,
+// wait for NetSuite to actually hold them, THEN convert to a quote — all as one
+// call, so the user never has to click "Save" before "Create Quote".
+//
+// If the save step fails (Portal or NetSuite), conversion is never attempted.
+// If the save step succeeds but the convert step fails, the edits are already
+// persisted in both Portal and NetSuite (safe to retry — see convertEstimateToOtb,
+// which only ever operates on still-unconverted lines already in the DB).
+export async function saveAndConvertEstimateToOtb(
+  id: number,
+  headerData: Record<string, unknown>,
+  lineItems?: RawLineItem[],
+  freightGroups?: Record<string, unknown>[],
+  creativeRequests?: CreativeRequestsInput,
+  submittedByUserId?: number | null,
+  convertOpts?: { target?: 'new' | 'existing' },
+) {
+  const hasEdits = lineItems !== undefined || freightGroups !== undefined
+    || creativeRequests !== undefined || Object.keys(headerData).length > 0;
+
+  if (hasEdits) {
+    await updateEstimateWithItems(
+      id, headerData, lineItems, freightGroups, creativeRequests, submittedByUserId ?? null,
+      { awaitSync: true },
+    );
+  }
+
+  return convertEstimateToOtb(id, convertOpts);
 }
 
 // ── List quotes for an estimate ──────────────────────────────────────────────

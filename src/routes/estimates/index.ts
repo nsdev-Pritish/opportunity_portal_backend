@@ -44,6 +44,7 @@ import {
   listFailedSyncs,
   resyncEstimate,
   convertEstimateToOtb,
+  saveAndConvertEstimateToOtb,
   listEstimateQuotes,
 } from '../../services/estimate.service.js';
 import { createEstimateAndConvertToOtb } from '../../services/otbConvert.service.js';
@@ -658,11 +659,27 @@ export default async function estimateRoutes(app: FastifyInstance) {
   // POST /api/v1/estimates/:id/convert-to-otb — convert estimate to Quote in NS
   //   { "target": "new" }      → create a NEW quote covering the whole estimate
   //   { "target": "existing" } → add newly-added lines to the EXISTING quote
+  //
+  // Also accepts the same optional lineItems/freightGroups/creativeRequests/header
+  // fields as PATCH /:id — the Edit page's "Create Quote" button can send pending
+  // edits (e.g. a newly-added line item) here directly, without a separate Save
+  // call first. When present, those edits are saved and pushed to NetSuite BEFORE
+  // conversion is attempted, so the quote always reflects what's on screen.
+  const ConvertToOtbSchema = UpdateEstimateSchema.extend({
+    target: z.enum(['new', 'existing']).optional(),
+  });
   app.post<{ Params: { id: string }; Body: unknown }>('/:id/convert-to-otb', async (req) => {
-    const body = z.object({
-      target: z.enum(['new', 'existing']).optional(),
-    }).parse(stripEmpty(req.body ?? {}));
-    return convertEstimateToOtb(parseInt(req.params.id), body);
+    const { target, lineItems, freightGroups, creativeRequests, submittedByUserId, ...headerData } =
+      ConvertToOtbSchema.parse(stripEmpty(normalizeBody(req.body ?? {})));
+    if (creativeRequests !== undefined) {
+      await materializeCreativeRequestAttachments(
+        creativeRequests as Record<string, unknown> | undefined, parseInt(req.params.id),
+      );
+    }
+    return saveAndConvertEstimateToOtb(
+      parseInt(req.params.id), headerData, lineItems, freightGroups, creativeRequests,
+      submittedByUserId ?? null, { target },
+    );
   });
 
   // GET /api/v1/estimates/:id/quotes — list all quotes for an estimate
