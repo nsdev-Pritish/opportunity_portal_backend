@@ -172,9 +172,16 @@ async function getNsName(table: any, portalId: number | null | undefined): Promi
 async function buildCreativeRequestsPayload(estimateId: number): Promise<Record<string, unknown>[]> {
   const db = getDb();
 
+  // Only requests NetSuite hasn't seen yet. A request is insert-only on our side (see
+  // creativeRequest.service.ts) and gets isLocked=true the first time it syncs — resending an
+  // already-locked request on a later estimate save is what created duplicate custom records
+  // in NetSuite, since NetSuite has no internal id to match it against and just inserts again.
   const requests = await db.select()
     .from(creativeRequest)
-    .where(eq(creativeRequest.estimateId, estimateId))
+    .where(and(
+      eq(creativeRequest.estimateId, estimateId),
+      eq(creativeRequest.isLocked, false),
+    ))
     .orderBy(asc(creativeRequest.id));
 
   if (requests.length === 0) return [];
