@@ -765,6 +765,15 @@ export async function syncEstimateToNetsuite(
       payload = await buildNsPayload(estimateId, mode, opts?.lineItemIds);
     }
 
+    // Capture the exact creative-request rows this payload includes, in the same order
+    // buildCreativeRequestsPayload queried them — captured NOW, before markEstimateChildrenSync
+    // (below) flips isLocked=true on a successful sync, which would make a later
+    // isLocked=false re-query return nothing and silently drop the id write-back.
+    const sentCreativeRequestIds = isConvert ? [] : (await db.select({ id: creativeRequest.id })
+      .from(creativeRequest)
+      .where(and(eq(creativeRequest.estimateId, estimateId), eq(creativeRequest.isLocked, false)))
+      .orderBy(asc(creativeRequest.id))).map(r => r.id);
+
     // Append mode param — handle URLs that already carry query params (e.g. ?script=&deploy=)
     const url = env.NS_SUITELET_URL.includes('?')
       ? `${env.NS_SUITELET_URL}&mode=${mode}`
@@ -1000,22 +1009,17 @@ export async function syncEstimateToNetsuite(
     }
 
     // ── Store NetSuite record id + Wrike task id back to each creative request ────
-    // Matched positionally against the same isLocked=false / id-ordered rows that
-    // buildCreativeRequestsPayload queried when building this request's payload — same
-    // pattern as lineIds/resolvedClassIds above. Every other column on this row is set
-    // from the UI submission; these two ids are the only ones NetSuite is the source of.
+    // Matched positionally against sentCreativeRequestIds, captured above before this
+    // sync could lock any row — same pattern as lineIds/resolvedClassIds above. Every
+    // other column on this row is set from the UI submission; these two ids are the
+    // only ones NetSuite is the source of.
     if (!isConvert && Array.isArray(nsResp.creativeRequestsNS) && nsResp.creativeRequestsNS.length > 0) {
-      const sentRequests = await db.select({ id: creativeRequest.id })
-        .from(creativeRequest)
-        .where(and(eq(creativeRequest.estimateId, estimateId), eq(creativeRequest.isLocked, false)))
-        .orderBy(asc(creativeRequest.id));
-
-      if (sentRequests.length !== nsResp.creativeRequestsNS.length) {
-        logger.warn({ estimateId, sent: sentRequests.length, returned: nsResp.creativeRequestsNS.length },
+      if (sentCreativeRequestIds.length !== nsResp.creativeRequestsNS.length) {
+        logger.warn({ estimateId, sent: sentCreativeRequestIds.length, returned: nsResp.creativeRequestsNS.length },
           'NS returned a different number of creativeRequestsNS entries than were sent — skipping positional match');
       } else {
         await db.transaction(async (tx) => {
-          for (let i = 0; i < sentRequests.length; i++) {
+          for (let i = 0; i < sentCreativeRequestIds.length; i++) {
             const entry = nsResp.creativeRequestsNS![i];
 
             const crSet: Record<string, unknown> = {};
@@ -1027,12 +1031,12 @@ export async function syncEstimateToNetsuite(
             if (Object.keys(crSet).length > 0) {
               await tx.update(creativeRequest)
                 .set(crSet as any)
-                .where(eq(creativeRequest.id, sentRequests[i].id));
+                .where(eq(creativeRequest.id, sentCreativeRequestIds[i]));
             }
           }
         });
 
-        logger.info({ estimateId, count: sentRequests.length }, 'Creative request NetSuite/Wrike ids stored');
+        logger.info({ estimateId, count: sentCreativeRequestIds.length }, 'Creative request NetSuite/Wrike ids stored');
       }
     }
 
