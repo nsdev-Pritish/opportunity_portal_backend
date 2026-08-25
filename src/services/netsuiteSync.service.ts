@@ -816,6 +816,13 @@ export async function syncEstimateToNetsuite(
       // Per-line unified Class id NetSuite resolved for each line, keyed by the same
       // 1-based line number used in the outbound `lines` payload (or a positional array).
       resolvedClassIds?: (string | number | null)[] | Record<string, string | number | null>;
+      // One entry per creative request, in the same order the `creativeRequests` array
+      // was sent (see buildCreativeRequestsPayload). NetSuite creates the custom record
+      // and the Wrike task via its legacy suitelet and returns both ids here.
+      creativeRequestsNS?: Array<{
+        netsuiteRecordId?: string | number | null;
+        wrikeTaskId?     : string | null;
+      }>;
     };
 
     // Use `||` (not `??`) so empty strings fall through to the next candidate — NetSuite
@@ -990,6 +997,43 @@ export async function syncEstimateToNetsuite(
       }
 
       logger.info({ estimateId, assigned: classAssignments.length }, 'Line class ids stored from NetSuite');
+    }
+
+    // ── Store NetSuite record id + Wrike task id back to each creative request ────
+    // Matched positionally against the same isLocked=false / id-ordered rows that
+    // buildCreativeRequestsPayload queried when building this request's payload — same
+    // pattern as lineIds/resolvedClassIds above. Every other column on this row is set
+    // from the UI submission; these two ids are the only ones NetSuite is the source of.
+    if (!isConvert && Array.isArray(nsResp.creativeRequestsNS) && nsResp.creativeRequestsNS.length > 0) {
+      const sentRequests = await db.select({ id: creativeRequest.id })
+        .from(creativeRequest)
+        .where(and(eq(creativeRequest.estimateId, estimateId), eq(creativeRequest.isLocked, false)))
+        .orderBy(asc(creativeRequest.id));
+
+      if (sentRequests.length !== nsResp.creativeRequestsNS.length) {
+        logger.warn({ estimateId, sent: sentRequests.length, returned: nsResp.creativeRequestsNS.length },
+          'NS returned a different number of creativeRequestsNS entries than were sent — skipping positional match');
+      } else {
+        await db.transaction(async (tx) => {
+          for (let i = 0; i < sentRequests.length; i++) {
+            const entry = nsResp.creativeRequestsNS![i];
+
+            const crSet: Record<string, unknown> = {};
+            if (entry.netsuiteRecordId !== undefined && entry.netsuiteRecordId !== null && entry.netsuiteRecordId !== '') {
+              crSet.netsuiteRecordId = String(entry.netsuiteRecordId);
+            }
+            if (entry.wrikeTaskId) crSet.wrikeTaskId = entry.wrikeTaskId;
+
+            if (Object.keys(crSet).length > 0) {
+              await tx.update(creativeRequest)
+                .set(crSet as any)
+                .where(eq(creativeRequest.id, sentRequests[i].id));
+            }
+          }
+        });
+
+        logger.info({ estimateId, count: sentRequests.length }, 'Creative request NetSuite/Wrike ids stored');
+      }
     }
 
     logger.info({ estimateId, mode, nsInternalId, documentNumber, quoteId: nsResp.quoteId }, 'Estimate synced to NetSuite successfully');
