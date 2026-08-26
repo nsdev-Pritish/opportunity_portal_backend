@@ -50,10 +50,19 @@ export const users = pgTable('users', {
   role: varchar('role', { length: 50 }).default('user').notNull(),
   isActive: boolean('is_active').default(true).notNull(),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  // NetSuite Employee internal id this login is mapped to. Null for accounts that
+  // aren't NetSuite-synced (e.g. manually created admin accounts).
+  netsuiteInternalId: varchar('netsuite_internal_id', { length: 50 }),
+  // True until the user changes their (NetSuite-sync-assigned) default password.
+  mustChangePassword: boolean('must_change_password').default(true).notNull(),
+  // SHA-256 hash of the current forgot-password reset token; null when none is pending.
+  passwordResetTokenHash: varchar('password_reset_token_hash', { length: 255 }),
+  passwordResetExpiresAt: timestamp('password_reset_expires_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   emailIdx: uniqueIndex('users_email_idx').on(t.email),
+  nsIdIdx: uniqueIndex('users_ns_id_idx').on(t.netsuiteInternalId),
 }));
 
 // ══════════════════════════════════════════════════════════════════

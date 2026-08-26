@@ -22,9 +22,7 @@ function assertValidEntity(entity: string): MasterEntityKey {
 }
 
 export default async function masterRoutes(app: FastifyInstance) {
-  // All master ro  // ⚠️ TEMPORARY: Authentication disabled for development
-  // TODO: Re-enable authentication when frontend implements login
-  // app.addHook('preHandler', app.authenticate);
+  app.addHook('preHandler', app.authenticate);
 
   // 🐛 DEBUG ENDPOINTS (Remove in production)
   app.get('/debug/clear-cache', async () => {

@@ -516,6 +516,7 @@ const csvStr = (v?: string): string[] | undefined => {
 // ── Routes ──────────────────────────────────────────────────────────────────
 
 export default async function estimateRoutes(app: FastifyInstance) {
+  app.addHook('preHandler', app.authenticate);
 
   // GET /api/v1/estimates — paginated list
   app.get<{
@@ -527,6 +528,8 @@ export default async function estimateRoutes(app: FastifyInstance) {
       search: req.query.search,
       status: req.query.status,
       customerId: req.query.customerId ? parseInt(req.query.customerId) : undefined,
+      viewerUserId: req.user.id,
+      viewerNetsuiteInternalId: req.user.netsuiteInternalId,
     }),
   );
 
@@ -543,7 +546,8 @@ export default async function estimateRoutes(app: FastifyInstance) {
     // submittedByUserId is stored verbatim if the caller sends it. There is no user
     // management in the portal yet, so nothing is derived or looked up here.
     const result = await createEstimateWithItems(
-      headerData, lineItems ?? [], freightGroups ?? [], creativeRequests, submittedByUserId ?? null,
+      { ...headerData, createdBy: req.user.id },
+      lineItems ?? [], freightGroups ?? [], creativeRequests, submittedByUserId ?? null,
     );
     return reply.status(201).send(result);
   });
@@ -576,6 +580,8 @@ export default async function estimateRoutes(app: FastifyInstance) {
   app.get<{ Querystring: DocNumQuery }>('/document-numbers', async (req) => {
     const q = req.query;
     return listDocumentNumbers({
+      viewerUserId:            req.user.id,
+      viewerNetsuiteInternalId: req.user.netsuiteInternalId,
       customerId:            csvInt(q.customerId),
       customerName:          q.customerName          || undefined,
       salesRepId:            csvInt(q.salesRepId),
@@ -613,10 +619,12 @@ export default async function estimateRoutes(app: FastifyInstance) {
     // When a specific estimate is selected (by id or exact document number),
     // return the full estimate with line items + freight groups instead of a summary list
     if (q.estimateId) {
-      return getEstimate(parseInt(q.estimateId));
+      return getEstimate(parseInt(q.estimateId), { viewerUserId: req.user.id, viewerNetsuiteInternalId: req.user.netsuiteInternalId });
     }
 
     return searchEstimatesAdvanced({
+      viewerUserId:            req.user.id,
+      viewerNetsuiteInternalId: req.user.netsuiteInternalId,
       page:                  parseInt(q.page  ?? '1'),
       limit:                 Math.min(parseInt(q.limit ?? '20'), 100),
       search:                q.search                || undefined,
@@ -693,7 +701,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
 
   // GET /api/v1/estimates/:id — full estimate with line items
   app.get<{ Params: { id: string } }>('/:id', async (req) =>
-    getEstimate(parseInt(req.params.id)),
+    getEstimate(parseInt(req.params.id), { viewerUserId: req.user.id, viewerNetsuiteInternalId: req.user.netsuiteInternalId }),
   );
 
   // PATCH /api/v1/estimates/pipeline — bulk-update inline grid header fields on many

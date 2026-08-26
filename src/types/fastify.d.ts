@@ -13,6 +13,8 @@ declare module '@fastify/jwt' {
       id: number;
       email: string;
       role: string;
+      netsuiteInternalId: string | null;
+      mustChangePassword: boolean;
     };
   }
 }

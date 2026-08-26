@@ -71,10 +71,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(masterRoutes,   { prefix: '/api/v1/master' });
   await app.register(estimateRoutes, { prefix: '/api/v1/estimates' });
   await app.register(
-    async (inst) => {3
-      // TODO(auth): line-item routes are temporarily UNAUTHENTICATED. Re-enable by
-      // uncommenting the hook below.
-      // inst.addHook('preHandler', inst.authenticate);
+    async (inst) => {
+      inst.addHook('preHandler', inst.authenticate);
       await inst.register(lineItemRoutes, { prefix: '/' });
     },
     { prefix: '/api/v1/estimates/:estimateId/line-items' },

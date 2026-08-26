@@ -26,6 +26,11 @@ const CHUNK = 100;
 // ── Shared filter helper ─────────────────────────────────────────────────────
 
 type EstimateFilterOpts = {
+  // Identity of the logged-in user, used to scope results to estimates they're
+  // authorized to see (see buildEstimateAccessCondition below). Omit only for
+  // internal/trusted callers that intentionally bypass access control.
+  viewerUserId?: number;
+  viewerNetsuiteInternalId?: string | null;
   search?: string;                 // general free-text search across visible columns
   customerId?: number[];
   customerName?: string;
@@ -51,12 +56,46 @@ type EstimateFilterOpts = {
   dateOfEntryTo?: string;
 };
 
-function buildConditions(
+// Estimate access control: a logged-in user may only see an Estimate if they are the
+// creator, the Sales Rep (account manager), an Ops Partner, or a Product Developer on
+// it. Creator is matched by Portal user id (estimates.createdBy is already a users.id
+// FK); the other three are matched via NetSuite Internal ID, since acct_manager_id /
+// ops_partner_*_id / product_developer_ids reference local dropdown-table rows
+// (account_managers / ops_partners / product_developers) that carry their own
+// netsuite_internal_id — the same NetSuite employee can appear in more than one of
+// those tables with a different local id each time, so each is resolved separately.
+// A user with no netsuiteInternalId (e.g. an admin-created, non-NetSuite-synced
+// account) can only ever match via createdBy.
+async function buildEstimateAccessCondition(
+  db: ReturnType<typeof getDb>,
+  viewer: { viewerUserId?: number; viewerNetsuiteInternalId?: string | null },
+): Promise<any | null> {
+  if (!viewer.viewerUserId) return null;
+
+  const nsId = viewer.viewerNetsuiteInternalId;
+  const [[am], [op], [pd]] = await Promise.all([
+    nsId ? db.select({ id: accountManagers.id }).from(accountManagers).where(eq(accountManagers.netsuiteInternalId, nsId)).limit(1) : Promise.resolve([]),
+    nsId ? db.select({ id: opsPartners.id }).from(opsPartners).where(eq(opsPartners.netsuiteInternalId, nsId)).limit(1) : Promise.resolve([]),
+    nsId ? db.select({ id: productDevelopers.id }).from(productDevelopers).where(eq(productDevelopers.netsuiteInternalId, nsId)).limit(1) : Promise.resolve([]),
+  ]);
+
+  const clauses: any[] = [eq(estimates.createdBy, viewer.viewerUserId)];
+  if (am) clauses.push(eq(estimates.acctManagerId, am.id));
+  if (op) clauses.push(or(eq(estimates.opsPartner1Id, op.id), eq(estimates.opsPartner2Id, op.id))!);
+  if (pd) clauses.push(sql`${pd.id} = ANY(${estimates.productDeveloperIds})`);
+
+  return or(...clauses)!;
+}
+
+async function buildConditions(
+  db: ReturnType<typeof getDb>,
   opts: EstimateFilterOpts & { estimateId?: number; documentNumber?: string[] },
   op1: any,
   op2: any,
-): any[] {
+): Promise<any[]> {
   const conds: any[] = [eq(estimates.isActive, true)];
+  const accessCondition = await buildEstimateAccessCondition(db, opts);
+  if (accessCondition) conds.push(accessCondition);
 
   // Multi-value filters: single value → eq, multiple → inArray
   const oneOrMany = <T>(col: any, arr: T[]) =>
@@ -182,7 +221,7 @@ export async function listDocumentNumbers(opts: EstimateFilterOpts) {
   const db = getDb();
   const op1 = alias(opsPartners, 'op1');
   const op2 = alias(opsPartners, 'op2');
-  const conds = buildConditions(opts, op1, op2);
+  const conds = await buildConditions(db, opts, op1, op2);
 
   const rows = await db.select({
     id: estimates.id,
@@ -217,7 +256,7 @@ export async function searchEstimatesAdvanced(opts: EstimateFilterOpts & {
   const op1 = alias(opsPartners, 'op1');
   const op2 = alias(opsPartners, 'op2');
   const offset = (opts.page - 1) * opts.limit;
-  const conds = buildConditions(opts, op1, op2);
+  const conds = await buildConditions(db, opts, op1, op2);
   const whereClause = and(...conds);
 
   const [rows, [{ total }]] = await Promise.all([
@@ -296,10 +335,14 @@ export async function listEstimates(opts: {
   search?: string;
   status?: string;
   customerId?: number;
+  viewerUserId?: number;
+  viewerNetsuiteInternalId?: string | null;
 }) {
   const db = getDb();
   const offset = (opts.page - 1) * opts.limit;
   const conditions: any[] = [eq(estimates.isActive, true)];
+  const accessCondition = await buildEstimateAccessCondition(db, opts);
+  if (accessCondition) conditions.push(accessCondition);
   if (opts.status)     conditions.push(eq(estimates.status, opts.status as any));
   if (opts.customerId) conditions.push(eq(estimates.customerId, opts.customerId));
   if (opts.search)     conditions.push(or(
@@ -367,14 +410,24 @@ export async function resolveEstimatePortalId(ref: string): Promise<number> {
 
 // ── Get single (with nested line items) ─────────────────────────────────────
 
-export async function getEstimate(id: number) {
+export async function getEstimate(
+  id: number,
+  viewer?: { viewerUserId?: number; viewerNetsuiteInternalId?: string | null },
+) {
   const db = getDb();
+  const accessCondition = viewer ? await buildEstimateAccessCondition(db, viewer) : null;
   const [row] = await db.select()
     .from(estimates)
     .leftJoin(customers, eq(estimates.customerId, customers.id))
-    .where(and(eq(estimates.id, id), eq(estimates.isActive, true)))
+    .where(and(
+      eq(estimates.id, id),
+      eq(estimates.isActive, true),
+      ...(accessCondition ? [accessCondition] : []),
+    ))
     .limit(1);
 
+  // Deliberately indistinguishable from "doesn't exist" when it exists but the
+  // viewer isn't authorized to see it — same as the list/search access filtering.
   if (!row) throw new NotFoundError('Estimate', id);
 
   const [allLineItemRows, freightGroups, quoteRows, creativeRequests] = await Promise.all([

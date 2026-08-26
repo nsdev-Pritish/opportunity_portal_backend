@@ -38,6 +38,21 @@ const envSchema = z.object({
   CACHE_TTL_DROPDOWN: z.coerce.number().default(300),
   CACHE_TTL_ESTIMATE: z.coerce.number().default(120),
 
+  // ── Forgot-password email (SMTP via Postmark) ──
+  // Names match what Postmark/ops hands us for Render — EMAIL_SERVICE itself isn't read
+  // by nodemailer (we always talk plain SMTP), it's just left in Render for reference.
+  EMAIL_SERVER_HOST: z.string().min(1),
+  EMAIL_SERVER_PORT: z.coerce.number().default(587),
+  // NOT z.coerce.boolean() — that's just JS `Boolean(value)`, so the literal string
+  // "false" (any non-empty string) coerces to `true`. Only the literal "true" means true.
+  EMAIL_SERVER_SECURE: z.string().default('false').transform(v => v === 'true'),
+  EMAIL_SERVER_USER: z.string().min(1),
+  EMAIL_SERVER_PASSWORD: z.string().min(1),
+  EMAIL_FROM: z.string().min(1),
+  // Base URL of the frontend app — used to build the password-reset link emailed to users
+  FRONTEND_URL: z.string().url(),
+  PASSWORD_RESET_TOKEN_TTL_MINUTES: z.coerce.number().default(60),
+
   // ── Cloudflare R2 Storage ──
   R2_ACCOUNT_ID: z.string().min(1),
   R2_ACCESS_KEY_ID: z.string().min(1),

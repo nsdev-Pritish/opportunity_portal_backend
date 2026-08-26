@@ -25,6 +25,7 @@ import { getDb } from '../../config/database.js';
 import { employees } from '../../db/schema/index.js';
 import { NotFoundError } from '../../utils/errors.js';
 import { invalidateDropdown } from '../../utils/cache.js';
+import { syncUserForEmployee } from '../../services/userSync.service.js';
 
 const CreateSchema = z.object({
   netsuiteInternalId : z.string().min(1),
@@ -60,11 +61,23 @@ export default async function employeeRoutes(app: FastifyInstance) {
         .set({ firstName: body.firstName, lastName: body.lastName, email: body.email, roles: body.roles, updatedAt: new Date() })
         .where(eq(employees.id, existing.id)).returning();
       await invalidateDropdown('employees');
+      await syncUserForEmployee({
+        netsuiteInternalId: upd.netsuiteInternalId!,
+        email: upd.email,
+        name: `${upd.firstName ?? ''} ${upd.lastName ?? ''}`.trim(),
+        isActive: upd.isActive,
+      });
       return reply.status(200).send({ ...upd, _action: 'updated' });
     }
     const [created] = await db.insert(employees)
       .values({ ...body, source: 'netsuite', syncStatus: 'synced', syncedAt: new Date() }).returning();
     await invalidateDropdown('employees');
+    await syncUserForEmployee({
+      netsuiteInternalId: created.netsuiteInternalId!,
+      email: created.email,
+      name: `${created.firstName ?? ''} ${created.lastName ?? ''}`.trim(),
+      isActive: created.isActive,
+    });
     return reply.status(201).send({ ...created, _action: 'created' });
   });
 
@@ -78,6 +91,12 @@ export default async function employeeRoutes(app: FastifyInstance) {
       .set({ ...body, syncStatus: 'synced', syncedAt: new Date(), updatedAt: new Date() })
       .where(eq(employees.id, existing.id)).returning();
     await invalidateDropdown('employees');
+    await syncUserForEmployee({
+      netsuiteInternalId: updated.netsuiteInternalId!,
+      email: updated.email,
+      name: `${updated.firstName ?? ''} ${updated.lastName ?? ''}`.trim(),
+      isActive: updated.isActive,
+    });
     return updated;
   });
 
@@ -90,8 +109,14 @@ export default async function employeeRoutes(app: FastifyInstance) {
     const [updated] = await db.update(employees)
       .set({ isActive, syncStatus: 'synced', syncedAt: new Date(), updatedAt: new Date() })
       .where(eq(employees.id, existing.id))
-      .returning({ id: employees.id, netsuiteInternalId: employees.netsuiteInternalId, isActive: employees.isActive });
+      .returning();
     await invalidateDropdown('employees');
-    return updated;
+    await syncUserForEmployee({
+      netsuiteInternalId: updated.netsuiteInternalId!,
+      email: updated.email,
+      name: `${updated.firstName ?? ''} ${updated.lastName ?? ''}`.trim(),
+      isActive: updated.isActive,
+    });
+    return { id: updated.id, netsuiteInternalId: updated.netsuiteInternalId, isActive: updated.isActive };
   });
 }

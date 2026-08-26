@@ -3,7 +3,7 @@ import { uploadToR2 } from '../../services/r2.service.js';
 import { AppError } from '../../utils/errors.js';
 
 export default async function uploadRoutes(app: FastifyInstance) {
-  // app.addHook('preHandler', app.authenticate);
+  app.addHook('preHandler', app.authenticate);
 
   app.post('/file', async (req, reply) => {
     const part = await req.file();

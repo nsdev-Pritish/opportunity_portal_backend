@@ -32,6 +32,7 @@ import { getDb } from '../../../config/database.js';
 import { employees, currencies, subsidiaries, departments } from '../../../db/schema/index.js';
 import { NotFoundError } from '../../../utils/errors.js';
 import { invalidateDropdown } from '../../../utils/cache.js';
+import { syncUserForEmployee } from '../../../services/userSync.service.js';
 
 const CreateSchema = z.object({
   netsuiteInternalId: z.string().min(1),
@@ -102,6 +103,12 @@ export default async function employeeListRoutes(app: FastifyInstance) {
         .set({ ...fields, syncStatus: 'synced', syncedAt: new Date(), updatedAt: new Date() })
         .where(eq(employees.id, existing.id)).returning();
       await invalidateDropdown('employees');
+      await syncUserForEmployee({
+        netsuiteInternalId: upd.netsuiteInternalId!,
+        email: upd.email,
+        name: upd.name,
+        isActive: upd.isActive,
+      });
       return reply.status(200).send({ ...upd, _action: 'updated' });
     }
 
@@ -112,6 +119,12 @@ export default async function employeeListRoutes(app: FastifyInstance) {
         source: 'netsuite', syncStatus: 'synced', syncedAt: new Date(),
       }).returning();
     await invalidateDropdown('employees');
+    await syncUserForEmployee({
+      netsuiteInternalId: created.netsuiteInternalId!,
+      email: created.email,
+      name: created.name,
+      isActive: created.isActive,
+    });
     return reply.status(201).send({ ...created, _action: 'created' });
   });
 
@@ -141,6 +154,12 @@ export default async function employeeListRoutes(app: FastifyInstance) {
       .set(updateData)
       .where(eq(employees.id, existing.id)).returning();
     await invalidateDropdown('employees');
+    await syncUserForEmployee({
+      netsuiteInternalId: updated.netsuiteInternalId!,
+      email: updated.email,
+      name: updated.name,
+      isActive: updated.isActive,
+    });
     return updated;
   });
 
@@ -153,8 +172,14 @@ export default async function employeeListRoutes(app: FastifyInstance) {
     const [updated] = await db.update(employees)
       .set({ isActive, syncStatus: 'synced', syncedAt: new Date(), updatedAt: new Date() })
       .where(eq(employees.id, existing.id))
-      .returning({ id: employees.id, netsuiteInternalId: employees.netsuiteInternalId, isActive: employees.isActive });
+      .returning();
     await invalidateDropdown('employees');
-    return updated;
+    await syncUserForEmployee({
+      netsuiteInternalId: updated.netsuiteInternalId!,
+      email: updated.email,
+      name: updated.name,
+      isActive: updated.isActive,
+    });
+    return { id: updated.id, netsuiteInternalId: updated.netsuiteInternalId, isActive: updated.isActive };
   });
 }
