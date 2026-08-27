@@ -45,6 +45,14 @@ import {
   resyncEstimate,
   convertEstimateToOtb,
   listEstimateQuotes,
+  getNeedsAttentionCount,
+  listNeedsAttention,
+  getClosingThisWeekCount,
+  listClosingThisWeek,
+  getOpenEstimatesCount,
+  listOpenEstimates,
+  getOpenPipelineValue,
+  listOpenPipelineValue,
 } from '../../services/estimate.service.js';
 import { createEstimateAndConvertToOtb } from '../../services/otbConvert.service.js';
 import { previewNsPayload } from '../../services/netsuiteSync.service.js';
@@ -654,6 +662,45 @@ export default async function estimateRoutes(app: FastifyInstance) {
       dateOfEntryTo:         q.dateOfEntryTo         || undefined,
     });
   });
+
+  // ── Pipeline dashboard tiles ────────────────────────────────────────────────
+  // Backs the 4 stat tiles on the Pipeline screen. Each tile has a /count and a
+  // /list endpoint, both scoped to the logged-in user via the same access
+  // control as the rest of the estimates API.
+  type TileListQuery = { page?: string; limit?: string };
+  const tileViewer = (req: FastifyRequest) => ({
+    viewerUserId: req.user.id,
+    viewerNetsuiteInternalId: req.user.netsuiteInternalId,
+  });
+  const tileListOpts = (req: FastifyRequest<{ Querystring: TileListQuery }>) => ({
+    ...tileViewer(req),
+    page: parseInt(req.query.page ?? '1'),
+    limit: Math.min(parseInt(req.query.limit ?? '20'), 100),
+  });
+
+  // GET /api/v1/estimates/needs-attention/count
+  app.get('/needs-attention/count', async (req) => getNeedsAttentionCount(tileViewer(req)));
+  // GET /api/v1/estimates/needs-attention/list
+  app.get<{ Querystring: TileListQuery }>('/needs-attention/list', async (req) =>
+    listNeedsAttention(tileListOpts(req)));
+
+  // GET /api/v1/estimates/closing-this-week/count
+  app.get('/closing-this-week/count', async (req) => getClosingThisWeekCount(tileViewer(req)));
+  // GET /api/v1/estimates/closing-this-week/list
+  app.get<{ Querystring: TileListQuery }>('/closing-this-week/list', async (req) =>
+    listClosingThisWeek(tileListOpts(req)));
+
+  // GET /api/v1/estimates/open/count
+  app.get('/open/count', async (req) => getOpenEstimatesCount(tileViewer(req)));
+  // GET /api/v1/estimates/open/list
+  app.get<{ Querystring: TileListQuery }>('/open/list', async (req) =>
+    listOpenEstimates(tileListOpts(req)));
+
+  // GET /api/v1/estimates/open-pipeline-value/count
+  app.get('/open-pipeline-value/count', async (req) => getOpenPipelineValue(tileViewer(req)));
+  // GET /api/v1/estimates/open-pipeline-value/list
+  app.get<{ Querystring: TileListQuery }>('/open-pipeline-value/list', async (req) =>
+    listOpenPipelineValue(tileListOpts(req)));
 
   // GET /api/v1/estimates/sync-failures — list estimates where NS sync failed
   app.get('/sync-failures', async () => listFailedSyncs());

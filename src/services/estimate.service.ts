@@ -1080,6 +1080,146 @@ export async function listFailedSyncs() {
     .orderBy(desc(estimates.updatedAt));
 }
 
+// ── Pipeline dashboard tiles ──────────────────────────────────────────────────
+// Backs the 4 stat tiles on the Pipeline screen (Needs Attention, Closing This
+// Week, My Open Estimates, My Open Pipeline Value). Each tile has a /count and
+// a /list endpoint. All four share the same "open" definition and the same
+// viewer-scoped access control as the rest of the estimates API.
+
+// Anything not yet closed is still "open" pipeline — draft/submitted/approved/otb.
+const OPEN_ESTIMATE_STATUSES = ['draft', 'submitted', 'approved', 'otb'] as const;
+
+type PipelineTileOpts = {
+  viewerUserId?: number;
+  viewerNetsuiteInternalId?: string | null;
+};
+
+type PipelineTileListOpts = PipelineTileOpts & { page: number; limit: number };
+
+async function openPipelineConditions(db: ReturnType<typeof getDb>, opts: PipelineTileOpts): Promise<any[]> {
+  const conds: any[] = [eq(estimates.isActive, true), inArray(estimates.status, OPEN_ESTIMATE_STATUSES)];
+  const accessCondition = await buildEstimateAccessCondition(db, opts);
+  if (accessCondition) conds.push(accessCondition);
+  return conds;
+}
+
+// List rows reuse the exact same shape as GET /estimates/search (buildBaseQuery /
+// buildCountQuery, defined above) — that already returns every column the pipeline
+// grid displays (Doc #, Date, Customer, Sales Rep, Ops Partner 1/2, Department,
+// Project Name, Type, Projected, Est. qty, Exp. close, Promise, Channel, Category,
+// plus productDeveloperIds), so a tile's list slots straight into the same grid.
+async function paginateTile(
+  db: ReturnType<typeof getDb>, conds: any[], opts: { page: number; limit: number }, orderBy: any,
+) {
+  const op1 = alias(opsPartners, 'op1');
+  const op2 = alias(opsPartners, 'op2');
+  const whereClause = and(...conds);
+  const offset = (opts.page - 1) * opts.limit;
+  const [rows, [{ total }]] = await Promise.all([
+    buildBaseQuery(db, op1, op2).where(whereClause).orderBy(orderBy).limit(opts.limit).offset(offset),
+    buildCountQuery(db, op1, op2).where(whereClause),
+  ]);
+  return { data: rows, pagination: { page: opts.page, limit: opts.limit, total: Number(total) } };
+}
+
+async function tileCount(db: ReturnType<typeof getDb>, conds: any[]) {
+  const op1 = alias(opsPartners, 'op1');
+  const op2 = alias(opsPartners, 'op2');
+  const [{ total }] = await buildCountQuery(db, op1, op2).where(and(...conds));
+  return Number(total);
+}
+
+// "Needs Attention" = open estimate that is either past its promise date, or
+// missing a field the grid displays for every row. customerId is excluded — it's
+// NOT NULL at the database level, so it can never be the reason. trandate (the
+// grid's "Date" column) is ALSO excluded: verified against real data, it's null
+// on the vast majority of legacy NetSuite-synced estimates (a backfill gap from
+// sync, not something a rep can act on) — including it here flagged 351 of 355
+// open estimates for one test account manager, which drowns out the real signal.
+// Note this checks promiseDate being unset as its OWN missing-field case,
+// separate from a set promiseDate that has already passed.
+function needsAttentionCondition() {
+  const pastPromiseDate = and(isNotNull(estimates.promiseDate), sql`${estimates.promiseDate} < CURRENT_DATE`);
+  const missingFields = or(
+    isNull(estimates.documentNumber),      // Doc #
+    isNull(estimates.acctManagerId),       // Sales Rep
+    isNull(estimates.opsPartner1Id),       // Ops Partner
+    sql`cardinality(${estimates.productDeveloperIds}) = 0`,  // Product Dev
+    isNull(estimates.departmentId),        // Department
+    and(isNull(estimates.projectName), isNull(estimates.projectNameId)),  // Project Name
+    isNull(estimates.projectTypeId),       // Type
+    isNull(estimates.projectedTotalAmt),   // Projected
+    isNull(estimates.estimatedQty),        // Est. qty
+    isNull(estimates.expectedCloseDate),   // Exp. close
+    isNull(estimates.promiseDate),         // Promise (missing, as opposed to past)
+    isNull(estimates.salesChannelId),      // Channel
+    isNull(estimates.businessVerticalId),  // Category
+  );
+  return or(pastPromiseDate, missingFields)!;
+}
+
+export async function getNeedsAttentionCount(opts: PipelineTileOpts) {
+  const db = getDb();
+  const conds = [...(await openPipelineConditions(db, opts)), needsAttentionCondition()];
+  return { count: await tileCount(db, conds) };
+}
+
+export async function listNeedsAttention(opts: PipelineTileListOpts) {
+  const db = getDb();
+  const conds = [...(await openPipelineConditions(db, opts)), needsAttentionCondition()];
+  return paginateTile(db, conds, opts, asc(estimates.promiseDate));
+}
+
+export async function getClosingThisWeekCount(opts: PipelineTileOpts) {
+  const db = getDb();
+  const conds = [
+    ...(await openPipelineConditions(db, opts)),
+    sql`${estimates.expectedCloseDate} BETWEEN CURRENT_DATE AND (CURRENT_DATE + 7)`,
+  ];
+  return { count: await tileCount(db, conds) };
+}
+
+export async function listClosingThisWeek(opts: PipelineTileListOpts) {
+  const db = getDb();
+  const conds = [
+    ...(await openPipelineConditions(db, opts)),
+    sql`${estimates.expectedCloseDate} BETWEEN CURRENT_DATE AND (CURRENT_DATE + 7)`,
+  ];
+  return paginateTile(db, conds, opts, asc(estimates.expectedCloseDate));
+}
+
+// "My Open Estimates" = open estimates the viewer can see that were updated in
+// the last 24 hours — this is the card's main number, not a subtitle.
+const updatedLast24hCondition = () => sql`${estimates.updatedAt} >= NOW() - INTERVAL '24 hours'`;
+
+export async function getOpenEstimatesCount(opts: PipelineTileOpts) {
+  const db = getDb();
+  const conds = [...(await openPipelineConditions(db, opts)), updatedLast24hCondition()];
+  return { count: await tileCount(db, conds) };
+}
+
+export async function listOpenEstimates(opts: PipelineTileListOpts) {
+  const db = getDb();
+  const conds = [...(await openPipelineConditions(db, opts)), updatedLast24hCondition()];
+  return paginateTile(db, conds, opts, desc(estimates.updatedAt));
+}
+
+export async function getOpenPipelineValue(opts: PipelineTileOpts) {
+  const db = getDb();
+  const conds = await openPipelineConditions(db, opts);
+  const [{ total, amount }] = await db.select({
+    total: count(),
+    amount: sql<string>`COALESCE(SUM(${estimates.projectedTotalAmt}), 0)`,
+  }).from(estimates).where(and(...conds));
+  return { amount: Number(amount), estimateCount: Number(total) };
+}
+
+export async function listOpenPipelineValue(opts: PipelineTileListOpts) {
+  const db = getDb();
+  const conds = await openPipelineConditions(db, opts);
+  return paginateTile(db, conds, opts, desc(estimates.projectedTotalAmt));
+}
+
 // ── Manually re-trigger NS sync for a single estimate ────────────────────────
 
 export async function resyncEstimate(id: number) {
