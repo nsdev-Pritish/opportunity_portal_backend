@@ -521,6 +521,11 @@ const csvStr = (v?: string): string[] | undefined => {
   return arr.length ? arr : undefined;
 };
 
+// The "ME" filter chip — defaults to true (on) whenever the param is omitted,
+// so a caller that doesn't know about it yet keeps today's mine-scoped
+// behavior. Only an explicit "false" clears it.
+const parseMe = (v?: string): boolean => v !== 'false';
+
 // ── Routes ──────────────────────────────────────────────────────────────────
 
 export default async function estimateRoutes(app: FastifyInstance) {
@@ -528,7 +533,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
 
   // GET /api/v1/estimates — paginated list
   app.get<{
-    Querystring: { page?: string; limit?: string; search?: string; status?: string; customerId?: string };
+    Querystring: { page?: string; limit?: string; search?: string; status?: string; customerId?: string; me?: string };
   }>('/', async (req) =>
     listEstimates({
       page: parseInt(req.query.page ?? '1'),
@@ -536,6 +541,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
       search: req.query.search,
       status: req.query.status,
       customerId: req.query.customerId ? parseInt(req.query.customerId) : undefined,
+      me: parseMe(req.query.me),
       viewerUserId: req.user.id,
       viewerNetsuiteInternalId: req.user.netsuiteInternalId,
     }),
@@ -620,6 +626,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
     page?: string; limit?: string;
     estimateId?: string; documentNumber?: string;
     search?: string;   // general free-text search across visible columns
+    me?: string;       // "ME" filter chip — defaults on; pass me=false once the user clears it
   };
   app.get<{ Querystring: SearchQuery }>('/search', async (req) => {
     const q = req.query;
@@ -633,6 +640,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
     return searchEstimatesAdvanced({
       viewerUserId:            req.user.id,
       viewerNetsuiteInternalId: req.user.netsuiteInternalId,
+      me:                    parseMe(q.me),
       page:                  parseInt(q.page  ?? '1'),
       limit:                 Math.min(parseInt(q.limit ?? '20'), 100),
       search:                q.search                || undefined,

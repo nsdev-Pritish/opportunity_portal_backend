@@ -31,6 +31,14 @@ type EstimateFilterOpts = {
   // internal/trusted callers that intentionally bypass access control.
   viewerUserId?: number;
   viewerNetsuiteInternalId?: string | null;
+  // The "ME" filter chip on the Estimates page. Defaults to true (the page's
+  // default-on state right after login), which applies buildEstimateAccessCondition
+  // below to scope results to estimates where the viewer is createdBy, Sales Rep,
+  // Ops Partner, OR Product Developer. Pass false only once the user has explicitly
+  // cleared the chip — that skips the condition entirely and returns every active
+  // estimate, not just the viewer's. There is currently no other access boundary
+  // on estimates, so me:false is a real widening, not just a cosmetic no-op.
+  me?: boolean;
   search?: string;                 // general free-text search across visible columns
   customerId?: number[];
   customerName?: string;
@@ -94,8 +102,10 @@ async function buildConditions(
   op2: any,
 ): Promise<any[]> {
   const conds: any[] = [eq(estimates.isActive, true)];
-  const accessCondition = await buildEstimateAccessCondition(db, opts);
-  if (accessCondition) conds.push(accessCondition);
+  if (opts.me !== false) {
+    const accessCondition = await buildEstimateAccessCondition(db, opts);
+    if (accessCondition) conds.push(accessCondition);
+  }
 
   // Multi-value filters: single value → eq, multiple → inArray
   const oneOrMany = <T>(col: any, arr: T[]) =>
@@ -337,12 +347,15 @@ export async function listEstimates(opts: {
   customerId?: number;
   viewerUserId?: number;
   viewerNetsuiteInternalId?: string | null;
+  me?: boolean;   // "ME" filter chip — see EstimateFilterOpts.me for the full rationale
 }) {
   const db = getDb();
   const offset = (opts.page - 1) * opts.limit;
   const conditions: any[] = [eq(estimates.isActive, true)];
-  const accessCondition = await buildEstimateAccessCondition(db, opts);
-  if (accessCondition) conditions.push(accessCondition);
+  if (opts.me !== false) {
+    const accessCondition = await buildEstimateAccessCondition(db, opts);
+    if (accessCondition) conditions.push(accessCondition);
+  }
   if (opts.status)     conditions.push(eq(estimates.status, opts.status as any));
   if (opts.customerId) conditions.push(eq(estimates.customerId, opts.customerId));
   if (opts.search)     conditions.push(or(
