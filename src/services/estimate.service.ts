@@ -1116,6 +1116,17 @@ async function openPipelineConditions(db: ReturnType<typeof getDb>, opts: Pipeli
   return conds;
 }
 
+// Needs Attention and My Open Pipeline Value are scoped to the ES Status lookup
+// table (es_status, joined as esStatus — NOT the estimates.status workflow enum
+// the other two tiles use) being "In Progress". Matched by name rather than a
+// hardcoded id since es_status ids are environment-specific seed data.
+async function inProgressPipelineConditions(db: ReturnType<typeof getDb>, opts: PipelineTileOpts): Promise<any[]> {
+  const conds: any[] = [eq(estimates.isActive, true), eq(esStatus.name, 'In Progress')];
+  const accessCondition = await buildEstimateAccessCondition(db, opts);
+  if (accessCondition) conds.push(accessCondition);
+  return conds;
+}
+
 // List rows reuse the exact same shape as GET /estimates/search (buildBaseQuery /
 // buildCountQuery, defined above) — that already returns every column the pipeline
 // grid displays (Doc #, Date, Customer, Sales Rep, Ops Partner 1/2, Department,
@@ -1173,13 +1184,13 @@ function needsAttentionCondition() {
 
 export async function getNeedsAttentionCount(opts: PipelineTileOpts) {
   const db = getDb();
-  const conds = [...(await openPipelineConditions(db, opts)), needsAttentionCondition()];
+  const conds = [...(await inProgressPipelineConditions(db, opts)), needsAttentionCondition()];
   return { count: await tileCount(db, conds) };
 }
 
 export async function listNeedsAttention(opts: PipelineTileListOpts) {
   const db = getDb();
-  const conds = [...(await openPipelineConditions(db, opts)), needsAttentionCondition()];
+  const conds = [...(await inProgressPipelineConditions(db, opts)), needsAttentionCondition()];
   return paginateTile(db, conds, opts, asc(estimates.promiseDate));
 }
 
@@ -1219,17 +1230,21 @@ export async function listOpenEstimates(opts: PipelineTileListOpts) {
 
 export async function getOpenPipelineValue(opts: PipelineTileOpts) {
   const db = getDb();
-  const conds = await openPipelineConditions(db, opts);
+  const conds = await inProgressPipelineConditions(db, opts);
   const [{ total, amount }] = await db.select({
     total: count(),
     amount: sql<string>`COALESCE(SUM(${estimates.projectedTotalAmt}), 0)`,
-  }).from(estimates).where(and(...conds));
+  })
+    .from(estimates)
+    // joined only so the esStatus.name condition above can resolve — no esStatus columns selected
+    .leftJoin(esStatus, eq(estimates.esStatusId, esStatus.id))
+    .where(and(...conds));
   return { amount: Number(amount), estimateCount: Number(total) };
 }
 
 export async function listOpenPipelineValue(opts: PipelineTileListOpts) {
   const db = getDb();
-  const conds = await openPipelineConditions(db, opts);
+  const conds = await inProgressPipelineConditions(db, opts);
   return paginateTile(db, conds, opts, desc(estimates.projectedTotalAmt));
 }
 
