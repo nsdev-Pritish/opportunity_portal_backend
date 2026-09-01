@@ -738,7 +738,7 @@ async function applyConvertEsStatus(estimateId: number, nsEsStatusId?: string | 
 export async function syncEstimateToNetsuite(
   estimateId : number,
   mode       : 'create' | 'update' | 'convert' | 'convertToExisting' = 'create',
-  opts?      : { quoteId?: number; quoteNsId?: string; lineItemIds?: number[] },
+  opts?      : { quoteId?: number; quoteNsId?: string; quoteDocumentNumber?: string; lineItemIds?: number[] },
 ): Promise<void> {
   if (!env.NS_SUITELET_URL) {
     logger.debug({ estimateId }, 'NS_SUITELET_URL not configured — skipping NS sync');
@@ -751,7 +751,7 @@ export async function syncEstimateToNetsuite(
   try {
     // Convert payloads (per NetSuite contract):
     //   New quote        → { mode: 'convert',           oppId }
-    //   Add to existing  → { mode: 'convertToExisting', oppId, quoteId }
+    //   Add to existing  → { mode: 'convertToExisting', oppId, quoteId, quoteDocumentNumber }
     let payload: Record<string, unknown>;
     if (isConvert) {
       const [est] = await db.select({ netsuiteInternalId: estimates.netsuiteInternalId })
@@ -759,7 +759,12 @@ export async function syncEstimateToNetsuite(
       const oppId = est?.netsuiteInternalId ?? '';
 
       payload = mode === 'convertToExisting'
-        ? { mode: 'convertToExisting', oppId, quoteId: opts?.quoteNsId ?? '' }
+        ? {
+            mode: 'convertToExisting',
+            oppId,
+            quoteId: opts?.quoteNsId ?? '',
+            ...(opts?.quoteDocumentNumber ? { quoteDocumentNumber: opts.quoteDocumentNumber } : {}),
+          }
         : { mode: 'convert', oppId };
     } else {
       payload = await buildNsPayload(estimateId, mode, opts?.lineItemIds);

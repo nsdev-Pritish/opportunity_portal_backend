@@ -1289,7 +1289,7 @@ export async function resyncEstimate(id: number) {
 
 export async function convertEstimateToOtb(
   id     : number,
-  opts?  : { target?: 'new' | 'existing' },
+  opts?  : { target?: 'new' | 'existing'; quoteDocumentNumber?: string },
 ) {
   const db = getDb();
 
@@ -1318,7 +1318,10 @@ export async function convertEstimateToOtb(
       return { id, message: 'No new line items to add to the existing quote' };
     }
 
-    // Find the latest active quote that already exists in NetSuite
+    // Find the latest active quote that already exists in NetSuite (portal-side row to
+    // refresh with the sync result). The quote *number* sent to NetSuite itself is not
+    // derived here — it comes straight from the frontend (opts.quoteDocumentNumber),
+    // since the caller already knows which quote the user picked as "existing".
     const [activeQuote] = await db
       .select()
       .from(estimateQuotes)
@@ -1335,9 +1338,10 @@ export async function convertEstimateToOtb(
       .where(eq(estimates.id, id));
 
     syncEstimateToNetsuite(id, 'convertToExisting', {
-      quoteId    : activeQuote.id,                       // portal quote row to refresh
-      quoteNsId  : activeQuote.quoteNetsuiteInternalId,  // NS quote id sent in payload
-      lineItemIds: targetIds,                            // lines to mark converted=true
+      quoteId            : activeQuote.id,                       // portal quote row to refresh
+      quoteNsId          : activeQuote.quoteNetsuiteInternalId,  // NS internal id sent in payload
+      quoteDocumentNumber: opts?.quoteDocumentNumber,             // NS quote number, as supplied by the frontend
+      lineItemIds        : targetIds,                            // lines to mark converted=true
     }).catch(() => {/* already logged + recorded */});
 
     return {

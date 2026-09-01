@@ -719,12 +719,16 @@ export default async function estimateRoutes(app: FastifyInstance) {
   );
 
   // POST /api/v1/estimates/:id/convert-to-otb — convert estimate to Quote in NS
-  //   { "target": "new" }      → create a NEW quote covering the whole estimate
-  //   { "target": "existing" } → add newly-added lines to the EXISTING quote
+  //   { "target": "new" }                                            → create a NEW quote covering the whole estimate
+  //   { "target": "existing", "quoteDocumentNumber": "<latest #>" }  → add newly-added lines to the EXISTING quote
   app.post<{ Params: { id: string }; Body: unknown }>('/:id/convert-to-otb', async (req) => {
     const body = z.object({
       target: z.enum(['new', 'existing']).optional(),
-    }).parse(stripEmpty(req.body ?? {}));
+      quoteDocumentNumber: z.string().optional(),
+    }).refine(
+      (b) => b.target !== 'existing' || !!b.quoteDocumentNumber,
+      { message: 'quoteDocumentNumber is required when target is "existing"', path: ['quoteDocumentNumber'] },
+    ).parse(stripEmpty(req.body ?? {}));
     return convertEstimateToOtb(parseInt(req.params.id), body);
   });
 
