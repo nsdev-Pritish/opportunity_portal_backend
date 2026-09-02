@@ -634,7 +634,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
     // When a specific estimate is selected (by id or exact document number),
     // return the full estimate with line items + freight groups instead of a summary list
     if (q.estimateId) {
-      return getEstimate(parseInt(q.estimateId), { viewerUserId: req.user.id, viewerNetsuiteInternalId: req.user.netsuiteInternalId });
+      return getEstimate(parseInt(q.estimateId));
     }
 
     return searchEstimatesAdvanced({
@@ -759,8 +759,10 @@ export default async function estimateRoutes(app: FastifyInstance) {
   );
 
   // GET /api/v1/estimates/:id — full estimate with line items
+  // Not ME-scoped — see getEstimate. Any row visible in the list is openable here,
+  // whatever the ME chip is set to, so the Portal needs no extra param.
   app.get<{ Params: { id: string } }>('/:id', async (req) =>
-    getEstimate(parseInt(req.params.id), { viewerUserId: req.user.id, viewerNetsuiteInternalId: req.user.netsuiteInternalId }),
+    getEstimate(parseInt(req.params.id)),
   );
 
   // PATCH /api/v1/estimates/pipeline — bulk-update inline grid header fields on many

@@ -423,24 +423,23 @@ export async function resolveEstimatePortalId(ref: string): Promise<number> {
 
 // ── Get single (with nested line items) ─────────────────────────────────────
 
-export async function getEstimate(
-  id: number,
-  viewer?: { viewerUserId?: number; viewerNetsuiteInternalId?: string | null },
-) {
+// Any logged-in user may open any active estimate. This deliberately does NOT apply
+// buildEstimateAccessCondition: ME is a browse filter, not a permission boundary, so
+// scoping the detail lookup by role would 404 rows the user can see in a me=false list
+// (and, for an account with no NetSuite internal ID, would 404 everything they didn't
+// create — the clause collapses to createdBy alone). Authentication is the only gate.
+// The write paths are unscoped for the same reason, so this keeps read and write aligned.
+export async function getEstimate(id: number) {
   const db = getDb();
-  const accessCondition = viewer ? await buildEstimateAccessCondition(db, viewer) : null;
   const [row] = await db.select()
     .from(estimates)
     .leftJoin(customers, eq(estimates.customerId, customers.id))
     .where(and(
       eq(estimates.id, id),
       eq(estimates.isActive, true),
-      ...(accessCondition ? [accessCondition] : []),
     ))
     .limit(1);
 
-  // Deliberately indistinguishable from "doesn't exist" when it exists but the
-  // viewer isn't authorized to see it — same as the list/search access filtering.
   if (!row) throw new NotFoundError('Estimate', id);
 
   const [allLineItemRows, freightGroups, quoteRows, creativeRequests] = await Promise.all([
