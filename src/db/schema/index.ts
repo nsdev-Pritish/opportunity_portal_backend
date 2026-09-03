@@ -43,7 +43,10 @@ const syncCols = {
 
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
-  email: varchar('email', { length: 255 }).notNull().unique(),
+  // Nullable and non-unique: every NetSuite employee gets a row, including those with no
+  // email in NetSuite and those sharing an email with another employee. Such rows cannot
+  // log in — see src/services/userSync.service.ts.
+  email: varchar('email', { length: 255 }),
   passwordHash: varchar('password_hash', { length: 255 }).notNull(),
   firstName: varchar('first_name', { length: 100 }),
   lastName: varchar('last_name', { length: 100 }),
@@ -61,7 +64,7 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
-  emailIdx: uniqueIndex('users_email_idx').on(t.email),
+  emailIdx: index('users_email_idx').on(t.email),
   nsIdIdx: uniqueIndex('users_ns_id_idx').on(t.netsuiteInternalId),
 }));
 

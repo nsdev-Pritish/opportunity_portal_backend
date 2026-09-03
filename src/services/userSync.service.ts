@@ -2,7 +2,6 @@ import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../config/database.js';
 import { users } from '../db/schema/index.js';
-import { logger } from '../utils/logger.js';
 
 const DEFAULT_PASSWORD = 'password@123';
 
@@ -13,29 +12,25 @@ export type SyncEmployeeUserInput = {
   isActive: boolean;
 };
 
-// Upserts the Portal login account for a NetSuite-synced employee, keyed by
-// netsuiteInternalId (falling back to email so a pre-existing manually-created
-// account gets linked instead of hitting the email-unique constraint). Called from
-// both employee push handlers (src/routes/netsuite/employees.ts and
+// Upserts the Portal login account for a NetSuite-synced employee, keyed solely by
+// netsuiteInternalId, so every employee gets exactly one row. Employees with no email
+// are stored with a null email, and two employees may share an email — neither is
+// filtered out (users.email is nullable and non-unique, see migration 0091). Such rows
+// exist for reporting/identity but cannot log in: the login lookup matches on email, so
+// a null email never matches and a duplicated email resolves to an arbitrary row.
+// Called from both employee push handlers (src/routes/netsuite/employees.ts and
 // src/routes/netsuite/list/employees.ts) after the `employees` row is written.
 export async function syncUserForEmployee(input: SyncEmployeeUserInput): Promise<void> {
   const { netsuiteInternalId, isActive } = input;
   const email = input.email?.trim().toLowerCase() || null;
-
-  if (!email) {
-    logger.warn({ netsuiteInternalId }, 'Skipping Portal user sync — employee has no email');
-    return;
-  }
 
   const [firstName, ...rest] = (input.name ?? '').trim().split(/\s+/).filter(Boolean);
   const lastName = rest.join(' ') || undefined;
 
   const db = getDb();
 
-  const [byNsId] = await db.select({ id: users.id })
+  const [existing] = await db.select({ id: users.id })
     .from(users).where(eq(users.netsuiteInternalId, netsuiteInternalId)).limit(1);
-  const existing = byNsId ?? (await db.select({ id: users.id })
-    .from(users).where(eq(users.email, email)).limit(1))[0];
 
   if (existing) {
     await db.update(users)

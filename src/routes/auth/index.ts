@@ -37,7 +37,7 @@ const ResetPasswordBody = z.object({
 
 const hashToken = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 
-const signUser = (app: FastifyInstance, user: { id: number; email: string; role: string; netsuiteInternalId: string | null; mustChangePassword: boolean }) =>
+const signUser = (app: FastifyInstance, user: { id: number; email: string | null; role: string; netsuiteInternalId: string | null; mustChangePassword: boolean }) =>
   app.jwt.sign({
     id: user.id,
     email: user.email,
