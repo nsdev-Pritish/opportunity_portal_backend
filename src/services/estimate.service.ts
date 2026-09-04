@@ -1211,19 +1211,23 @@ export async function listClosingThisWeek(opts: PipelineTileListOpts) {
   return paginateTile(db, conds, opts, asc(estimates.expectedCloseDate));
 }
 
-// "My Open Estimates" = open estimates the viewer can see that were updated in
-// the last 24 hours — this is the card's main number, not a subtitle.
+ 
+// "My Open Estimates" = estimates the viewer can see with ES Status "In Progress"
+// that were updated in the last 24 hours — this is the card's main number, not a
+// subtitle. Scoped to the same "In Progress" es_status definition as Needs
+// Attention / My Open Pipeline Value, not the estimates.status workflow enum —
+// otherwise an OTB-converted estimate (status: 'otb') would still count as open.
 const updatedLast24hCondition = () => sql`${estimates.updatedAt} >= NOW() - INTERVAL '24 hours'`;
-
+ 
 export async function getOpenEstimatesCount(opts: PipelineTileOpts) {
   const db = getDb();
-  const conds = [...(await openPipelineConditions(db, opts)), updatedLast24hCondition()];
+  const conds = [...(await inProgressPipelineConditions(db, opts)), updatedLast24hCondition()];
   return { count: await tileCount(db, conds) };
 }
-
+ 
 export async function listOpenEstimates(opts: PipelineTileListOpts) {
   const db = getDb();
-  const conds = [...(await openPipelineConditions(db, opts)), updatedLast24hCondition()];
+  const conds = [...(await inProgressPipelineConditions(db, opts)), updatedLast24hCondition()];
   return paginateTile(db, conds, opts, desc(estimates.updatedAt));
 }
 
