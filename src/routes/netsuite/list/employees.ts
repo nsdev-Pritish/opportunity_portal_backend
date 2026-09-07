@@ -21,8 +21,14 @@
  *    "email": "jane@company.com",
  *    "currencyNsId": "1",
  *    "subsidiaryNsId": "5",
- *    "departmentNsId": "12"
+ *    "departmentNsId": "12",
+ *    "portalUser": true
  *  }
+ *
+ * portalUser mirrors the NetSuite "EST Portal User" checkbox (custentity_obc_portal_user).
+ * It's persisted on the employees row and, together with isActive, gates whether a
+ * Portal login (USERS row) gets created — see syncUserForEmployee(). This is the field
+ * name the NetSuite side should send true/false in.
  */
 
 import { FastifyInstance } from 'fastify';
@@ -46,6 +52,7 @@ const CreateSchema = z.object({
   currencyNsId      : z.string().optional().nullable(),   // NS internalId of currency
   subsidiaryNsId    : z.string().optional().nullable(),   // NS internalId of subsidiary
   departmentNsId    : z.string().optional().nullable(),   // NS internalId of department
+  portalUser        : z.boolean().optional(),             // NS "EST Portal User" checkbox
 });
 
 const UpdateSchema = CreateSchema.omit({ netsuiteInternalId: true }).partial();
@@ -89,6 +96,7 @@ export default async function employeeListRoutes(app: FastifyInstance) {
       developer       : body.developer ?? false,
       salesRep        : body.salesRep ?? false,
       productDeveloper: body.productDeveloper ?? false,
+      portalUser      : body.portalUser ?? false,
       email           : body.email,
       currencyId,
       subsidiaryId,
@@ -108,6 +116,7 @@ export default async function employeeListRoutes(app: FastifyInstance) {
         email: upd.email,
         name: upd.name,
         isActive: upd.isActive,
+        portalUser: upd.portalUser,
       });
       return reply.status(200).send({ ...upd, _action: 'updated' });
     }
@@ -124,6 +133,7 @@ export default async function employeeListRoutes(app: FastifyInstance) {
       email: created.email,
       name: created.name,
       isActive: created.isActive,
+      portalUser: created.portalUser,
     });
     return reply.status(201).send({ ...created, _action: 'created' });
   });
@@ -145,6 +155,7 @@ export default async function employeeListRoutes(app: FastifyInstance) {
     if (body.developer        !== undefined) updateData.developer = body.developer;
     if (body.salesRep         !== undefined) updateData.salesRep = body.salesRep;
     if (body.productDeveloper !== undefined) updateData.productDeveloper = body.productDeveloper;
+    if (body.portalUser       !== undefined) updateData.portalUser = body.portalUser;
     if (body.email            !== undefined) updateData.email = body.email;
     if (body.currencyNsId     !== undefined) updateData.currencyId = await resolveNsId(currencies, body.currencyNsId);
     if (body.subsidiaryNsId   !== undefined) updateData.subsidiaryId = await resolveNsId(subsidiaries, body.subsidiaryNsId);
@@ -159,6 +170,7 @@ export default async function employeeListRoutes(app: FastifyInstance) {
       email: updated.email,
       name: updated.name,
       isActive: updated.isActive,
+      portalUser: updated.portalUser,
     });
     return updated;
   });
@@ -179,6 +191,7 @@ export default async function employeeListRoutes(app: FastifyInstance) {
       email: updated.email,
       name: updated.name,
       isActive: updated.isActive,
+      portalUser: updated.portalUser,
     });
     return { id: updated.id, netsuiteInternalId: updated.netsuiteInternalId, isActive: updated.isActive };
   });

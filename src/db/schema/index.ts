@@ -66,6 +66,14 @@ export const users = pgTable('users', {
 }, (t) => ({
   emailIdx: index('users_email_idx').on(t.email),
   nsIdIdx: uniqueIndex('users_ns_id_idx').on(t.netsuiteInternalId),
+  // Partial: only active accounts must have a distinct email. Deactivated duplicates
+  // (see the one-time USERS cleanup) keep whatever email they already had without
+  // blocking the migration, and a future sync that would create a second active
+  // account with the same email now fails loudly at sync time instead of leaving one
+  // of the two unable to log in — see src/services/userSync.service.ts.
+  activeEmailIdx: uniqueIndex('users_active_email_idx')
+    .on(sql`lower(${t.email})`)
+    .where(sql`${t.email} is not null and ${t.isActive} = true`),
 }));
 
 // ══════════════════════════════════════════════════════════════════
@@ -288,6 +296,10 @@ export const employees = pgTable('employees', {
   developer: boolean('developer').default(false).notNull(),
   salesRep: boolean('sales_rep').default(false).notNull(),
   productDeveloper: boolean('product_developer').default(false).notNull(),
+  // NetSuite "EST Portal User" checkbox (custentity_obc_portal_user). Only the
+  // /list/employees feed sets this — see syncUserForEmployee for how it gates
+  // Portal login (USERS) creation.
+  portalUser: boolean('portal_user').default(false).notNull(),
   email: varchar('email', { length: 255 }),
   currencyId: integer('currency_id').references(() => currencies.id),
   subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
