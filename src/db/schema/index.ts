@@ -286,6 +286,16 @@ export const divisionalBudgets = pgTable('divisional_budgets', {
   nsIdIdx: uniqueIndex('divisional_budgets_ns_id_idx').on(t.netsuiteInternalId),
 }));
 
+// Order Classification dropdown (NetSuite list: custbody_order_classification).
+// Migration: src/db/migrations/0093_order_classifications.sql
+export const orderClassifications = pgTable('order_classifications', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx: uniqueIndex('order_classifications_ns_id_idx').on(t.netsuiteInternalId),
+}));
+
 export const employees = pgTable('employees', {
   id: serial('id').primaryKey(),
   employeeId: varchar('employee_id', { length: 100 }),     // NetSuite "Employee ID" (entityId), distinct from internal id
@@ -1968,6 +1978,7 @@ export const MASTER_TABLES = {
   business_verticals: businessVerticals,
   business_types: businessTypes,
   divisional_budgets: divisionalBudgets,
+  order_classifications: orderClassifications,
   employees,
   quarters,
   forecast_statuses: forecastStatuses,
