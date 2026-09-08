@@ -225,6 +225,9 @@ const EstimateHeaderSchema = z.object({
   divisionalBudgetId: z.number().int().positive().optional(),  // FK → divisional_budgets.id
   divisionalBudget: z.string().max(255).optional(),        // custbody_divisional_budget
 
+  // Order Classification — syncs to NetSuite custbody_order_classification.
+  orderClassificationId: z.number().int().positive().optional(),  // FK → order_classifications.id
+
   attachments: z.array(z.object({                     // File upload metadata
     name: z.string(),
     url: z.string(),

@@ -19,7 +19,7 @@ import { getDb } from '../config/database.js';
 import {
   estimates, estimateLineItems, estimateQuotes,
   subsidiaries, customers, contacts, currencies, projectNames, projectTypes, likelyToClose,
-  departments, salesChannels, businessVerticals, businessTypes, divisionalBudgets,
+  departments, salesChannels, businessVerticals, businessTypes, divisionalBudgets, orderClassifications,
   accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
   clientIncoterms, clientShippingMethods, addresses,
   csItems, vendors, sustainabilityOptions, productClasses, productClassesEu, vendorIncoterms, factories,
@@ -300,6 +300,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     shipTermsNsId, shipMethodNsId, shipAddrNsId, billAddrNsId,
     estimateStatusNsId, closedLostReasonNsId, clientPursuitAltNsId,
     esStatusNsId, divisionalBudgetNsId, divisionalBudgetName,
+    orderClassificationNsId,
   ] = await Promise.all([
     getNsId(subsidiaries,                est.subsidiaryId),
     getNsId(customers,                   est.customerId),
@@ -327,6 +328,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     getNsId(esStatus,                    est.esStatusId),
     getNsId(divisionalBudgets,           est.divisionalBudgetId),
     getNsName(divisionalBudgets,         est.divisionalBudgetId),
+    getNsId(orderClassifications,        est.orderClassificationId),
   ]);
 
   // Resolve NS IDs for all product developers in parallel
@@ -386,6 +388,8 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     // working. The label falls back to the free-text column when no id is selected.
     divisionalBudgetNSId         : divisionalBudgetNsId,
     divisionalBudgetNS           : divisionalBudgetName || (est.divisionalBudget ?? ''),
+    // Order Classification → custbody_order_classification.
+    orderClassificationNSId      : orderClassificationNsId,
     statusNSId                   : estimateStatusNsId,
     esStatusNSId                 : esStatusNsId,
     closedLostReasonNSId         : closedLostReasonNsId,

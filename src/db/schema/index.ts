@@ -920,6 +920,11 @@ export const estimates = pgTable('estimates', {
   divisionalBudgetId: integer('divisional_budget_id').references(() => divisionalBudgets.id),
   divisionalBudget: varchar('divisional_budget', { length: 255 }),
 
+  // Order Classification — dropdown selection (FK), same shape as Divisional Budget.
+  // Syncs to the NetSuite custom body field custbody_order_classification: the id
+  // goes out as orderClassificationNSId and the label as orderClassificationNS.
+  orderClassificationId: integer('order_classification_id').references(() => orderClassifications.id),
+
   // Status & Sync
   status: estimateStatusEnum('status').default('draft').notNull(),
   isActive: boolean('is_active').default(true).notNull(),

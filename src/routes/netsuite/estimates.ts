@@ -21,7 +21,7 @@ import { getDb } from '../../config/database.js';
 import {
   estimates, estimateLineItems,
   customers, contacts, currencies, projectTypes, likelyToClose,
-  departments, salesChannels, businessVerticals, businessTypes, divisionalBudgets,
+  departments, salesChannels, businessVerticals, businessTypes, divisionalBudgets, orderClassifications,
   accountManagers, productDevelopers, hkPartners, opsPartners, compliancePartners,
   subsidiaries, estimateStatuses, esStatus, closedLostReasons, clientPursuitAlternatives,
   clientIncoterms, clientShippingMethods, addresses,
@@ -154,6 +154,9 @@ const CreateEstimateSchema = z.object({
   // stored as-is for backward compatibility.
   divisionalBudgetNsId : z.string().optional().nullable(),
   divisionalBudget     : z.string().max(255).optional().nullable(),
+
+  // Order Classification (custbody_order_classification) — internal id of the list value.
+  orderClassificationNsId : z.string().optional().nullable(),
 });
 
 // Update allows all the same fields but nothing is required
@@ -779,6 +782,7 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     twelvePaysShipToCust : body.twelvePaysShipToCust,
     divisionalBudgetId   : await resolveNsId(divisionalBudgets, body.divisionalBudgetNsId),
     divisionalBudget     : body.divisionalBudget,
+    orderClassificationId: await resolveNsId(orderClassifications, body.orderClassificationNsId),
     source               : 'netsuite' as const,
     // Record came FROM NetSuite → it is in sync at this moment. Mirrors the line-item
     // + freight-group builders, which already stamp 'synced'. Without this the header
@@ -831,6 +835,7 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
     [businessVerticals,  'businessVerticalNsId',   'businessVerticalId'],
     [businessTypes,      'businessTypeNsId',       'businessTypeId'],
     [divisionalBudgets,  'divisionalBudgetNsId',   'divisionalBudgetId'],
+    [orderClassifications, 'orderClassificationNsId', 'orderClassificationId'],
     [accountManagers,    'acctManagerNsId',        'acctManagerId'],
     [currencies,         'sellCurrencyNsId',       'sellCurrencyId'],
     [clientIncoterms,       'clientIncotermsNsId',    'clientIncotermsId'],
