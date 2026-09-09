@@ -52,6 +52,9 @@ export const users = pgTable('users', {
   lastName: varchar('last_name', { length: 100 }),
   role: varchar('role', { length: 50 }).default('user').notNull(),
   isActive: boolean('is_active').default(true).notNull(),
+  // NetSuite "EST Portal User" checkbox, mirrored from employees.portalUser — see
+  // syncUserForEmployee(). Login requires both isActive and portalUser to be true.
+  portalUser: boolean('portal_user').default(false).notNull(),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
   // NetSuite Employee internal id this login is mapped to. Null for accounts that
   // aren't NetSuite-synced (e.g. manually created admin accounts).

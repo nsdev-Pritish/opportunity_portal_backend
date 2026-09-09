@@ -6,7 +6,13 @@
  *  GET   /api/v1/netsuite/list/employees/:nsId
  *  POST  /api/v1/netsuite/list/employees
  *  PUT   /api/v1/netsuite/list/employees/:nsId
- *  PUT   /api/v1/netsuite/list/employees/:nsId/status   (activate / deactivate)
+ *  PUT   /api/v1/netsuite/list/employees/:nsId/status   (isActive and/or portalUser)
+ *
+ * Body for PUT .../status — at least one of the two fields is required:
+ *  { "isActive": true, "portalUser": false }
+ *
+ * Updates the employees row and cascades the same values onto the linked users row
+ * (see syncUserForEmployee()) so Portal login reflects both flags immediately.
  *
  * Body for POST/PUT (NetSuite sends NS internal ids for the FK fields; they are
  * resolved to local ids here):
@@ -56,7 +62,12 @@ const CreateSchema = z.object({
 });
 
 const UpdateSchema = CreateSchema.omit({ netsuiteInternalId: true }).partial();
-const StatusSchema = z.object({ isActive: z.boolean() });
+const StatusSchema = z.object({
+  isActive: z.boolean().optional(),
+  portalUser: z.boolean().optional(),
+}).refine((d) => d.isActive !== undefined || d.portalUser !== undefined, {
+  message: 'At least one of isActive or portalUser is required',
+});
 
 // Resolve a NetSuite internal id → local table id. Returns null when not found / absent.
 async function resolveNsId(table: any, nsId: string | null | undefined): Promise<number | null> {
@@ -176,13 +187,20 @@ export default async function employeeListRoutes(app: FastifyInstance) {
   });
 
   app.put<{ Params: { nsId: string }; Body: unknown }>('/:nsId/status', async (req) => {
-    const { isActive } = StatusSchema.parse(req.body);
+    const body = StatusSchema.parse(req.body);
     const db = getDb();
     const [existing] = await db.select({ id: employees.id }).from(employees)
       .where(eq(employees.netsuiteInternalId, req.params.nsId)).limit(1);
     if (!existing) throw new NotFoundError('Employee', req.params.nsId);
+
+    const updateData: Record<string, unknown> = {
+      syncStatus: 'synced', syncedAt: new Date(), updatedAt: new Date(),
+    };
+    if (body.isActive !== undefined) updateData.isActive = body.isActive;
+    if (body.portalUser !== undefined) updateData.portalUser = body.portalUser;
+
     const [updated] = await db.update(employees)
-      .set({ isActive, syncStatus: 'synced', syncedAt: new Date(), updatedAt: new Date() })
+      .set(updateData)
       .where(eq(employees.id, existing.id))
       .returning();
     await invalidateDropdown('employees');
@@ -193,6 +211,6 @@ export default async function employeeListRoutes(app: FastifyInstance) {
       isActive: updated.isActive,
       portalUser: updated.portalUser,
     });
-    return { id: updated.id, netsuiteInternalId: updated.netsuiteInternalId, isActive: updated.isActive };
+    return { id: updated.id, netsuiteInternalId: updated.netsuiteInternalId, isActive: updated.isActive, portalUser: updated.portalUser };
   });
 }

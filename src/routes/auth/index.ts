@@ -74,13 +74,14 @@ export default async function authRoutes(app: FastifyInstance) {
     const [user] = await db
       .select({
         id: users.id, email: users.email, passwordHash: users.passwordHash, role: users.role,
-        isActive: users.isActive, netsuiteInternalId: users.netsuiteInternalId, mustChangePassword: users.mustChangePassword,
+        isActive: users.isActive, portalUser: users.portalUser, netsuiteInternalId: users.netsuiteInternalId, mustChangePassword: users.mustChangePassword,
       })
       .from(users)
       .where(eq(users.email, email))
       .limit(1);
 
-    if (!user || !user.isActive) throw new UnauthorizedError('Invalid credentials');
+    if (!user) throw new UnauthorizedError('Invalid credentials');
+    if (!user.isActive || !user.portalUser) throw new UnauthorizedError('User is not active.');
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) throw new UnauthorizedError('Invalid credentials');

@@ -54,6 +54,9 @@ export async function syncUserForEmployee(input: SyncEmployeeUserInput): Promise
         ...(firstName ? { firstName } : {}),
         ...(lastName ? { lastName } : {}),
         isActive,
+        // Only the /list/employees feed passes portalUser — leave it untouched when
+        // the AM/PD feed (which never sends it) touches this same row.
+        ...(portalUser !== undefined ? { portalUser } : {}),
         updatedAt: new Date(),
       })
       .where(eq(users.id, existing.id));
@@ -70,6 +73,7 @@ export async function syncUserForEmployee(input: SyncEmployeeUserInput): Promise
     lastName,
     role: 'user',
     isActive,
+    portalUser: true,
     netsuiteInternalId,
     mustChangePassword: true,
   });
