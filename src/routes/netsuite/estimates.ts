@@ -205,6 +205,7 @@ const LineItemSchema = z.object({
   oceanDdp            : z.string().optional().nullable(),
   airDdp              : z.string().optional().nullable(),
   trueTariff          : z.string().max(255).optional().nullable(),
+  testing             : z.string().optional().nullable(),
 });
 
 // Combined Schema: Create estimate WITH line items in single transaction
@@ -281,6 +282,7 @@ const SyncLineItemSchema = z.object({
   shipToVendorAddrNsId : z.string().optional().nullable(), // → vendor_addresses
   notes                : z.string().optional().nullable(),
   trueTariff           : z.string().max(255).optional().nullable(),
+  testing              : z.string().optional().nullable(),   // numeric string, accepts integer or decimal
 
   // Extended line fields
   paddingAmount        : z.string().optional().nullable(),   // numeric string
@@ -955,6 +957,7 @@ async function resolveLineItemValues(item: z.infer<typeof SyncLineItemSchema>) {
     exFactoryDate      : item.exFactoryDate ?? null,
     notes              : item.notes ?? null,
     trueTariff         : item.trueTariff ?? null,
+    testing            : item.testing ?? null,
 
     // NOTE: freight is intentionally NOT written to the line-item freight_*
     // columns. All freight lives in estimate_freight_groups, persisted from the

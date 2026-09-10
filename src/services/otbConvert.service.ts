@@ -437,6 +437,7 @@ async function otbBuildCreatePayload(estimateId: number) {
         dutyMarkupAmountNS    : otbToNum(li.dutyMarkupAmount),
         convertedNS           : li.converted ?? false,
         trueTariffRateNS      : li.trueTariff ?? '',
+        testingNS             : otbToNum(li.testing),
         freightSelectedGroupNS: li.freightSelectedGroup ?? '',
         freightPOLNS          : li.freightPol ?? '',
         freightPODNS          : li.freightPod ?? '',

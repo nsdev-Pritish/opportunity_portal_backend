@@ -28,6 +28,7 @@ const LineItemSchema = z.object({
   oceanDdp: z.string().optional(), airDdp: z.string().optional(),
   freightModeSelection: z.string().max(20).optional(),
   trueTariff: z.string().max(255).optional(),
+  testing: z.string().optional(),
 });
 
 export default async function lineItemRoutes(app: FastifyInstance) {

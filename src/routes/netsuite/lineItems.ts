@@ -57,6 +57,7 @@ const LineItemSchema = z.object({
   oceanDdp            : z.string().optional().nullable(),
   airDdp              : z.string().optional().nullable(),
   trueTariff          : z.string().max(255).optional().nullable(),
+  testing             : z.string().optional().nullable(),
 });
 
 // ─── Helper: find estimate by NS id ──────────────────────────────

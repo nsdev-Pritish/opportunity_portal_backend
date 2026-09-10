@@ -140,6 +140,7 @@ const ComponentSchema = z.object({
   converted:            z.boolean().optional(),
   freightModeSelection: z.string().max(20).optional(),
   trueTariff:           z.string().max(255).optional(),
+  testing:              z.string().optional(),            // numeric string, accepts integer or decimal e.g. "12" or "12.50"
   freightSelectedGroup: z.string().max(255).optional(),
   freightPol:           z.string().max(255).optional(),
   freightPod:           z.string().max(255).optional(),

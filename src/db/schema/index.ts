@@ -1057,6 +1057,8 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   freightModeSelection: varchar('freight_mode_selection', { length: 20 }),
   // Line-level true tariff (free-form text). Synced to NetSuite as `trueTariffRateNS`.
   trueTariff:           varchar('true_tariff', { length: 255 }),
+  // Line-level testing charge (numeric, accepts integer or decimal). Synced to NetSuite custom field `custcoltwelve_testingcharge` as `testingNS`.
+  testing:              numeric('testing',              { precision: 15, scale: 4 }),
   freightSelectedGroup: varchar('freight_selected_group', { length: 255 }),
   freightPol:           varchar('freight_pol', { length: 255 }),
   freightPod:           varchar('freight_pod', { length: 255 }),
