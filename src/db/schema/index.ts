@@ -528,6 +528,13 @@ export const hkPartners = pgTable('hk_partners', {
 export const opsPartners = pgTable('ops_partners', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
+  // NetSuite Employee internal id for the person behind this Ops Partner row —
+  // distinct from netsuite_internal_id (below, via syncCols), which is populated
+  // by the NetSuite dropdown sync and is NOT guaranteed to be the same id space
+  // as users.netsuite_internal_id (Employee). Estimate ownership matching must
+  // use this column, not netsuite_internal_id — see buildEstimateAccessCondition
+  // in estimate.service.ts.
+  opsPartnerEmployeeInternalId: varchar('ops_partner_employee_internal_id', { length: 50 }),
   ...syncCols,
 });
 

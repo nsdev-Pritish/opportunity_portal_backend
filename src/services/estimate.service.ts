@@ -74,6 +74,13 @@ type EstimateFilterOpts = {
 // those tables with a different local id each time, so each is resolved separately.
 // A user with no netsuiteInternalId (e.g. an admin-created, non-NetSuite-synced
 // account) can only ever match via createdBy.
+//
+// Ops Partner is the one exception: ops_partners.netsuite_internal_id is NOT reliably
+// the same id space as users.netsuite_internal_id (Employee) — confirmed live, where an
+// Ops Partner's own login carried a different NetSuite id than their own ops_partners
+// row, so matching on netsuite_internal_id silently matched nothing. Ops Partner is
+// matched on ops_partner_employee_internal_id instead, which is explicitly the
+// partner's NetSuite Employee internal id (see column comment in schema/index.ts).
 async function buildEstimateAccessCondition(
   db: ReturnType<typeof getDb>,
   viewer: { viewerUserId?: number; viewerNetsuiteInternalId?: string | null },
@@ -83,10 +90,10 @@ async function buildEstimateAccessCondition(
   const nsId = viewer.viewerNetsuiteInternalId;
   const [[am], [op], [pd]] = await Promise.all([
     nsId ? db.select({ id: accountManagers.id }).from(accountManagers).where(eq(accountManagers.netsuiteInternalId, nsId)).limit(1) : Promise.resolve([]),
-    nsId ? db.select({ id: opsPartners.id }).from(opsPartners).where(eq(opsPartners.netsuiteInternalId, nsId)).limit(1) : Promise.resolve([]),
+    nsId ? db.select({ id: opsPartners.id }).from(opsPartners).where(eq(opsPartners.opsPartnerEmployeeInternalId, nsId)).limit(1) : Promise.resolve([]),
     nsId ? db.select({ id: productDevelopers.id }).from(productDevelopers).where(eq(productDevelopers.netsuiteInternalId, nsId)).limit(1) : Promise.resolve([]),
   ]);
-
+ 
   const clauses: any[] = [eq(estimates.createdBy, viewer.viewerUserId)];
   if (am) clauses.push(eq(estimates.acctManagerId, am.id));
   if (op) clauses.push(or(eq(estimates.opsPartner1Id, op.id), eq(estimates.opsPartner2Id, op.id))!);
