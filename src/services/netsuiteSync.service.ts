@@ -738,6 +738,19 @@ async function applyConvertEsStatus(estimateId: number, nsEsStatusId?: string | 
   logger.info({ estimateId, esStatusId, source }, 'ES Status updated after convert');
 }
 
+// ── In-flight guard ────────────────────────────────────────────────────────
+//
+// Tracks which estimates currently have a sync attempt running, so a double Retry
+// click (or a resync racing an auto-fired save) can't fire two concurrent POSTs to
+// NetSuite for the same estimate — the second call just skips instead of racing the
+// first one's create/update. Node runs this check-then-add synchronously (no `await`
+// in between), so it's race-free within one process.
+const inFlightSyncs = new Set<number>();
+
+export function isEstimateSyncInFlight(estimateId: number): boolean {
+  return inFlightSyncs.has(estimateId);
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 export async function syncEstimateToNetsuite(
@@ -749,6 +762,12 @@ export async function syncEstimateToNetsuite(
     logger.debug({ estimateId }, 'NS_SUITELET_URL not configured — skipping NS sync');
     return;
   }
+
+  if (inFlightSyncs.has(estimateId)) {
+    logger.warn({ estimateId, mode }, 'NS sync already in progress for this estimate — skipping duplicate attempt');
+    return;
+  }
+  inFlightSyncs.add(estimateId);
 
   const db = getDb();
   const isConvert = mode === 'convert' || mode === 'convertToExisting';
@@ -1070,6 +1089,8 @@ export async function syncEstimateToNetsuite(
         .set({ syncStatus: 'failed', syncError: message, updatedAt: new Date() } as any)
         .where(eq(estimateQuotes.id, opts.quoteId));
     }
+  } finally {
+    inFlightSyncs.delete(estimateId);
   }
 }
 

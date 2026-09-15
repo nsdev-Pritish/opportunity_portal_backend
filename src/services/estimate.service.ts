@@ -8,9 +8,9 @@ import {
   projectTypes, currencies, salesChannels, esStatus,
 } from '../db/schema/index.js';
 import { cacheDel, CacheKeys } from '../utils/cache.js';
-import { NotFoundError } from '../utils/errors.js';
+import { NotFoundError, ConflictError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import { syncEstimateToNetsuite, deactivateLinesInNetsuite } from './netsuiteSync.service.js';
+import { syncEstimateToNetsuite, deactivateLinesInNetsuite, isEstimateSyncInFlight } from './netsuiteSync.service.js';
 import {
   saveCreativeRequests,
   getCreativeRequestsForEstimate,
@@ -1269,8 +1269,16 @@ export async function resyncEstimate(id: number) {
 
   if (!est) throw new NotFoundError('Estimate', String(id));
 
+  // Refuse a second concurrent attempt for the same estimate (double Retry click, or a
+  // resync racing an auto-fired save) instead of firing another NetSuite POST on top of
+  // one that's still running.
+  if (isEstimateSyncInFlight(id)) {
+    throw new ConflictError(`Estimate ${id} already has a NetSuite sync in progress`);
+  }
+
   // Reset to pending so the UI knows a sync attempt is in flight — including the
-  // estimate's line items + freight groups, which the sync run will re-stamp.
+  // estimate's line items + freight groups, which the sync run will re-stamp. Reuses
+  // this same DB row; no new Estimate is created here or in NetSuite until the POST below.
   await Promise.all([
     db.update(estimates)
       .set({ syncStatus: 'pending', syncError: null } as any)
