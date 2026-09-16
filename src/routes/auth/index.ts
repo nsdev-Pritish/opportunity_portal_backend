@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { eq, and, gt } from 'drizzle-orm';
+import { eq, and, gt, sql } from 'drizzle-orm';
 import { getDb } from '../../config/database.js';
 import { users, employees, departments, subsidiaries, currencies } from '../../db/schema/index.js';
 import { UnauthorizedError, ConflictError, ValidationError } from '../../utils/errors.js';
@@ -53,7 +53,7 @@ export default async function authRoutes(app: FastifyInstance) {
     const body = RegisterBody.parse(req.body);
     const db = getDb();
 
-    const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, body.email)).limit(1);
+    const [existing] = await db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = lower(${body.email})`).limit(1);
     if (existing) throw new ConflictError('Email already registered');
 
     const passwordHash = await bcrypt.hash(body.password, 12);
@@ -77,7 +77,7 @@ export default async function authRoutes(app: FastifyInstance) {
         isActive: users.isActive, portalUser: users.portalUser, netsuiteInternalId: users.netsuiteInternalId, mustChangePassword: users.mustChangePassword,
       })
       .from(users)
-      .where(eq(users.email, email))
+      .where(sql`lower(${users.email}) = lower(${email})`)
       .limit(1);
 
     if (!user) throw new UnauthorizedError('Invalid credentials');
@@ -172,7 +172,7 @@ export default async function authRoutes(app: FastifyInstance) {
     const db = getDb();
 
     const [user] = await db.select({ id: users.id, isActive: users.isActive })
-      .from(users).where(eq(users.email, email)).limit(1);
+      .from(users).where(sql`lower(${users.email}) = lower(${email})`).limit(1);
 
     if (user?.isActive) {
       const rawToken = crypto.randomBytes(32).toString('hex');
