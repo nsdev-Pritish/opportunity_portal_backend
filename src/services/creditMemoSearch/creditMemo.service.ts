@@ -48,6 +48,9 @@ export const CreditMemoCreateSchema = z.object({
   documentNumber           : z.string().max(100).optional(),
   departmentInternalId     : z.string().max(50).optional(),
   customerInternalId       : z.string().max(50).optional(),
+  // Display-text fallback, stored alongside the resolved customerId — NOT
+  // itself resolved (see credit_memo_search.customer_name comment).
+  customerName             : z.string().max(200).optional(),
   // Free text (no longer resolved) — same as invoice_search / sales_order_search.
   consolidatedCustomer     : z.string().max(500).optional(),
   topLevelParentInternalId : z.string().max(50).optional(),
@@ -81,6 +84,7 @@ export type CreditMemoUpdateInput = z.infer<typeof CreditMemoUpdateSchema>;
 
 const PASSTHROUGH_FIELDS = [
   'documentNumber',
+  'customerName',
   'consolidatedCustomer',
   'createdFrom',
   'createdFromInternalId',

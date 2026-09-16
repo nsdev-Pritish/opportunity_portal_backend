@@ -1408,6 +1408,11 @@ export const creditMemoSearch = pgTable('credit_memo_search', {
   departmentId: integer('department_id').references(() => departments.id),
 
   customerId: integer('customer_id').references(() => customers.id),
+  // Display-text fallback for Customer, carried alongside the resolved FK —
+  // NetSuite sends both customerInternalId (resolved above) and this text.
+  // Kept so the customer is still readable on the row even if
+  // customerInternalId matches no customers row (not synced yet / mismatch).
+  customerName: varchar('customer_name', { length: 200 }),
   // Consolidated Customer — free text, not a FK. NetSuite's Credit Memo saved
   // search sends the DISPLAY TEXT for this field, never an internal id (same
   // reason as invoice_search.consolidated_customer — see migration 0076).
