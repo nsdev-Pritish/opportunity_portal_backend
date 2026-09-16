@@ -1396,6 +1396,54 @@ export const invoiceSearch = pgTable('invoice_search', {
 }));
 
 // ══════════════════════════════════════════════════════════════════
+//  CREDIT MEMO SAVED SEARCH (mirror of the NetSuite Credit Memo saved search)
+//  Mainline search — one row per credit memo document, no line items.
+// ══════════════════════════════════════════════════════════════════
+
+export const creditMemoSearch = pgTable('credit_memo_search', {
+  id: serial('id').primaryKey(),
+
+  documentNumber: varchar('document_number', { length: 100 }),
+
+  departmentId: integer('department_id').references(() => departments.id),
+
+  customerId: integer('customer_id').references(() => customers.id),
+  // Consolidated Customer — free text, not a FK. NetSuite's Credit Memo saved
+  // search sends the DISPLAY TEXT for this field, never an internal id (same
+  // reason as invoice_search.consolidated_customer — see migration 0076).
+  consolidatedCustomer: varchar('consolidated_customer', { length: 500 }),
+  topLevelParentId: integer('top_level_parent_id').references(() => customers.id),
+
+  // Created From — the invoice this credit memo was created from. Plain text
+  // + a raw (unresolved) internal id, NOT a FK into invoice_search, so a
+  // credit memo still keeps its reference if the source invoice hasn't
+  // synced yet (or is later removed) — same rationale as
+  // invoice_search.so_document_number / salesOrderSearch.createdFrom.
+  createdFrom: varchar('created_from', { length: 255 }),
+  createdFromInternalId: varchar('created_from_internal_id', { length: 50 }),
+  invoiceDocumentNumber: varchar('invoice_document_number', { length: 100 }),
+  invoiceDate: date('invoice_date'),
+
+  creditMemoDate: date('credit_memo_date'),
+
+  // Signed — NetSuite sends credit memo amounts as both positive and negative.
+  amount: numeric('amount'),
+
+  currencyId: integer('currency_id').references(() => currencies.id),
+  subsidiaryId: integer('subsidiary_id').references(() => subsidiaries.id),
+  projectNameId: integer('project_name_id').references(() => projectNames.id),
+  salesRepId: integer('sales_rep_id').references(() => accountManagers.id),
+
+  ...syncCols,
+}, (t) => ({
+  nsIdIdx:        uniqueIndex('cms_ns_id_idx').on(t.netsuiteInternalId),
+  syncIdx:         index('cms_sync_idx').on(t.syncStatus),
+  customerIdx:     index('cms_customer_idx').on(t.customerId),
+  docNumIdx:       index('cms_doc_num_idx').on(t.documentNumber),
+  createdFromIdx:  index('cms_created_from_idx').on(t.createdFrom),
+}));
+
+// ══════════════════════════════════════════════════════════════════
 //  BUDGET SAVED SEARCH (mirror of the NetSuite budget/forecast saved search)
 //  List/Record fields store the FK id; (FCT) = forecast numeric fields.
 //  FK targets: departments, customers, quarters, forecast_statuses, employees.
@@ -1540,7 +1588,7 @@ export const factRevenueSnapshot = pgTable('fact_revenue_snapshot', {
   // Technical
   snapshotDate: date('snapshot_date').notNull(),
   snapshotTs: timestamp('snapshot_ts', { withTimezone: true }).notNull(),
-  sourceType: varchar('source_type', { length: 20 }).notNull(), // PIPELINE / SO / INVOICE / BUDGET
+  sourceType: varchar('source_type', { length: 20 }).notNull(), // PIPELINE / SO / INVOICE / BUDGET / CREDIT_MEMO
   sourceName: varchar('source_name', { length: 100 }), // which NetSuite saved search produced this row — traceability
   internalId: varchar('internal_id', { length: 50 }).notNull(),
   anchorId: varchar('anchor_id', { length: 50 }),
@@ -1563,6 +1611,7 @@ export const factRevenueSnapshot = pgTable('fact_revenue_snapshot', {
   createdDate: date('created_date'),
   revenueDate: date('revenue_date'),
   revenuePeriod: date('revenue_period'), // DATE_TRUNC('month', revenue_date)
+  expectedCloseDate: date('expected_close_date'), // Pipeline: expected_close_date; SO: tran_date (no so_date column); Invoice: so_date; Budget: so_close_period
 
   // Amounts
   foreignAmount: numeric('foreign_amount', { precision: 18, scale: 2 }),
@@ -1795,17 +1844,18 @@ export const revenueChangeLog = pgTable('revenue_change_log', {
 // Control table for the signal-driven snapshot job (src/jobs/revenueSnapshot/).
 // NetSuite calls three endpoints — "sync start", "sync end", and "sync fail"
 // — once per source per day; each call upserts one row here. sourceType is
-// one of PIPELINE / SO / INVOICE / BUDGET for the 4 real sources, plus a 5th
-// synthetic row per day with sourceType = 'ALL' that tracks the overall
-// insert job's own lifecycle (pending -> scheduled -> running -> complete /
-// failed) once all 4 real sources report 'completed'. If any real source
-// reports 'failed', that day must not be used for comparisons — the insert
-// never gets triggered, since allSourcesCompleted() only counts 'completed'
-// rows. Not read by anything else in the app.
+// one of PIPELINE / SO / INVOICE / BUDGET / CREDIT_MEMO for the real sources
+// (see config.ts#SOURCE_TYPES), plus a synthetic row per day with
+// sourceType = 'ALL' that tracks the overall insert job's own lifecycle
+// (pending -> scheduled -> running -> complete / failed) once every real
+// source reports 'completed'. If any real source reports 'failed', that day
+// must not be used for comparisons — the insert never gets triggered, since
+// allSourcesCompleted() only counts 'completed' rows. Not read by anything
+// else in the app.
 export const revenueSyncSignalLog = pgTable('revenue_sync_signal_log', {
   id: serial('id').primaryKey(),
   runDate: date('run_date').notNull(),
-  sourceType: varchar('source_type', { length: 20 }).notNull(), // PIPELINE / SO / INVOICE / BUDGET / ALL
+  sourceType: varchar('source_type', { length: 20 }).notNull(), // PIPELINE / SO / INVOICE / BUDGET / CREDIT_MEMO / ALL
   status: varchar('status', { length: 20 }).default('pending').notNull(), // pending/started/completed/failed (sources) or pending/scheduled/running/complete/failed (ALL)
   recordCount: integer('record_count'), // how many records NetSuite reported syncing — sanity-check input
   startedAt: timestamp('started_at', { withTimezone: true }),
@@ -1966,6 +2016,17 @@ export const invoiceSearchRelations = relations(invoiceSearch, ({ one }) => ({
   businessVertical:     one(businessVerticals, { fields: [invoiceSearch.businessVerticalId],   references: [businessVerticals.id] }),
   salesRep:             one(accountManagers,   { fields: [invoiceSearch.salesRepId],           references: [accountManagers.id] }),
   likelyToClose:        one(likelyToClose,     { fields: [invoiceSearch.likelyToCloseId],      references: [likelyToClose.id] }),
+}));
+
+export const creditMemoSearchRelations = relations(creditMemoSearch, ({ one }) => ({
+  department:    one(departments,  { fields: [creditMemoSearch.departmentId],     references: [departments.id] }),
+  customer:      one(customers,    { fields: [creditMemoSearch.customerId],       references: [customers.id] }),
+  // consolidatedCustomer is a free-text column (not a FK) — no relation.
+  topLevelParent: one(customers,   { fields: [creditMemoSearch.topLevelParentId], references: [customers.id] }),
+  currency:      one(currencies,   { fields: [creditMemoSearch.currencyId],       references: [currencies.id] }),
+  subsidiary:    one(subsidiaries, { fields: [creditMemoSearch.subsidiaryId],     references: [subsidiaries.id] }),
+  projectName:   one(projectNames, { fields: [creditMemoSearch.projectNameId],    references: [projectNames.id] }),
+  salesRep:      one(accountManagers, { fields: [creditMemoSearch.salesRepId],    references: [accountManagers.id] }),
 }));
 
 export const budgetSearchRelations = relations(budgetSearch, ({ one }) => ({

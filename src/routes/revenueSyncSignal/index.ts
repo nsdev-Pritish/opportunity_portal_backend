@@ -4,15 +4,15 @@
  *
  * NetSuite's daily scheduled script calls these once per source, at the
  * start, end, or fail of that source's sync batch for the day:
- *   POST /start  { source: 'PIPELINE' | 'SO' | 'INVOICE' | 'BUDGET' }
+ *   POST /start  { source: 'PIPELINE' | 'SO' | 'INVOICE' | 'BUDGET' | 'CREDIT_MEMO' }
  *   POST /end    { source, recordCount? }
  *   POST /fail   { source, reason }
  *
- * Once all 4 sources have reported /end for the same day, the Revenue
- * Snapshot insert is scheduled automatically 1 minute later — see
- * src/jobs/revenueSnapshot/syncSignalHandler.ts. If any source reports
- * /fail instead, that day's insert never fires until it's re-run and
- * reports /end successfully.
+ * Once every source in SOURCE_TYPES (src/jobs/revenueSnapshot/config.ts) has
+ * reported /end for the same day, the Revenue Snapshot insert is scheduled
+ * automatically 1 minute later — see src/jobs/revenueSnapshot/syncSignalHandler.ts.
+ * If any source reports /fail instead, that day's insert never fires until
+ * it's re-run and reports /end successfully.
  *
  * A 4th, read-only endpoint exists purely for testing/diagnostics — not
  * called by NetSuite:

@@ -1,7 +1,8 @@
 // The "read a source table, resolve, insert" sweep — run strictly one source
-// at a time (Pipeline, then Open SO, then Invoice, then Budget), each fully
-// selected, transformed, and inserted before the next one starts. Read-only
-// against the 4 source tables; only ever writes to fact_revenue_snapshot.
+// at a time (Pipeline, then Open SO, then Invoice, then Credit Memo, then
+// Budget), each fully selected, transformed, and inserted before the next
+// one starts. Read-only against the 5 source tables; only ever writes to
+// fact_revenue_snapshot.
 //
 // Known gaps, carried over as documented NULLs rather than guessed values —
 // see the schema/migration comments for fact_revenue_snapshot:
@@ -28,10 +29,17 @@
 //     Estimate/SO at all (a walk-in SO/invoice with no pipeline history), so
 //     anchor_id is never null for an active SO/Invoice row. Budget stays NULL
 //     here — there is no mapping for it, per the workbook (not lifecycle-linked).
+//     Credit Memo chains the same way through its linked Invoice's own
+//     already-resolved anchor (credit_memo_search.invoice_document_number is
+//     already a bare document number — no parseReferenceNumber() needed),
+//     falling back to its own document number when there's no linked invoice.
 //   - usd_amount: Pipeline uses projected_total, Invoice uses usd_net_revenue,
 //     Budget uses net_revenue. SO uses sales_order_search.open_amount ("Open
 //     Amount") — NetSuite does not populate projected_total on the Open SO
 //     saved search, so reading it left usd_amount NULL on every SO row.
+//     Credit Memo has no separate USD/exchange-rate field at all — amount is
+//     used as both foreign_amount and usd_amount (same simplification as
+//     Budget's net_revenue), signed (positive or negative).
 //   - stage: NULL for Pipeline (no source field). SO actually already has
 //     this available for free via estimate_statuses.stage (the same lookup
 //     used for `status`) — resolved below. NULL for Invoice, per the
@@ -68,6 +76,7 @@ import {
   salesOrderSearch,
   invoiceSearch,
   budgetSearch,
+  creditMemoSearch,
   factRevenueSnapshot,
   departments,
   customers,
@@ -92,6 +101,7 @@ const SOURCE_NAMES: Record<string, string> = {
   SO: 'Open SO Saved Search',
   INVOICE: 'Invoice Saved Search',
   BUDGET: 'Budget Saved Search',
+  CREDIT_MEMO: 'Credit Memo Saved Search',
 };
 
 type Id = number | null | undefined;
@@ -204,6 +214,7 @@ function buildPipelineRows(
     createdDate: toDateOnly(r.tranDate),
     revenueDate: toDateOnly(r.promisedDeliveryDate),
     revenuePeriod: toMonthStart(r.promisedDeliveryDate),
+    expectedCloseDate: toDateOnly(r.expectedCloseDate),
     // Prefers the real foreign_amount column; falls back to the raw
     // transaction amount (projectedTotal) if that's empty; NULL if neither is set.
     foreignAmount: r.foreignAmount ?? r.projectedTotal ?? null,
@@ -241,6 +252,7 @@ function buildSalesOrderRows(
     createdDate: toDateOnly(r.tranDate),
     revenueDate: toDateOnly(r.endDate), // workbook calls this "End Date" — sales_order_search has a dedicated column for it
     revenuePeriod: toMonthStart(r.endDate), // same field as revenueDate, truncated to month — same pattern Pipeline uses
+    expectedCloseDate: toDateOnly(r.tranDate), // sales_order_search has no so_date column — tranDate ("Date") used instead
     // Prefers the real foreign_amount column; falls back to the raw
     // transaction amount (projectedTotal) if that's empty; NULL if neither is set.
     foreignAmount: r.foreignAmount ?? r.projectedTotal ?? null,
@@ -292,6 +304,7 @@ function buildInvoiceRows(
       // relevant date on an invoice.
       revenueDate: toDateOnly(r.tranDate),
       revenuePeriod: toMonthStart(r.tranDate), // first day of the revenue month
+      expectedCloseDate: toDateOnly(r.soDate), // invoice_search's own denormalized copy of the linked SO's date
       // Prefers the real foreign_amount column; falls back to the raw
       // transaction amount (projectedTotal) if that's empty; NULL if neither is set.
       foreignAmount: r.foreignAmount ?? r.projectedTotal ?? null,
@@ -330,6 +343,7 @@ function buildBudgetRows(
     createdDate: toDateOnly(r.dateCreated ?? r.createdAt), // NetSuite's own "Date Created" when sent; portal createdAt otherwise
     revenueDate: toDateOnly(r.revenuePeriod),
     revenuePeriod: toMonthStart(r.revenuePeriod), // first day of the revenue month
+    expectedCloseDate: toDateOnly(r.soClosePeriod), // budget_search "SO Close Period"
     foreignAmount: null, // not applicable to Budget, per the workbook — no source column exists
     currency: null, // gap — no source field; not yet confirmed always-USD
     exchangeRate: null,
@@ -337,6 +351,56 @@ function buildBudgetRows(
     changeDriver: null,
     isActive: r.isActive,
   }));
+}
+
+function buildCreditMemoRows(
+  rows: (typeof creditMemoSearch.$inferSelect)[],
+  lu: MasterLookups,
+  snapshotDate: string,
+  snapshotTs: Date,
+  invoiceAnchorByDocNumber: Map<string, string>,
+): SnapshotRow[] {
+  return rows.map(r => {
+    // Chain onto the SAME anchor its originating Invoice already resolved to
+    // (which may itself be chained through to an SO/Estimate) — same pattern
+    // Invoice uses to inherit its SO's anchor. invoice_document_number is
+    // already a bare document number (joined straight off the linked
+    // invoice's own tranid), not a "Record Type #Num" reference label, so no
+    // parseReferenceNumber() needed here.
+    const anchorViaInvoice = r.invoiceDocumentNumber ? invoiceAnchorByDocNumber.get(r.invoiceDocumentNumber) : undefined;
+    return {
+      snapshotDate,
+      snapshotTs,
+      sourceType: 'CREDIT_MEMO',
+      sourceName: SOURCE_NAMES.CREDIT_MEMO,
+      internalId: r.netsuiteInternalId ?? '',
+      anchorId: anchorViaInvoice ?? r.invoiceDocumentNumber ?? r.documentNumber,
+      documentNumber: r.documentNumber,
+      consolidatedCustomer: r.consolidatedCustomer, // free text on this source, same as Invoice/SO
+      topLevelParent: get(lu.customerNames, r.topLevelParentId),
+      department: get(lu.departmentNames, r.departmentId),
+      salesRep: get(lu.accountManagerNames, r.salesRepId),
+      projectName: get(lu.projectNameNames, r.projectNameId),
+      subsidiary: get(lu.subsidiaryNames, r.subsidiaryId),
+      status: null, // gap — no source field
+      stage: null, // gap — no source field
+      likelyToClose: null, // gap — no source field
+      createdDate: toDateOnly(r.creditMemoDate),
+      revenueDate: toDateOnly(r.creditMemoDate),
+      revenuePeriod: toMonthStart(r.creditMemoDate),
+      expectedCloseDate: toDateOnly(r.invoiceDate), // credit_memo_search's own denormalized copy of the linked invoice's date
+      // No separate foreign/USD amount fields on this source (no exchange
+      // rate sent) — amount is used as both, same simplification Budget uses
+      // for net_revenue. Signed: NetSuite sends both positive and negative
+      // credit memo amounts.
+      foreignAmount: r.amount,
+      currency: get(lu.currencyCodes, r.currencyId),
+      exchangeRate: null, // gap — no source field
+      usdAmount: r.amount,
+      changeDriver: null,
+      isActive: r.isActive,
+    };
+  });
 }
 
 export interface BuildResult {
@@ -395,6 +459,19 @@ export async function buildRevenueSnapshotSequential(db: DB, snapshotDate: strin
     await insertInChunks(tx, invoiceRows);
     bySource.INVOICE = invoiceRows.length;
     inserted += invoiceRows.length;
+
+    // Lets Credit Memo rows inherit the SAME anchor their originating Invoice
+    // already resolved to (see buildInvoiceRows / buildCreditMemoRows).
+    const invoiceAnchorByDocNumber = new Map(
+      invoiceRows.filter((r): r is typeof r & { documentNumber: string; anchorId: string } => r.documentNumber != null && r.anchorId != null)
+        .map(r => [r.documentNumber, r.anchorId]),
+    );
+
+    const creditMemoSource = await tx.select().from(creditMemoSearch).where(eq(creditMemoSearch.isActive, true));
+    const creditMemoRows = buildCreditMemoRows(creditMemoSource, lu, snapshotDate, snapshotTs, invoiceAnchorByDocNumber);
+    await insertInChunks(tx, creditMemoRows);
+    bySource.CREDIT_MEMO = creditMemoRows.length;
+    inserted += creditMemoRows.length;
 
     const budgetSource = await tx.select().from(budgetSearch).where(eq(budgetSearch.isActive, true));
     const budgetRows = buildBudgetRows(budgetSource, lu, snapshotDate, snapshotTs);

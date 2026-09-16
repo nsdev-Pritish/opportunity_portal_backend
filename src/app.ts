@@ -20,6 +20,7 @@ import estimateQuoteRoutes from './routes/estimateQuotesSearch/index.js';
 import invoiceRoutes from './routes/invoiceSearch/index.js';
 import salesOrderRoutes from './routes/salesOrderSearch/index.js';
 import budgetRoutes from './routes/budgetSearch/index.js';
+import creditMemoRoutes from './routes/creditMemoSearch/index.js';
 import revenueSyncSignalRoutes from './routes/revenueSyncSignal/index.js';
 import nsRoutes       from './routes/netsuite/index.js';
 import uploadRoutes   from './routes/upload/index.js';
@@ -53,6 +54,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       req.url.startsWith('/api/v1/invoices') ||
       req.url.startsWith('/api/v1/sales-orders') ||
       req.url.startsWith('/api/v1/budgets') ||
+      req.url.startsWith('/api/v1/credit-memos') ||
       req.url.startsWith('/api/v1/revenue-sync-signal'),
   });
 
@@ -81,6 +83,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(invoiceRoutes, { prefix: '/api/v1/invoices' });
   await app.register(salesOrderRoutes, { prefix: '/api/v1/sales-orders' });
   await app.register(budgetRoutes, { prefix: '/api/v1/budgets' });
+  await app.register(creditMemoRoutes, { prefix: '/api/v1/credit-memos' });
   await app.register(revenueSyncSignalRoutes, { prefix: '/api/v1/revenue-sync-signal' });
 
   // ── File upload (JWT auth) ────────────────────────────────────
