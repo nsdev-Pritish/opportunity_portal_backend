@@ -10,11 +10,10 @@ import {
 
 // Recursively convert "" / null to undefined so Zod number fields accept blank frontend values.
 // NOTE: null and undefined are NOT the same downstream — Drizzle's .set() drops undefined keys
-// (column untouched) but keeps explicit null (SET column = NULL). This function is intentionally
-// still used as-is for lineItems/freightGroups/creativeRequests (see the PATCH /:id handler),
-// where clearing a value via null is not a supported feature — changing that here would turn a
-// harmless no-op into a hard validation error for unrelated fields. For the small set of header
-// dropdown/FK fields that DO support clearing, see stripEmptyPreserveClearable below instead.
+// (column untouched) but keeps explicit null (SET column = NULL). Still used as-is for
+// creativeRequests and for the create-estimate routes, where there is no previous value to
+// protect / no clearing feature is offered. For every field that DOES support clearing, see
+// stripEmptyPreserveClearable below instead.
 function stripEmpty(val: unknown): unknown {
   if (val === '' || val === null) return undefined;
   if (Array.isArray(val)) return val.map(stripEmpty);
@@ -26,34 +25,50 @@ function stripEmpty(val: unknown): unknown {
   return val;
 }
 
-// Header dropdown/FK fields where the client may send explicit `null` (or `""`) to clear a
-// previously-set value (paired with `.nullable()` on these same fields in EstimateHeaderSchema).
+// Every dropdown/FK field, across the estimate header, line items/components, freight groups,
+// and the Pipeline grid, where the client may send explicit `null` (or `""`) to clear a
+// previously-set value (each is paired with `.nullable()` on its own Zod field definition).
+// Checked by key name at any depth — verified no two fields in different parts of the schema
+// share a name, so one flat set is safe to apply uniformly across the whole request tree.
 // Both null and "" are accepted as "clear" here because every field in this set is a
 // z.number().int().positive() dropdown/FK id — "" can never be a legitimate value for them, so
 // treating it the same as null carries no risk of misreading an intended value as a clear.
 // Every other field keeps the old behavior where null and "" both mean "not provided".
-const CLEARABLE_HEADER_FIELDS = new Set([
+const CLEARABLE_FIELDS = new Set([
+  // Estimate header
   'subsidiaryId', 'customerContactId', 'projectNameId', 'projectTypeId', 'likelyToCloseId',
   'sellCurrencyId', 'departmentId', 'salesChannelId', 'businessVerticalId', 'businessTypeId',
   'compliancePartnerId', 'acctManagerId', 'hkPartnerId', 'opsPartner1Id', 'opsPartner2Id',
   'clientIncotermsId', 'clientShipMethodId', 'shippingAddressId', 'billingAddressId',
   'statusId', 'closedLostReasonId', 'clientPursuitAlternativeId', 'divisionalBudgetId',
   'orderClassificationId',
+  // Line items / components (ComponentSchema — shared by top-level items and nested components)
+  'itemTypeId', 'vendorId', 'factoryId', 'vendorCurrencyId', 'productClassId', 'productClassEuId',
+  'classId', 'sustainabilityId', 'componentKitItemId', 'vendorIncotermsId', 'shipToVendorId',
+  'shipToVendorAddrId', 'previousLineId',
+  // Freight groups
+  'drayageId',
+  // Pipeline grid bulk-edit fields not already covered above
+  'esStatusId',
 ]);
 
-// Shallow (top-level only) variant of stripEmpty for the estimate header fields on a PATCH
-// /:id request: for a CLEARABLE_HEADER_FIELDS key, both null and "" are preserved as an explicit
-// null so it reaches EstimateHeaderSchema and then Drizzle's .set() as a real null; for every
-// other field, "" and null both still collapse to undefined ("not provided"), unchanged. Only
-// ever applied to the header-level object, never to lineItems/freightGroups/creativeRequests —
-// those keep going through the original stripEmpty.
-function stripEmptyPreserveClearable(body: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(body).map(([k, v]) => {
-      if (v === '' || v === null) return [k, CLEARABLE_HEADER_FIELDS.has(k) ? null : undefined];
-      return [k, v];
-    })
-  );
+// Recursive variant of stripEmpty that preserves null/"" as an explicit null on any
+// CLEARABLE_FIELDS key, at any depth (estimate header, lineItems[], components[],
+// freightGroups[], Pipeline grid items) — so it reaches its Zod schema and then Drizzle's
+// .set() as a real null instead of being swept into undefined. Every other field keeps the old
+// behavior: "" and null both collapse to undefined ("not provided").
+function stripEmptyPreserveClearable(val: unknown): unknown {
+  if (val === '' || val === null) return undefined;
+  if (Array.isArray(val)) return val.map(stripEmptyPreserveClearable);
+  if (val && typeof val === 'object') {
+    return Object.fromEntries(
+      Object.entries(val as Record<string, unknown>).map(([k, v]) => {
+        if (v === '' || v === null) return [k, CLEARABLE_FIELDS.has(k) ? null : undefined];
+        return [k, stripEmptyPreserveClearable(v)];
+      })
+    );
+  }
+  return val;
 }
 
 // Accept productDeveloperId (singular) as an alias for productDeveloperIds (plural)
@@ -99,10 +114,10 @@ import { previewNsPayload } from '../../services/netsuiteSync.service.js';
 const ComponentSchema = z.object({
   // ── Line header ────────────────────────────────────────────────────────────
   id: z.number().int().positive().optional(),
-  itemTypeId: z.number().int().positive().optional(),
+  itemTypeId: z.number().int().positive().nullable().optional(),
   shortDescription: z.string().max(500).optional(),
   color: z.string().max(20).optional(),
-  vendorId: z.number().int().positive().optional(),
+  vendorId: z.number().int().positive().nullable().optional(),
   quantity: z.string().optional(),
   sellPricePerUnit: z.string().optional(),
   skuMarginPct: z.string().optional(),
@@ -115,8 +130,8 @@ const ComponentSchema = z.object({
   // ── Purchase Information ───────────────────────────────────────────────────
   image: z.object({ name: z.string(), url: z.string().url(), size: z.number(), type: z.string() }).optional(),
   description: z.string().optional(),
-  factoryId: z.number().int().positive().optional(),
-  vendorCurrencyId: z.number().int().positive().optional(),
+  factoryId: z.number().int().positive().nullable().optional(),
+  vendorCurrencyId: z.number().int().positive().nullable().optional(),
   factoryCostPerUnit: z.string().optional(),
   packingCostPerUnit: z.string().optional(),
   sampleFees: z.string().optional(),
@@ -134,11 +149,11 @@ const ComponentSchema = z.object({
   paddingPct: z.string().optional(),
 
   // ── Classification ─────────────────────────────────────────────────────────
-  productClassId: z.number().int().positive().optional(),
-  productClassEuId: z.number().int().positive().optional(),
-  classId: z.number().int().positive().optional(),
-  sustainabilityId: z.number().int().positive().optional(),
-  componentKitItemId: z.number().int().positive().optional(),
+  productClassId: z.number().int().positive().nullable().optional(),
+  productClassEuId: z.number().int().positive().nullable().optional(),
+  classId: z.number().int().positive().nullable().optional(),
+  sustainabilityId: z.number().int().positive().nullable().optional(),
+  componentKitItemId: z.number().int().positive().nullable().optional(),
   htsCode: z.string().max(20).optional(),
   countryOfOrigin: z.string().max(100).optional(),
   countryOfDest: z.enum(['US', 'EU']).optional(),
@@ -157,14 +172,14 @@ const ComponentSchema = z.object({
 
   // ── Other Details (Vendor Only) ────────────────────────────────────────────
   exFactoryDate: z.string().optional(),
-  vendorIncotermsId: z.number().int().positive().optional(),
-  shipToVendorId: z.number().int().positive().optional(),
-  shipToVendorAddrId: z.number().int().positive().optional(),
+  vendorIncotermsId: z.number().int().positive().nullable().optional(),
+  shipToVendorId: z.number().int().positive().nullable().optional(),
+  shipToVendorAddrId: z.number().int().positive().nullable().optional(),
   notes: z.string().optional(),
 
   // ── Extended Line Fields ───────────────────────────────────────────────────
   lineComponents:       z.string().optional(),
-  previousLineId:       z.number().int().positive().optional(),
+  previousLineId:       z.number().int().positive().nullable().optional(),
   additionalFeeInfo:    z.string().optional(),
   countryOrigin:        z.string().max(100).optional(),
   itemClass:            z.string().max(255).optional(),   // UI field: class
@@ -349,17 +364,17 @@ const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
 // so the bulk endpoint can never touch line items, freight, or other header fields.
 // All fields optional (partial cell edits); each item carries its own estimate id.
 const PipelineFieldsSchema = z.object({
-  acctManagerId:       z.number().int().positive().optional(),  // Sales Rep
-  opsPartner1Id:       z.number().int().positive().optional(),  // Ops Partner
+  acctManagerId:       z.number().int().positive().nullable().optional(),  // Sales Rep
+  opsPartner1Id:       z.number().int().positive().nullable().optional(),  // Ops Partner
   productDeveloperIds: z.array(z.number().int().positive()).optional(),  // Product Dev (multi)
   projectedTotalAmt:   z.string().optional(),                   // Projected
   estimatedQty:        z.number().int().nonnegative().optional(),  // Est. qty
   expectedCloseDate:   z.string().optional(),                   // Exp. close
   promiseDate:         z.string().optional(),                   // Promise
-  salesChannelId:      z.number().int().positive().optional(),  // Channel
-  businessVerticalId:  z.number().int().positive().optional(),  // Category
-  likelyToCloseId:     z.number().int().positive().optional(),  // Likely-to-close
-  esStatusId:          z.number().int().positive().optional(),  // ES Status
+  salesChannelId:      z.number().int().positive().nullable().optional(),  // Channel
+  businessVerticalId:  z.number().int().positive().nullable().optional(),  // Category
+  likelyToCloseId:     z.number().int().positive().nullable().optional(),  // Likely-to-close
+  esStatusId:          z.number().int().positive().nullable().optional(),  // ES Status
 });
 const PipelineBulkSchema = z.object({
   items: z.array(PipelineFieldsSchema.extend({ id: z.number().int().positive() })).min(1).max(200),
@@ -816,7 +831,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
   app.patch<{ Body: unknown }>('/pipeline', async (req) => {
     const body = req.body as { items?: unknown[] };
     const rawItems = Array.isArray(body?.items) ? body.items : [];
-    const items = rawItems.map(it => stripEmpty(normalizeBody(it)));
+    const items = rawItems.map(it => stripEmptyPreserveClearable(normalizeBody(it)));
     const parsed = PipelineBulkSchema.parse({ items });
     return updateEstimatesPipelineFields(parsed.items);
   });
@@ -826,19 +841,8 @@ export default async function estimateRoutes(app: FastifyInstance) {
     const raw = req.headers['content-type']?.startsWith('multipart/form-data')
       ? await parseMultipartEstimate(req, parseInt(req.params.id))
       : req.body as Record<string, unknown>;
-    // Split off the nested arrays/objects so they keep going through the original stripEmpty
-    // (null and "" both mean "not provided" there) while only the flat header fields get the
-    // null-preserving treatment that lets a cleared dropdown actually persist.
-    const { lineItems: rawLineItems, freightGroups: rawFreightGroups, creativeRequests: rawCreativeRequests, ...rawHeader } =
-      normalizeBody(raw) as Record<string, unknown>;
-    const preprocessed = {
-      ...stripEmptyPreserveClearable(rawHeader),
-      lineItems: stripEmpty(rawLineItems),
-      freightGroups: stripEmpty(rawFreightGroups),
-      creativeRequests: stripEmpty(rawCreativeRequests),
-    };
     const { lineItems, freightGroups, creativeRequests, submittedByUserId, ...headerData } =
-      UpdateEstimateSchema.parse(preprocessed);
+      UpdateEstimateSchema.parse(stripEmptyPreserveClearable(normalizeBody(raw)));
     await materializeCreativeRequestAttachments(
       creativeRequests as Record<string, unknown> | undefined, parseInt(req.params.id),
     );
