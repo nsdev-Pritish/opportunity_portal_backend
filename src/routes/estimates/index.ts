@@ -8,7 +8,13 @@ import {
   addAttachmentsToRequest,
 } from '../../services/creativeRequest.service.js';
 
-// Recursively convert "" / null to undefined so Zod number fields accept blank frontend values
+// Recursively convert "" / null to undefined so Zod number fields accept blank frontend values.
+// NOTE: null and undefined are NOT the same downstream — Drizzle's .set() drops undefined keys
+// (column untouched) but keeps explicit null (SET column = NULL). This function is intentionally
+// still used as-is for lineItems/freightGroups/creativeRequests (see the PATCH /:id handler),
+// where clearing a value via null is not a supported feature — changing that here would turn a
+// harmless no-op into a hard validation error for unrelated fields. For the small set of header
+// dropdown/FK fields that DO support clearing, see stripEmptyPreserveClearable below instead.
 function stripEmpty(val: unknown): unknown {
   if (val === '' || val === null) return undefined;
   if (Array.isArray(val)) return val.map(stripEmpty);
@@ -18,6 +24,36 @@ function stripEmpty(val: unknown): unknown {
     );
   }
   return val;
+}
+
+// Header dropdown/FK fields where the client may send explicit `null` (or `""`) to clear a
+// previously-set value (paired with `.nullable()` on these same fields in EstimateHeaderSchema).
+// Both null and "" are accepted as "clear" here because every field in this set is a
+// z.number().int().positive() dropdown/FK id — "" can never be a legitimate value for them, so
+// treating it the same as null carries no risk of misreading an intended value as a clear.
+// Every other field keeps the old behavior where null and "" both mean "not provided".
+const CLEARABLE_HEADER_FIELDS = new Set([
+  'subsidiaryId', 'customerContactId', 'projectNameId', 'projectTypeId', 'likelyToCloseId',
+  'sellCurrencyId', 'departmentId', 'salesChannelId', 'businessVerticalId', 'businessTypeId',
+  'compliancePartnerId', 'acctManagerId', 'hkPartnerId', 'opsPartner1Id', 'opsPartner2Id',
+  'clientIncotermsId', 'clientShipMethodId', 'shippingAddressId', 'billingAddressId',
+  'statusId', 'closedLostReasonId', 'clientPursuitAlternativeId', 'divisionalBudgetId',
+  'orderClassificationId',
+]);
+
+// Shallow (top-level only) variant of stripEmpty for the estimate header fields on a PATCH
+// /:id request: for a CLEARABLE_HEADER_FIELDS key, both null and "" are preserved as an explicit
+// null so it reaches EstimateHeaderSchema and then Drizzle's .set() as a real null; for every
+// other field, "" and null both still collapse to undefined ("not provided"), unchanged. Only
+// ever applied to the header-level object, never to lineItems/freightGroups/creativeRequests —
+// those keep going through the original stripEmpty.
+function stripEmptyPreserveClearable(body: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(body).map(([k, v]) => {
+      if (v === '' || v === null) return [k, CLEARABLE_HEADER_FIELDS.has(k) ? null : undefined];
+      return [k, v];
+    })
+  );
 }
 
 // Accept productDeveloperId (singular) as an alias for productDeveloperIds (plural)
@@ -160,51 +196,55 @@ const LineItemSchema = ComponentSchema.extend({
 });
 
 // ── Estimate header schema ──────────────────────────────────────────────────
+// Dropdown/FK fields below are `.nullable()` so a client can explicitly send `null` to clear
+// a previously-set value (see stripEmptyPreserveClearable / CLEARABLE_HEADER_FIELDS below,
+// which is the only thing that lets an explicit null survive to reach this schema instead of
+// being swept up into "not provided").
 const EstimateHeaderSchema = z.object({
   // Primary Information
-  subsidiaryId: z.number().int().positive().optional(),
+  subsidiaryId: z.number().int().positive().nullable().optional(),
   customerId: z.number().int().positive(),
-  customerContactId: z.number().int().positive().optional(),
+  customerContactId: z.number().int().positive().nullable().optional(),
   customerPo: z.string().max(100).optional(),
-  projectNameId: z.number().int().positive().optional(),  // dropdown selection
+  projectNameId: z.number().int().positive().nullable().optional(),  // dropdown selection
   projectName: z.string().min(1).max(255).optional(),     // free-text fallback
-  projectTypeId: z.number().int().positive().optional(),
+  projectTypeId: z.number().int().positive().nullable().optional(),
   expectedCloseDate: z.string().optional(),
   promiseDate: z.string().optional(),
-  likelyToCloseId: z.number().int().positive().optional(),
-  sellCurrencyId: z.number().int().positive().optional(),
+  likelyToCloseId: z.number().int().positive().nullable().optional(),
+  sellCurrencyId: z.number().int().positive().nullable().optional(),
   projectedTotalAmt: z.string().optional(),
   estimatedQty: z.number().int().nonnegative().optional(),
   adjustedPipeline: z.string().optional(),   // Adjusted Pipeline currency amount → estimates.adjusted_pipeline
 
   // Classification
-  departmentId: z.number().int().positive().optional(),
-  salesChannelId: z.number().int().positive().optional(),
-  businessVerticalId: z.number().int().positive().optional(),
-  businessTypeId: z.number().int().positive().optional(),
-  compliancePartnerId: z.number().int().positive().optional(),
-  acctManagerId: z.number().int().positive().optional(),
+  departmentId: z.number().int().positive().nullable().optional(),
+  salesChannelId: z.number().int().positive().nullable().optional(),
+  businessVerticalId: z.number().int().positive().nullable().optional(),
+  businessTypeId: z.number().int().positive().nullable().optional(),
+  compliancePartnerId: z.number().int().positive().nullable().optional(),
+  acctManagerId: z.number().int().positive().nullable().optional(),
   productDeveloperIds: z.array(z.number().int().positive()).optional(),
-  hkPartnerId: z.number().int().positive().optional(),
-  opsPartner1Id: z.number().int().positive().optional(),
-  opsPartner2Id: z.number().int().positive().optional(),
+  hkPartnerId: z.number().int().positive().nullable().optional(),
+  opsPartner1Id: z.number().int().positive().nullable().optional(),
+  opsPartner2Id: z.number().int().positive().nullable().optional(),
   deckRequest: z.boolean().optional(),
   artSetupRequest: z.boolean().optional(),
   pkgDeckRequest: z.boolean().optional(),
   pkgArtSetupRequest: z.boolean().optional(),
 
   // Client Shipping & Billing
-  clientIncotermsId: z.number().int().positive().optional(),
-  clientShipMethodId: z.number().int().positive().optional(),
-  shippingAddressId: z.number().int().positive().optional(),  // Shipping Address dropdown
+  clientIncotermsId: z.number().int().positive().nullable().optional(),
+  clientShipMethodId: z.number().int().positive().nullable().optional(),
+  shippingAddressId: z.number().int().positive().nullable().optional(),  // Shipping Address dropdown
   shipTo: z.string().optional(),                              // Ship To textarea (formatted address text)
-  billingAddressId: z.number().int().positive().optional(),   // Billing Address dropdown
+  billingAddressId: z.number().int().positive().nullable().optional(),   // Billing Address dropdown
   billTo: z.string().optional(),                              // Bill To textarea (formatted address text)
 
   // Edit / Update fields
-  statusId: z.number().int().positive().optional(),
-  closedLostReasonId: z.number().int().positive().optional(),
-  clientPursuitAlternativeId: z.number().int().positive().optional(),
+  statusId: z.number().int().positive().nullable().optional(),
+  closedLostReasonId: z.number().int().positive().nullable().optional(),
+  clientPursuitAlternativeId: z.number().int().positive().nullable().optional(),
   projectHoldDate: z.string().optional(),
   notesClosedLostReason: z.string().optional(),
 
@@ -223,11 +263,11 @@ const EstimateHeaderSchema = z.object({
   // Send divisionalBudgetId (dropdown row from /api/v1/master/divisional_budgets);
   // divisionalBudget is the legacy free-text form, still accepted. When only the
   // id is sent the label is resolved from the master list on the way to NetSuite.
-  divisionalBudgetId: z.number().int().positive().optional(),  // FK → divisional_budgets.id
+  divisionalBudgetId: z.number().int().positive().nullable().optional(),  // FK → divisional_budgets.id
   divisionalBudget: z.string().max(255).optional(),        // custbody_divisional_budget
 
   // Order Classification — syncs to NetSuite custbody_order_classification.
-  orderClassificationId: z.number().int().positive().optional(),  // FK → order_classifications.id
+  orderClassificationId: z.number().int().positive().nullable().optional(),  // FK → order_classifications.id
 
   attachments: z.array(z.object({                     // File upload metadata
     name: z.string(),
@@ -786,8 +826,19 @@ export default async function estimateRoutes(app: FastifyInstance) {
     const raw = req.headers['content-type']?.startsWith('multipart/form-data')
       ? await parseMultipartEstimate(req, parseInt(req.params.id))
       : req.body as Record<string, unknown>;
+    // Split off the nested arrays/objects so they keep going through the original stripEmpty
+    // (null and "" both mean "not provided" there) while only the flat header fields get the
+    // null-preserving treatment that lets a cleared dropdown actually persist.
+    const { lineItems: rawLineItems, freightGroups: rawFreightGroups, creativeRequests: rawCreativeRequests, ...rawHeader } =
+      normalizeBody(raw) as Record<string, unknown>;
+    const preprocessed = {
+      ...stripEmptyPreserveClearable(rawHeader),
+      lineItems: stripEmpty(rawLineItems),
+      freightGroups: stripEmpty(rawFreightGroups),
+      creativeRequests: stripEmpty(rawCreativeRequests),
+    };
     const { lineItems, freightGroups, creativeRequests, submittedByUserId, ...headerData } =
-      UpdateEstimateSchema.parse(stripEmpty(normalizeBody(raw)));
+      UpdateEstimateSchema.parse(preprocessed);
     await materializeCreativeRequestAttachments(
       creativeRequests as Record<string, unknown> | undefined, parseInt(req.params.id),
     );
