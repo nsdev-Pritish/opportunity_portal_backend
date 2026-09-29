@@ -28,6 +28,7 @@ import {
   estimateFreightGroups, drayage,
   creativeRequest, creativeRequestDeck, creativeRequestSetup,
   creativeRequestAsset, creativeRequestScopeWorkItem, creativeRequestAttachment,
+  users,
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -99,6 +100,17 @@ function formatNsDateFromTimestamp(value: Date | string | null | undefined): str
   return `${m}/${day}/${d.getUTCFullYear()}`;
 }
 
+// Same as above, but keeps the UTC time-of-day too → "MM/DD/YYYY HH:mm:ss" (24h, UTC).
+function formatNsDateTimeFromTimestamp(value: Date | string | null | undefined): string {
+  const datePart = formatNsDateFromTimestamp(value);
+  if (!datePart) return '';
+  const d = value instanceof Date ? value : new Date(value!);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  const ss = String(d.getUTCSeconds()).padStart(2, '0');
+  return `${datePart} ${hh}:${mm}:${ss}`;
+}
+
 // Convert a stored NS internal ID string → number for NS payload, null if absent
 function toNsNum(nsId: string): number | null {
   return nsId ? Number(nsId) : null;
@@ -122,6 +134,21 @@ async function getNsId(table: any, portalId: number | null | undefined): Promise
     .where(eq(table.id, portalId))
     .limit(1);
   return row?.nsId ?? '';
+}
+
+// Resolves a portal user id to their email, for the Created By / Last Modified By
+// fields on the NS payload. Users have no `name` column (only first/last name), so
+// this can't reuse getNsName — email is the stable, human-readable identifier NetSuite
+// can display when the user isn't linked to an NS Employee record.
+async function getUserEmail(portalId: number | null | undefined): Promise<string> {
+  if (!portalId) return '';
+  const db = getDb();
+  const [row] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, portalId))
+    .limit(1);
+  return row?.email ?? '';
 }
 
 // Same lookup, but for the display label. Used for dropdowns that NetSuite also
@@ -301,6 +328,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     estimateStatusNsId, closedLostReasonNsId, clientPursuitAltNsId,
     esStatusNsId, divisionalBudgetNsId, divisionalBudgetName,
     orderClassificationNsId,
+    createdByNsId, createdByEmail, updatedByNsId, updatedByEmail,
   ] = await Promise.all([
     getNsId(subsidiaries,                est.subsidiaryId),
     getNsId(customers,                   est.customerId),
@@ -329,6 +357,10 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     getNsId(divisionalBudgets,           est.divisionalBudgetId),
     getNsName(divisionalBudgets,         est.divisionalBudgetId),
     getNsId(orderClassifications,        est.orderClassificationId),
+    getNsId(users,                       est.createdBy),
+    getUserEmail(est.createdBy),
+    getNsId(users,                       est.updatedBy),
+    getUserEmail(est.updatedBy),
   ]);
 
   // Resolve NS IDs for all product developers in parallel
@@ -342,6 +374,14 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     internalId          : est.netsuiteInternalId ?? '',
     // Always flag NetSuite that this estimate came from the new portal (create + update).
     createdFromNewPortalEstNS: true,
+    // Portal user who created / last edited this estimate. NSId is the NetSuite Employee
+    // internal id (only set if that portal user is linked to an NS employee record via
+    // users.netsuiteInternalId); email is always sent as a human-readable fallback.
+    createdByNSId       : createdByNsId,
+    createdByEmailNS    : createdByEmail,
+    updatedByNSId       : updatedByNsId,
+    updatedByEmailNS    : updatedByEmail,
+    updatedAtNS         : formatNsDateTimeFromTimestamp(est.updatedAt),
     subsidiaryNSId      : subsidiaryNsId,
     customerNSId        : customerNsId,
     customerContactNSId : contactNsId,

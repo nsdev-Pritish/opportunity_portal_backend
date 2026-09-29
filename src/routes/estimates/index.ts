@@ -847,7 +847,8 @@ export default async function estimateRoutes(app: FastifyInstance) {
       creativeRequests as Record<string, unknown> | undefined, parseInt(req.params.id),
     );
     return updateEstimateWithItems(
-      parseInt(req.params.id), headerData, lineItems, freightGroups, creativeRequests, submittedByUserId ?? null,
+      parseInt(req.params.id), { ...headerData, updatedBy: req.user.id },
+      lineItems, freightGroups, creativeRequests, submittedByUserId ?? null,
     );
   });
 
