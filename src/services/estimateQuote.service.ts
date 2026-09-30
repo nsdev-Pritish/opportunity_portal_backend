@@ -74,7 +74,9 @@ export async function receiveQuoteFromNetsuite(payload: ReceiveQuotePayload) {
     if (lineItemIds.length > 0) {
       await tx
         .update(estimateLineItems)
-        .set({ converted: true, updatedAt: new Date() })
+        // estimateQuoteId records which quote these lines belong to — same link the portal's
+        // own convert path writes, so membership is consistent whichever side created the quote.
+        .set({ converted: true, estimateQuoteId: newQuote.id, updatedAt: new Date() })
         .where(
           and(
             eq(estimateLineItems.estimateId, estimate.id),
@@ -393,7 +395,10 @@ export async function syncAllQuotesFromNetsuite(
         if (lineIds.length) {
           const updated = await tx
             .update(estimateLineItems)
-            .set({ converted: true, updatedAt: new Date() })
+            // estimateQuoteId records which quote these lines belong to — same link the
+            // portal's own convert path writes, so membership stays consistent whichever
+            // side created the quote.
+            .set({ converted: true, estimateQuoteId: quoteId, updatedAt: new Date() })
             .where(
               and(
                 eq(estimateLineItems.estimateId, estimateId),

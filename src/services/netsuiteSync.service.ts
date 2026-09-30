@@ -976,11 +976,12 @@ export async function syncEstimateToNetsuite(
         .set(quoteSet as any)
         .where(eq(estimateQuotes.id, opts.quoteId));
 
-      // Mark all quoted line items as converted
+      // Mark all quoted line items as converted, and record WHICH quote they went into so
+      // the membership can be listed later and reversed if the quote is ever deleted.
       const targetIds = opts.lineItemIds ?? [];
       if (targetIds.length > 0) {
         await db.update(estimateLineItems)
-          .set({ converted: true } as any)
+          .set({ converted: true, estimateQuoteId: opts.quoteId } as any)
           .where(inArray(estimateLineItems.id, targetIds));
       }
 

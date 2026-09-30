@@ -96,6 +96,7 @@ import {
   resyncEstimate,
   convertEstimateToOtb,
   listEstimateQuotes,
+  deleteEstimateQuote,
   getNeedsAttentionCount,
   listNeedsAttention,
   getClosingThisWeekCount,
@@ -778,22 +779,36 @@ export default async function estimateRoutes(app: FastifyInstance) {
   );
 
   // POST /api/v1/estimates/:id/convert-to-otb — convert estimate to Quote in NS
-  //   { "target": "new" }                                            → create a NEW quote covering the whole estimate
-  //   { "target": "existing", "quoteDocumentNumber": "<latest #>" }  → add newly-added lines to the EXISTING quote
+  //   { "target": "new" }                                       → create a NEW quote for the unconverted lines
+  //   { "target": "existing", "quoteId": 41 }                   → add them to THAT specific quote
+  //   { "target": "existing", "quoteDocumentNumber": "QUO123" } → same, resolved by NS quote number
+  // An estimate can hold several active quotes, so "existing" requires the caller to name one.
+  // quoteId (the portal estimate_quotes.id from GET /:id/quotes) is preferred: quote document
+  // numbers are neither unique nor guaranteed to be present.
   app.post<{ Params: { id: string }; Body: unknown }>('/:id/convert-to-otb', async (req) => {
     const body = z.object({
       target: z.enum(['new', 'existing']).optional(),
+      quoteId: z.number().int().positive().optional(),
       quoteDocumentNumber: z.string().optional(),
     }).refine(
-      (b) => b.target !== 'existing' || !!b.quoteDocumentNumber,
-      { message: 'quoteDocumentNumber is required when target is "existing"', path: ['quoteDocumentNumber'] },
+      (b) => b.target !== 'existing' || !!b.quoteId || !!b.quoteDocumentNumber,
+      { message: 'quoteId or quoteDocumentNumber is required when target is "existing"', path: ['quoteId'] },
     ).parse(stripEmpty(req.body ?? {}));
     return convertEstimateToOtb(parseInt(req.params.id), body);
   });
 
-  // GET /api/v1/estimates/:id/quotes — list all quotes for an estimate
+  // GET /api/v1/estimates/:id/quotes — list all quotes for an estimate.
+  // Each row carries lineItemCount (lines converted into it) and selectable (can receive
+  // more lines) — this is what the frontend's "add to existing quote" picker renders.
   app.get<{ Params: { id: string } }>('/:id/quotes', async (req) =>
     listEstimateQuotes(parseInt(req.params.id)),
+  );
+
+  // DELETE /api/v1/estimates/:id/quotes/:quoteId — remove a quote and release its line items
+  // (converted → false) so they can be quoted again. Portal-side only; see the service
+  // docstring for the NetSuite caveat.
+  app.delete<{ Params: { id: string; quoteId: string } }>('/:id/quotes/:quoteId', async (req) =>
+    deleteEstimateQuote(parseInt(req.params.id), parseInt(req.params.quoteId)),
   );
 
   // GET /api/v1/estimates/:id/netsuite-payload — inspect the NetSuite payload WITHOUT sending

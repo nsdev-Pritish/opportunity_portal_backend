@@ -1060,6 +1060,13 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   paddingAmount:        numeric('padding_amount',        { precision: 15, scale: 4 }),
   dutyMarkupAmount:     numeric('duty_markup_amount',    { precision: 15, scale: 4 }),
   converted:            boolean('converted').default(false),
+  // Which quote this line was converted into. Set alongside `converted = true` by every
+  // convert path (portal OTB convert + the inbound NetSuite quote sync). ON DELETE SET NULL:
+  // deleting a quote must not delete its lines — the delete flow un-converts them instead
+  // (see deleteEstimateQuote in estimate.service.ts).
+  // `converted` stays the authoritative flag for convert eligibility; this column records
+  // WHICH quote a line landed on, so a quote's membership can be listed and reversed.
+  estimateQuoteId:      integer('estimate_quote_id').references(() => estimateQuotes.id, { onDelete: 'set null' }),
   // Line-level freight mode selection (free-form text, e.g. "FOB", "Ocean", "Air", "Group").
   freightModeSelection: varchar('freight_mode_selection', { length: 20 }),
   // Line-level true tariff (free-form text). Synced to NetSuite as `trueTariffRateNS`.
@@ -1101,6 +1108,7 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   // their old line_number but are excluded so a re-inserted active row can reuse it.
   lineNumberIdx: uniqueIndex('eli_line_number_idx').on(t.estimateId, t.lineNumber).where(sql`${t.isActive} = true`),
   parentIdx: index('eli_parent_idx').on(t.parentLineItemId),
+  quoteIdx: index('eli_quote_idx').on(t.estimateQuoteId),
 }));
 
 // ══════════════════════════════════════════════════════════════════
@@ -1953,8 +1961,10 @@ export const estimatesRelations = relations(estimates, ({ one, many }) => ({
 // One estimate → many quotes (each OTB conversion / NetSuite Quote).
 // The FK already exists on estimate_quotes.estimate_id; this declares it to the
 // ORM so estimates can be loaded with their quotes in a single relational query.
-export const estimateQuotesRelations = relations(estimateQuotes, ({ one }) => ({
+export const estimateQuotesRelations = relations(estimateQuotes, ({ one, many }) => ({
   estimate: one(estimates, { fields: [estimateQuotes.estimateId], references: [estimates.id] }),
+  // One quote → the lines that were converted into it (estimate_line_items.estimate_quote_id).
+  lineItems: many(estimateLineItems),
 }));
 
 export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, many }) => ({
@@ -1972,6 +1982,7 @@ export const estimateLineItemsRelations = relations(estimateLineItems, ({ one, m
   productClassEu: one(productClassesEu, { fields: [estimateLineItems.productClassEuId], references: [productClassesEu.id] }),
   class: one(classes, { fields: [estimateLineItems.classId], references: [classes.id] }),
   componentKitItem: one(componentKitItems, { fields: [estimateLineItems.componentKitItemId], references: [componentKitItems.id] }),
+  quote: one(estimateQuotes, { fields: [estimateLineItems.estimateQuoteId], references: [estimateQuotes.id] }),
 }));
 
 export const drayageRelations = relations(drayage, ({ many }) => ({
