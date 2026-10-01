@@ -192,7 +192,7 @@ export const addresses = pgTable('addresses', {
   id: serial('id').primaryKey(),
   customerId: integer('customer_id').references(() => customers.id),
   type: varchar('type', { length: 20 }).default('shipping'), // 'shipping' | 'billing'
-  label: varchar('label', { length: 100 }),
+  label: varchar('label', { length: 2000 }),
   companyName: varchar('company_name', { length: 255 }),   // Company / Customer Account
   attention: varchar('attention', { length: 255 }),
   addressee: varchar('addressee', { length: 255 }),
