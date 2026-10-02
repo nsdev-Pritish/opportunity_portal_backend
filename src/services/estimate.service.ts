@@ -466,7 +466,8 @@ export async function getEstimate(id: number) {
       .orderBy(asc(estimateFreightGroups.id)),
     // Every quote this estimate has been converted to, newest first — an estimate holds one
     // per batch of newly-added lines. Rows NetSuite hasn't numbered yet (convert still
-    // syncing, or failed) are skipped so the lists never carry nulls.
+    // syncing, or failed) are skipped so the lists never carry nulls, and quotes deleted in
+    // NetSuite (soft-deleted here) are excluded so the detail never shows a dead quote.
     db.select({
       quoteNetsuiteInternalId: estimateQuotes.quoteNetsuiteInternalId,
       quoteDocumentNumber    : estimateQuotes.quoteDocumentNumber,
@@ -475,6 +476,7 @@ export async function getEstimate(id: number) {
       .where(and(
         eq(estimateQuotes.estimateId, id),
         isNotNull(estimateQuotes.quoteDocumentNumber),
+        eq(estimateQuotes.isActive, true),
       ))
       .orderBy(desc(estimateQuotes.createdAt)),
     // Creative requests with their detail row, selected assets, scope of work and
@@ -1320,12 +1322,18 @@ async function resolveTargetQuote(
 ) {
   const db = getDb();
 
-  // 1. By portal row id — scoped to the estimate so another estimate's quote is unreachable
+  // 1. By portal row id — scoped to the estimate so another estimate's quote is unreachable.
+  //    isActive excludes quotes deleted in NetSuite: they no longer exist there, so lines
+  //    can never be appended to them.
   if (opts?.quoteId) {
     const [row] = await db
       .select()
       .from(estimateQuotes)
-      .where(and(eq(estimateQuotes.id, opts.quoteId), eq(estimateQuotes.estimateId, estimateId)))
+      .where(and(
+        eq(estimateQuotes.id, opts.quoteId),
+        eq(estimateQuotes.estimateId, estimateId),
+        eq(estimateQuotes.isActive, true),
+      ))
       .limit(1);
     if (!row) {
       throw new NotFoundError('Quote', `${opts.quoteId} (for estimate ${estimateId})`);
@@ -1341,6 +1349,7 @@ async function resolveTargetQuote(
       .where(and(
         eq(estimateQuotes.estimateId, estimateId),
         eq(estimateQuotes.quoteDocumentNumber, opts.quoteDocumentNumber),
+        eq(estimateQuotes.isActive, true),
       ))
       // Prefer a NetSuite-synced row, then 'active' over 'replaced' (asc puts 'active' first),
       // then the newest. Booleans sort false-first in Postgres, so IS NULL asc = synced first.
@@ -1360,7 +1369,11 @@ async function resolveTargetQuote(
   const [row] = await db
     .select()
     .from(estimateQuotes)
-    .where(and(eq(estimateQuotes.estimateId, estimateId), eq(estimateQuotes.status as any, 'active')))
+    .where(and(
+      eq(estimateQuotes.estimateId, estimateId),
+      eq(estimateQuotes.status as any, 'active'),
+      eq(estimateQuotes.isActive, true),
+    ))
     .orderBy(desc(estimateQuotes.createdAt))
     .limit(1);
   if (!row) {
@@ -1476,10 +1489,11 @@ export async function convertEstimateToOtb(
 
 // ── List quotes for an estimate ──────────────────────────────────────────────
 
-// Returns every quote row for the estimate plus:
+// Returns the estimate's LIVE quotes (quotes deleted in NetSuite are excluded — they are
+// soft-deleted here and must never reach the frontend picker), each with:
 //   lineItemCount — how many active lines were converted into that quote
-//   selectable    — whether it can receive more lines (drives the frontend's quote picker;
-//                   a quote NetSuite has not created yet cannot be added to)
+//   selectable    — whether it can receive more lines (a quote NetSuite has not created yet
+//                   cannot be added to)
 export async function listEstimateQuotes(estimateId: number) {
   const db = getDb();
 
@@ -1493,7 +1507,10 @@ export async function listEstimateQuotes(estimateId: number) {
       eq(estimateLineItems.estimateQuoteId, estimateQuotes.id),
       eq(estimateLineItems.isActive, true),
     ))
-    .where(eq(estimateQuotes.estimateId, estimateId))
+    .where(and(
+      eq(estimateQuotes.estimateId, estimateId),
+      eq(estimateQuotes.isActive, true),
+    ))
     .groupBy(estimateQuotes.id)
     .orderBy(desc(estimateQuotes.createdAt));
 
@@ -1501,81 +1518,6 @@ export async function listEstimateQuotes(estimateId: number) {
     ...r,
     selectable: r.status === 'active' && r.syncStatus === 'synced' && !!r.quoteNetsuiteInternalId,
   }));
-}
-
-// ── Delete a quote and put its line items back in play ───────────────────────
-
-/**
- * Removes a quote from the portal and RELEASES the lines it held:
- * `converted` → false and `estimate_quote_id` → NULL, so those lines become eligible for a
- * future convert again (both convert paths select purely on `converted = false`).
- *
- * This is exactly what estimate_line_items.estimate_quote_id exists for — before it, a
- * deleted quote would have stranded its lines as permanently `converted = true` with no way
- * to identify them.
- *
- * Order matters: the lines are released BEFORE the quote row goes, because the FK is
- * ON DELETE SET NULL — dropping the quote first would blank the link and lose the very
- * information needed to know which lines to reset.
- *
- * SCOPE — portal only. This does NOT delete the Quote in NetSuite. While the record still
- * exists there, the inbound backfill (POST /api/v1/netsuite/estimate-quotes/sync-all) will
- * recreate the row and re-mark the lines converted. Delete the NetSuite Quote too, or exclude
- * it from the saved search, before relying on this.
- */
-export async function deleteEstimateQuote(estimateId: number, quoteId: number) {
-  const db = getDb();
-
-  const [quote] = await db
-    .select()
-    .from(estimateQuotes)
-    .where(and(eq(estimateQuotes.id, quoteId), eq(estimateQuotes.estimateId, estimateId)))
-    .limit(1);
-  if (!quote) throw new NotFoundError('Quote', `${quoteId} (for estimate ${estimateId})`);
-
-  const released = await db.transaction(async (tx) => {
-    const rows = await tx
-      .update(estimateLineItems)
-      .set({ converted: false, estimateQuoteId: null, updatedAt: new Date() } as any)
-      .where(eq(estimateLineItems.estimateQuoteId, quoteId))
-      .returning({ id: estimateLineItems.id });
-
-    await tx.delete(estimateQuotes).where(eq(estimateQuotes.id, quoteId));
-
-    // No quotes left → clear the "converted on" stamp, which is now simply untrue.
-    //
-    // `estimates.status` is deliberately LEFT ALONE. Converting overwrites it with 'otb' and
-    // never records what it was before ('draft' | 'submitted' | 'approved' | …), so there is
-    // nothing to restore it to — resetting to 'draft' would silently regress an approved
-    // estimate. Decide the intended post-delete status with the business/NetSuite side and
-    // set it explicitly here (or capture a `statusBeforeOtb` column at convert time).
-    const [remaining] = await tx
-      .select({ id: estimateQuotes.id })
-      .from(estimateQuotes)
-      .where(eq(estimateQuotes.estimateId, estimateId))
-      .limit(1);
-
-    if (!remaining) {
-      await tx.update(estimates)
-        .set({ otbConvertedAt: null, updatedAt: new Date() } as any)
-        .where(eq(estimates.id, estimateId));
-    }
-
-    return rows.map(r => r.id);
-  });
-
-  logger.info(
-    { estimateId, quoteId, releasedLineItems: released.length },
-    'Quote deleted — line items released back to unconverted',
-  );
-
-  return {
-    estimateId,
-    quoteId,
-    quoteDocumentNumber: quote.quoteDocumentNumber,
-    releasedLineItems  : released.length,
-    message: `Quote deleted. ${released.length} line item(s) are unconverted and can be quoted again.`,
-  };
 }
 
 // ── Deactivate (soft delete) ─────────────────────────────────────────────────

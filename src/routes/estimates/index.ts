@@ -96,7 +96,6 @@ import {
   resyncEstimate,
   convertEstimateToOtb,
   listEstimateQuotes,
-  deleteEstimateQuote,
   getNeedsAttentionCount,
   listNeedsAttention,
   getClosingThisWeekCount,
@@ -804,12 +803,9 @@ export default async function estimateRoutes(app: FastifyInstance) {
     listEstimateQuotes(parseInt(req.params.id)),
   );
 
-  // DELETE /api/v1/estimates/:id/quotes/:quoteId — remove a quote and release its line items
-  // (converted → false) so they can be quoted again. Portal-side only; see the service
-  // docstring for the NetSuite caveat.
-  app.delete<{ Params: { id: string; quoteId: string } }>('/:id/quotes/:quoteId', async (req) =>
-    deleteEstimateQuote(parseInt(req.params.id), parseInt(req.params.quoteId)),
-  );
+  // NOTE: there is deliberately no portal-side "delete quote" route. Quotes are deleted in
+  // NetSuite, which then calls POST /api/v1/netsuite/estimate-quotes/deleted — that soft-
+  // deletes the row here and releases its line items back to converted = false.
 
   // GET /api/v1/estimates/:id/netsuite-payload — inspect the NetSuite payload WITHOUT sending
   //

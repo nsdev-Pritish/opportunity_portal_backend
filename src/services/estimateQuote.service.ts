@@ -12,6 +12,104 @@ export interface ReceiveQuotePayload {
   lineItemInternalIds?: string[];
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  QUOTE DELETED IN NETSUITE
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Called when a Quote is DELETED in NetSuite (NetSuite deletes for good; we keep the row).
+ *
+ * Two things must happen, in this order:
+ *   1. Release the line items — converted = false, estimate_quote_id = NULL — so they can be
+ *      quoted again. This MUST run before the quote row is flagged, because the lines are
+ *      found *through* estimate_quote_id and nothing else records that membership.
+ *   2. Soft-delete the quote — is_active = false, deleted_at = now(). The row survives, so
+ *      the quote number and NetSuite id stay available for audit and reconciliation.
+ *
+ * Idempotent: a repeat call finds the quote already inactive and reports 'already_deleted'
+ * without touching anything, so NetSuite can retry safely.
+ *
+ * Lenient on a miss: a quote the portal never stored returns 'not_found' rather than an
+ * error, so a delete in NetSuite can never leave their script retrying forever. It is logged
+ * at warn level because it usually means the two systems drifted.
+ *
+ * Note quote_netsuite_internal_id has no unique index (see migration 0039), so in principle
+ * more than one row can carry the same NS id — every match is handled.
+ */
+export async function markQuoteDeletedFromNetsuite(payload: {
+  quoteInternalId: string;
+  estimateInternalId?: string | null;
+}) {
+  const db = getDb();
+  const { quoteInternalId } = payload;
+
+  const matches = await db
+    .select({
+      id                 : estimateQuotes.id,
+      estimateId         : estimateQuotes.estimateId,
+      quoteDocumentNumber: estimateQuotes.quoteDocumentNumber,
+      isActive           : estimateQuotes.isActive,
+    })
+    .from(estimateQuotes)
+    .where(eq(estimateQuotes.quoteNetsuiteInternalId, quoteInternalId));
+
+  if (matches.length === 0) {
+    logger.warn({ quoteInternalId }, 'NetSuite → Portal: delete for a quote the portal does not have');
+    return {
+      _action           : 'not_found' as const,
+      quoteInternalId,
+      releasedLineItems : 0,
+      message           : 'No quote with that NetSuite internal id exists in the portal — nothing to do.',
+    };
+  }
+
+  const pending = matches.filter(q => q.isActive);
+  if (pending.length === 0) {
+    logger.info({ quoteInternalId }, 'NetSuite → Portal: quote already soft-deleted');
+    return {
+      _action           : 'already_deleted' as const,
+      quoteInternalId,
+      quoteIds          : matches.map(q => q.id),
+      releasedLineItems : 0,
+      message           : 'Quote was already marked deleted — no change.',
+    };
+  }
+
+  const quoteIds = pending.map(q => q.id);
+
+  const released = await db.transaction(async (tx) => {
+    // 1. Release the lines FIRST — they are located via estimate_quote_id.
+    const rows = await tx
+      .update(estimateLineItems)
+      .set({ converted: false, estimateQuoteId: null, updatedAt: new Date() })
+      .where(inArray(estimateLineItems.estimateQuoteId, quoteIds))
+      .returning({ id: estimateLineItems.id });
+
+    // 2. Then soft-delete the quote row itself.
+    await tx
+      .update(estimateQuotes)
+      .set({ isActive: false, deletedAt: new Date(), updatedAt: new Date() })
+      .where(inArray(estimateQuotes.id, quoteIds));
+
+    return rows.map(r => r.id);
+  });
+
+  logger.info(
+    { quoteInternalId, quoteIds, estimateIds: pending.map(q => q.estimateId), releasedLineItems: released.length },
+    'NetSuite → Portal: quote soft-deleted, line items released',
+  );
+
+  return {
+    _action            : 'deleted' as const,
+    quoteInternalId,
+    quoteIds,
+    estimateIds        : pending.map(q => q.estimateId),
+    quoteDocumentNumber: pending[0].quoteDocumentNumber,
+    releasedLineItems  : released.length,
+    message            : `Quote soft-deleted. ${released.length} line item(s) released back to unconverted.`,
+  };
+}
+
 /**
  * Called when NetSuite creates a Quote for an existing Estimate.
  *
@@ -132,6 +230,10 @@ export async function getQuotesForEstimate(estimateId: number) {
       quoteInternalId    : estimateQuotes.quoteNetsuiteInternalId,
       quoteDocumentNumber: estimateQuotes.quoteDocumentNumber,
       status             : estimateQuotes.status,
+      // Diagnostic endpoint — deleted quotes are shown rather than hidden, flagged so the
+      // caller can tell a live quote from one NetSuite deleted.
+      isActive           : estimateQuotes.isActive,
+      deletedAt          : estimateQuotes.deletedAt,
       createdAt          : estimateQuotes.createdAt,
     })
     .from(estimateQuotes)
@@ -361,6 +463,20 @@ export async function syncAllQuotesFromNetsuite(
         }
 
         if (existingId) {
+          // A quote deleted in NetSuite is soft-deleted here and its lines were released.
+          // Never resurrect it: leave the row flagged and do not re-convert those lines.
+          // NetSuite hard-deletes, so it should not be sending this record at all — this is
+          // a guard against a stale saved search re-reporting a deleted quote.
+          const [existing] = await tx
+            .select({ isActive: estimateQuotes.isActive })
+            .from(estimateQuotes)
+            .where(eq(estimateQuotes.id, existingId))
+            .limit(1);
+
+          if (existing && !existing.isActive) {
+            return { quoteId: existingId, converted: 0, skipped: true };
+          }
+
           const [row] = await tx
             .update(estimateQuotes)
             .set({
@@ -409,8 +525,15 @@ export async function syncAllQuotesFromNetsuite(
           converted = updated.length;
         }
 
-        return { quoteId, converted };
+        return { quoteId, converted, skipped: false };
       });
+
+      if (written.skipped) {
+        logger.warn(
+          { quoteInternalId: rec.quoteInternalId, quoteId: written.quoteId },
+          'Bulk quote sync: quote is soft-deleted in the portal — left untouched',
+        );
+      }
 
       // Keep the map current so a quote repeated inside the SAME payload updates
       // the row the earlier entry created instead of inserting a duplicate.
@@ -532,6 +655,7 @@ export async function getAllEstimateQuoteMappings() {
     })
     .from(estimateQuotes)
     .innerJoin(estimates, eq(estimateQuotes.estimateId, estimates.id))
-    .where(eq(estimates.isActive, true))
+    // Quotes deleted in NetSuite are soft-deleted here and must not reach the frontend.
+    .where(and(eq(estimates.isActive, true), eq(estimateQuotes.isActive, true)))
     .orderBy(desc(estimateQuotes.createdAt));
 }

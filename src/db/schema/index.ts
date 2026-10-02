@@ -964,6 +964,11 @@ export const estimateQuotes = pgTable('estimate_quotes', {
   quoteNetsuiteInternalId: varchar('quote_netsuite_internal_id', { length: 50 }),
   quoteDocumentNumber    : varchar('quote_document_number', { length: 100 }),
   status                 : varchar('status', { length: 20 }).default('active').notNull(), // 'active' | 'replaced'
+  // Portal-owned soft-delete flag, set when NetSuite reports the Quote was deleted there
+  // (NetSuite deletes for good; we keep the row). Never written by the inbound sync —
+  // unlike `status`, which NetSuite overwrites — so a delete can't be silently undone.
+  isActive               : boolean('is_active').default(true).notNull(),
+  deletedAt              : timestamp('deleted_at', { withTimezone: true }),
   syncStatus             : syncStatusEnum('sync_status').default('pending').notNull(),
   syncError              : text('sync_error'),
   syncedAt               : timestamp('synced_at', { withTimezone: true }),
@@ -971,6 +976,7 @@ export const estimateQuotes = pgTable('estimate_quotes', {
   updatedAt              : timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   estimateIdx: index('eq_estimate_idx').on(t.estimateId),
+  estimateActiveIdx: index('eq_estimate_active_idx').on(t.estimateId, t.isActive),
 }));
 
 // ══════════════════════════════════════════════════════════════════
@@ -1062,8 +1068,8 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   converted:            boolean('converted').default(false),
   // Which quote this line was converted into. Set alongside `converted = true` by every
   // convert path (portal OTB convert + the inbound NetSuite quote sync). ON DELETE SET NULL:
-  // deleting a quote must not delete its lines — the delete flow un-converts them instead
-  // (see deleteEstimateQuote in estimate.service.ts).
+  // deleting a quote must not delete its lines — when NetSuite reports a quote deleted, the
+  // portal un-converts them instead (see markQuoteDeletedFromNetsuite in estimateQuote.service.ts).
   // `converted` stays the authoritative flag for convert eligibility; this column records
   // WHICH quote a line landed on, so a quote's membership can be listed and reversed.
   estimateQuoteId:      integer('estimate_quote_id').references(() => estimateQuotes.id, { onDelete: 'set null' }),
