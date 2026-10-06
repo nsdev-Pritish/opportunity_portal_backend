@@ -147,12 +147,16 @@ async function updateAddress(id: number, body: z.infer<typeof UpdateAddressBody>
   return updated;
 }
 
-async function listAddresses(customerId: number | undefined, type: 'shipping' | 'billing') {
+// Address type is NOT a filter. A NetSuite address book entry can be flagged as shipping,
+// billing, or both, and the portal stores it as a single row whose `type` only records the
+// role it was first synced under. Filtering on it would hide a shared address from one of
+// the two dropdowns, so both dropdowns list every active address for the customer.
+async function listAddresses(customerId: number | undefined) {
   const db = getDb();
 
   const conditions = customerId
-    ? and(eq(addresses.customerId, customerId), eq(addresses.type, type), eq(addresses.isActive, true))
-    : and(eq(addresses.type, type), eq(addresses.isActive, true));
+    ? and(eq(addresses.customerId, customerId), eq(addresses.isActive, true))
+    : eq(addresses.isActive, true);
 
   return db
     .select({
@@ -183,10 +187,10 @@ export default async function portalAddressRoutes(app: FastifyInstance) {
   // ── Base routes (type in body, defaults to 'shipping') ─────────
 
   // GET /api/v1/portal/addresses?customerId=5&type=shipping
+  // `type` is still accepted for backward compatibility but no longer narrows the result.
   app.get<{ Querystring: { customerId?: string; type?: string } }>('/', async (req) => {
     const customerId = req.query.customerId ? parseInt(req.query.customerId) : undefined;
-    const type = (req.query.type === 'billing' ? 'billing' : 'shipping') as 'shipping' | 'billing';
-    return listAddresses(customerId, type);
+    return listAddresses(customerId);
   });
 
   // POST /api/v1/portal/addresses
@@ -202,7 +206,7 @@ export default async function portalAddressRoutes(app: FastifyInstance) {
   // GET /api/v1/portal/addresses/shipping?customerId=5
   app.get<{ Querystring: { customerId?: string } }>('/shipping', async (req) => {
     const customerId = req.query.customerId ? parseInt(req.query.customerId) : undefined;
-    return listAddresses(customerId, 'shipping');
+    return listAddresses(customerId);
   });
 
   // POST /api/v1/portal/addresses/shipping
@@ -218,7 +222,7 @@ export default async function portalAddressRoutes(app: FastifyInstance) {
   // GET /api/v1/portal/addresses/billing?customerId=5
   app.get<{ Querystring: { customerId?: string } }>('/billing', async (req) => {
     const customerId = req.query.customerId ? parseInt(req.query.customerId) : undefined;
-    return listAddresses(customerId, 'billing');
+    return listAddresses(customerId);
   });
 
   // POST /api/v1/portal/addresses/billing

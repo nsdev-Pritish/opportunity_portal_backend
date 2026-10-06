@@ -724,9 +724,11 @@ async function otbSyncConvert(estimateId: number, quoteId: number, lineItemIds: 
       } as any)
       .where(eq(estimateQuotes.id, quoteId));
 
+    // Mark the quoted lines converted and record which quote they went into (see
+    // estimate_line_items.estimate_quote_id — needed to reverse a quote deletion).
     if (lineItemIds.length > 0) {
       await db.update(estimateLineItems)
-        .set({ converted: true } as any)
+        .set({ converted: true, estimateQuoteId: quoteId } as any)
         .where(inArray(estimateLineItems.id, lineItemIds));
     }
 

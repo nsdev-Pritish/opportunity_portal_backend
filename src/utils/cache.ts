@@ -40,8 +40,20 @@ export const CacheKeys = {
   estimate      : (id: number) => `${PREFIX}est:${id}`,
 };
 
-export async function invalidateDropdown(entity: string, scopeId?: number) {
-  await cacheDel(CacheKeys.dropdown(entity));
-  if (scopeId) await cacheDel(CacheKeys.dropdownScoped(entity, scopeId));
+// Clears EVERY cached list for this entity: the unscoped `dd:<entity>:active` AND every
+// scoped `dd:<entity>:<id>` (per-customer addresses and contacts, per-vendor factories and
+// addresses, per-country states).
+//
+// The scoped keys used to survive every invalidation. This took an optional scopeId and only
+// cleared the scoped key when given one — but no caller anywhere passed it, because a generic
+// "update this master record" path has no idea which customer or vendor the row belongs to.
+// So a per-customer dropdown kept serving its stale list until CACHE_TTL_DROPDOWN expired:
+// an address synced from NetSuite was invisible in the Ship To / Bill To dropdown for up to
+// five minutes. Matching by pattern needs no caller to know the scope id.
+//
+// The trailing colon keeps sibling entities apart — `dd:product_classes:*` does not match
+// `dd:product_classes_eu:active`.
+export async function invalidateDropdown(entity: string) {
+  await cacheDelPattern(`dd:${entity}:*`);
   await cacheDel(CacheKeys.allDropdowns());
 }

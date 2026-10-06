@@ -27,7 +27,7 @@
  */
 
 import { FastifyInstance } from 'fastify';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../../config/database.js';
 import { addresses, customers } from '../../../db/schema/index.js';
@@ -40,7 +40,10 @@ const ADDRESS_TYPE = 'billing';
 const CreateSchema = z.object({
   netsuiteInternalId : z.string().min(1),
   customerNetsuiteId : z.string().min(1),
-  label              : z.string().max(100).optional().nullable(),
+  // NetSuite auto-fills the address-book label with the whole rendered address when
+  // nobody types one, so this is far longer than a hand-written label. Matches
+  // addresses.label varchar(2000).
+  label              : z.string().max(2000).optional().nullable(),
   companyName        : z.string().max(255).optional().nullable(),
   attention          : z.string().max(255).optional().nullable(),
   addressee          : z.string().max(255).optional().nullable(),
@@ -92,7 +95,7 @@ export default async function billingAddressRoutes(app: FastifyInstance) {
       })
       .from(addresses)
       .leftJoin(customers, eq(addresses.customerId, customers.id))
-      .where(and(eq(addresses.isActive, true), eq(addresses.type, ADDRESS_TYPE)))
+      .where(eq(addresses.isActive, true))
       .orderBy(addresses.companyName);
     return rows;
   });
@@ -125,10 +128,7 @@ export default async function billingAddressRoutes(app: FastifyInstance) {
       })
       .from(addresses)
       .leftJoin(customers, eq(addresses.customerId, customers.id))
-      .where(and(
-        eq(addresses.netsuiteInternalId, req.params.nsId),
-        eq(addresses.type, ADDRESS_TYPE),
-      ))
+      .where(eq(addresses.netsuiteInternalId, req.params.nsId))
       .limit(1);
     if (!row) throw new NotFoundError('BillingAddress', req.params.nsId);
     return row;
@@ -149,13 +149,17 @@ export default async function billingAddressRoutes(app: FastifyInstance) {
     // Resolve country/state (by NS id, local id, or free text) → FK ids + canonical names.
     const geo = await resolveCountryState(body);
 
+    // Matched on netsuite_internal_id ALONE, deliberately. A NetSuite address book entry can
+    // be flagged as both default shipping and default billing, in which case NetSuite pushes
+    // the SAME internal id to this endpoint and to the shipping one. The unique index
+    // (addresses_ns_id_idx) covers netsuite_internal_id by itself, so scoping this lookup by
+    // `type` made the second endpoint miss the existing row, take the insert path, and die on
+    // a duplicate-key error. One NetSuite address = one row here; `type` records only which
+    // role it was first synced under and is never used to filter.
     const [existing] = await db
       .select({ id: addresses.id })
       .from(addresses)
-      .where(and(
-        eq(addresses.netsuiteInternalId, body.netsuiteInternalId),
-        eq(addresses.type, ADDRESS_TYPE),
-      ))
+      .where(eq(addresses.netsuiteInternalId, body.netsuiteInternalId))
       .limit(1);
 
     if (existing) {
@@ -220,10 +224,7 @@ export default async function billingAddressRoutes(app: FastifyInstance) {
     const [existing] = await db
       .select({ id: addresses.id })
       .from(addresses)
-      .where(and(
-        eq(addresses.netsuiteInternalId, req.params.nsId),
-        eq(addresses.type, ADDRESS_TYPE),
-      ))
+      .where(eq(addresses.netsuiteInternalId, req.params.nsId))
       .limit(1);
     if (!existing) throw new NotFoundError('BillingAddress', req.params.nsId);
 
@@ -249,10 +250,7 @@ export default async function billingAddressRoutes(app: FastifyInstance) {
     const [existing] = await db
       .select({ id: addresses.id })
       .from(addresses)
-      .where(and(
-        eq(addresses.netsuiteInternalId, req.params.nsId),
-        eq(addresses.type, ADDRESS_TYPE),
-      ))
+      .where(eq(addresses.netsuiteInternalId, req.params.nsId))
       .limit(1);
     if (!existing) throw new NotFoundError('BillingAddress', req.params.nsId);
 

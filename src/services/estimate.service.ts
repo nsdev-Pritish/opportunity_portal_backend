@@ -466,7 +466,8 @@ export async function getEstimate(id: number) {
       .orderBy(asc(estimateFreightGroups.id)),
     // Every quote this estimate has been converted to, newest first — an estimate holds one
     // per batch of newly-added lines. Rows NetSuite hasn't numbered yet (convert still
-    // syncing, or failed) are skipped so the lists never carry nulls.
+    // syncing, or failed) are skipped so the lists never carry nulls, and quotes deleted in
+    // NetSuite (soft-deleted here) are excluded so the detail never shows a dead quote.
     db.select({
       quoteNetsuiteInternalId: estimateQuotes.quoteNetsuiteInternalId,
       quoteDocumentNumber    : estimateQuotes.quoteDocumentNumber,
@@ -475,6 +476,7 @@ export async function getEstimate(id: number) {
       .where(and(
         eq(estimateQuotes.estimateId, id),
         isNotNull(estimateQuotes.quoteDocumentNumber),
+        eq(estimateQuotes.isActive, true),
       ))
       .orderBy(desc(estimateQuotes.createdAt)),
     // Creative requests with their detail row, selected assets, scope of work and
@@ -1303,9 +1305,86 @@ export async function resyncEstimate(id: number) {
 
 // ── Convert to OTB (creates a Quote in NetSuite) ─────────────────────────────
 
+/**
+ * Resolve WHICH existing quote of `estimateId` should receive the newly-added lines.
+ *
+ * An estimate accumulates one quote per convert batch, so "the existing quote" is ambiguous
+ * once there is more than one. The caller names the target; we never silently assume.
+ *
+ * Note estimate_quotes has NO unique constraint on quote_document_number (see migration
+ * 0039) and convert-to-new inserts rows whose document number is still NULL until NetSuite
+ * answers — hence quoteId is the reliable selector and the document-number lookup prefers
+ * an active, NetSuite-synced row.
+ */
+async function resolveTargetQuote(
+  estimateId: number,
+  opts?: { quoteId?: number; quoteDocumentNumber?: string },
+) {
+  const db = getDb();
+
+  // 1. By portal row id — scoped to the estimate so another estimate's quote is unreachable.
+  //    isActive excludes quotes deleted in NetSuite: they no longer exist there, so lines
+  //    can never be appended to them.
+  if (opts?.quoteId) {
+    const [row] = await db
+      .select()
+      .from(estimateQuotes)
+      .where(and(
+        eq(estimateQuotes.id, opts.quoteId),
+        eq(estimateQuotes.estimateId, estimateId),
+        eq(estimateQuotes.isActive, true),
+      ))
+      .limit(1);
+    if (!row) {
+      throw new NotFoundError('Quote', `${opts.quoteId} (for estimate ${estimateId})`);
+    }
+    return row;
+  }
+
+  // 2. By NetSuite quote number — may match several rows, so prefer the usable one
+  if (opts?.quoteDocumentNumber) {
+    const [row] = await db
+      .select()
+      .from(estimateQuotes)
+      .where(and(
+        eq(estimateQuotes.estimateId, estimateId),
+        eq(estimateQuotes.quoteDocumentNumber, opts.quoteDocumentNumber),
+        eq(estimateQuotes.isActive, true),
+      ))
+      // Prefer a NetSuite-synced row, then 'active' over 'replaced' (asc puts 'active' first),
+      // then the newest. Booleans sort false-first in Postgres, so IS NULL asc = synced first.
+      .orderBy(
+        sql`${estimateQuotes.quoteNetsuiteInternalId} IS NULL`,
+        asc(estimateQuotes.status),
+        desc(estimateQuotes.createdAt),
+      )
+      .limit(1);
+    if (!row) {
+      throw new NotFoundError('Quote', `${opts.quoteDocumentNumber} (for estimate ${estimateId})`);
+    }
+    return row;
+  }
+
+  // 3. Legacy fallback — most recent active quote (no selector supplied)
+  const [row] = await db
+    .select()
+    .from(estimateQuotes)
+    .where(and(
+      eq(estimateQuotes.estimateId, estimateId),
+      eq(estimateQuotes.status as any, 'active'),
+      eq(estimateQuotes.isActive, true),
+    ))
+    .orderBy(desc(estimateQuotes.createdAt))
+    .limit(1);
+  if (!row) {
+    throw new Error('No existing quote found for this estimate. Create a new quote first.');
+  }
+  return row;
+}
+
 export async function convertEstimateToOtb(
   id     : number,
-  opts?  : { target?: 'new' | 'existing'; quoteDocumentNumber?: string },
+  opts?  : { target?: 'new' | 'existing'; quoteId?: number; quoteDocumentNumber?: string },
 ) {
   const db = getDb();
 
@@ -1334,19 +1413,20 @@ export async function convertEstimateToOtb(
       return { id, message: 'No new line items to add to the existing quote' };
     }
 
-    // Find the latest active quote that already exists in NetSuite (portal-side row to
-    // refresh with the sync result). The quote *number* sent to NetSuite itself is not
-    // derived here — it comes straight from the frontend (opts.quoteDocumentNumber),
-    // since the caller already knows which quote the user picked as "existing".
-    const [activeQuote] = await db
-      .select()
-      .from(estimateQuotes)
-      .where(and(eq(estimateQuotes.estimateId, id), eq(estimateQuotes.status as any, 'active')))
-      .orderBy(desc(estimateQuotes.createdAt))
-      .limit(1);
+    // Pick the quote row that receives these lines. An estimate can hold SEVERAL active
+    // quotes (one per convert batch), so the caller names the one it wants. Resolution order:
+    //   1. opts.quoteId             — the portal estimate_quotes.id (unambiguous primary key)
+    //   2. opts.quoteDocumentNumber — the NetSuite quote number
+    //   3. neither                  — legacy fallback: the most recent active quote
+    // Both lookups are scoped to this estimate, so a caller can never reach another
+    // estimate's quote by guessing an id.
+    const activeQuote = await resolveTargetQuote(id, opts);
 
-    if (!activeQuote || !activeQuote.quoteNetsuiteInternalId) {
-      throw new Error('No existing quote found for this estimate. Create a new quote first.');
+    if (!activeQuote.quoteNetsuiteInternalId) {
+      throw new Error(
+        `Quote ${activeQuote.quoteDocumentNumber ?? activeQuote.id} has not been created in NetSuite yet ` +
+        `(sync status: ${activeQuote.syncStatus}). Wait for it to finish syncing, or pick another quote.`,
+      );
     }
 
     await db.update(estimates)
@@ -1356,7 +1436,10 @@ export async function convertEstimateToOtb(
     syncEstimateToNetsuite(id, 'convertToExisting', {
       quoteId            : activeQuote.id,                       // portal quote row to refresh
       quoteNsId          : activeQuote.quoteNetsuiteInternalId,  // NS internal id sent in payload
-      quoteDocumentNumber: opts?.quoteDocumentNumber,             // NS quote number, as supplied by the frontend
+      // Taken from the RESOLVED row, not the raw request. Previously the NS internal id came
+      // from the latest quote while the document number came from the frontend, so picking a
+      // non-latest quote sent NetSuite a mismatched (id, number) pair.
+      quoteDocumentNumber: activeQuote.quoteDocumentNumber ?? opts?.quoteDocumentNumber,
       lineItemIds        : targetIds,                            // lines to mark converted=true
     }).catch(() => {/* already logged + recorded */});
 
@@ -1406,12 +1489,35 @@ export async function convertEstimateToOtb(
 
 // ── List quotes for an estimate ──────────────────────────────────────────────
 
+// Returns the estimate's LIVE quotes (quotes deleted in NetSuite are excluded — they are
+// soft-deleted here and must never reach the frontend picker), each with:
+//   lineItemCount — how many active lines were converted into that quote
+//   selectable    — whether it can receive more lines (a quote NetSuite has not created yet
+//                   cannot be added to)
 export async function listEstimateQuotes(estimateId: number) {
-  return getDb()
-    .select()
+  const db = getDb();
+
+  const rows = await db
+    .select({
+      ...getTableColumns(estimateQuotes),
+      lineItemCount: sql<number>`cast(count(${estimateLineItems.id}) as int)`,
+    })
     .from(estimateQuotes)
-    .where(eq(estimateQuotes.estimateId, estimateId))
+    .leftJoin(estimateLineItems, and(
+      eq(estimateLineItems.estimateQuoteId, estimateQuotes.id),
+      eq(estimateLineItems.isActive, true),
+    ))
+    .where(and(
+      eq(estimateQuotes.estimateId, estimateId),
+      eq(estimateQuotes.isActive, true),
+    ))
+    .groupBy(estimateQuotes.id)
     .orderBy(desc(estimateQuotes.createdAt));
+
+  return rows.map(r => ({
+    ...r,
+    selectable: r.status === 'active' && r.syncStatus === 'synced' && !!r.quoteNetsuiteInternalId,
+  }));
 }
 
 // ── Deactivate (soft delete) ─────────────────────────────────────────────────

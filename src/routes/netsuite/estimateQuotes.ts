@@ -29,8 +29,16 @@ import {
   getQuotesForEstimate,
   syncAllQuotesFromNetsuite,
   listSyncedQuotes,
+  markQuoteDeletedFromNetsuite,
 } from '../../services/estimateQuote.service.js';
 import { logger } from '../../utils/logger.js';
+
+const DeletedQuoteSchema = z.object({
+  quoteInternalId   : z.preprocess(v => (typeof v === 'number' ? String(v) : v),
+                                   z.string().min(1, 'quoteInternalId is required')),
+  estimateInternalId: z.preprocess(v => (v === '' || v === null ? undefined : (typeof v === 'number' ? String(v) : v)),
+                                   z.string().optional()),
+});
 
 const ReceiveQuoteSchema = z.object({
   estimateInternalId    : z.string().min(1, 'estimateInternalId is required'),
@@ -122,6 +130,44 @@ export default async function estimateQuoteNsRoutes(app: FastifyInstance) {
     });
 
     return reply.status(result._action === 'created' ? 201 : 200).send(result);
+  });
+
+  /**
+   * POST /api/v1/netsuite/estimate-quotes/deleted
+   *
+   * Called by NetSuite when a Quote is DELETED there. NetSuite deletes for good; the portal
+   * keeps the row so the quote number and internal id stay available for audit.
+   *
+   * Body:
+   * {
+   *   "quoteInternalId": "5001",      // required — NS internal id of the deleted Quote
+   *   "estimateInternalId": "1001"    // optional — for logging/traceability only
+   * }
+   *
+   * Effect:
+   *   - the quote row is soft-deleted (is_active = false, deleted_at = now)
+   *   - its line items go back to converted = false so they can be quoted again
+   *   - the quote disappears from the portal's quote picker
+   *
+   * Always 200 — safe to retry. The `_action` field says what happened:
+   *   'deleted'         — soft-deleted, line items released
+   *   'already_deleted' — a repeat call, nothing changed
+   *   'not_found'       — the portal never had this quote, nothing to do
+   */
+  app.post<{ Body: unknown }>('/deleted', async (req, reply) => {
+    const body = DeletedQuoteSchema.parse(req.body);
+
+    logger.info(
+      { quoteInternalId: body.quoteInternalId, estimateInternalId: body.estimateInternalId },
+      'NetSuite → Portal: quote deleted in NetSuite',
+    );
+
+    const result = await markQuoteDeletedFromNetsuite({
+      quoteInternalId   : body.quoteInternalId,
+      estimateInternalId: body.estimateInternalId,
+    });
+
+    return reply.status(200).send(result);
   });
 
   /**
