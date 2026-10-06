@@ -226,6 +226,15 @@ function buildPipelineRows(
   }));
 }
 
+// Closed/Billed SOs are synced so invoices can link to them, but carry no open
+// backlog. The comparison sums foreign_amount, so they are kept as rows (SO
+// history) with a zero amount instead of being counted as open.
+const NON_OPEN_SO_STATUSES = new Set(['closed', 'billed']);
+
+function isNonOpenSalesOrder(status: string | null): boolean {
+  return status != null && NON_OPEN_SO_STATUSES.has(status.trim().toLowerCase());
+}
+
 function buildSalesOrderRows(
   rows: (typeof salesOrderSearch.$inferSelect)[],
   lu: MasterLookups,
@@ -255,7 +264,7 @@ function buildSalesOrderRows(
     expectedCloseDate: toDateOnly(r.tranDate), // sales_order_search has no so_date column — tranDate ("Date") used instead
     // Prefers the real foreign_amount column; falls back to the raw
     // transaction amount (projectedTotal) if that's empty; NULL if neither is set.
-    foreignAmount: r.foreignAmount ?? r.projectedTotal ?? null,
+    foreignAmount: isNonOpenSalesOrder(r.status) ? '0' : (r.foreignAmount ?? r.projectedTotal ?? null),
     currency: get(lu.currencyCodes, r.currencyId),
     exchangeRate: r.exchangeRate,
     usdAmount: r.openAmount, // sales_order_search."Open Amount" — the still-unfulfilled/unbilled value NetSuite actually populates on SO (projected_total arrives empty)
@@ -449,9 +458,18 @@ export async function buildRevenueSnapshotSequential(db: DB, snapshotDate: strin
 
     // Lets Invoice rows without their own est_number inherit the SAME anchor
     // their originating SO already resolved to, instead of a different one.
+    // Deliberately NOT scoped to soRows (isActive-filtered): an SO is often
+    // closed/inactive by the time its invoice is synced, and the invoice must
+    // still resolve to the SAME anchor the SO carried while it was open —
+    // otherwise the invoice falls back to its own document number and looks
+    // like a brand-new, unlinked deal instead of an SO->Invoice transition.
+    const soAnchorSource = await tx
+      .select({ documentNumber: salesOrderSearch.documentNumber, createdFrom: salesOrderSearch.createdFrom })
+      .from(salesOrderSearch);
     const soAnchorByDocNumber = new Map(
-      soRows.filter((r): r is typeof r & { documentNumber: string; anchorId: string } => r.documentNumber != null && r.anchorId != null)
-        .map(r => [r.documentNumber, r.anchorId]),
+      soAnchorSource
+        .map(r => [r.documentNumber, parseReferenceNumber(r.createdFrom) ?? r.documentNumber] as const)
+        .filter((pair): pair is [string, string] => pair[0] != null && pair[1] != null),
     );
 
     const invoiceSource = await tx.select().from(invoiceSearch).where(eq(invoiceSearch.isActive, true));

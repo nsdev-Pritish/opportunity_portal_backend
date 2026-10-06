@@ -47,7 +47,7 @@
 // first attempt happened to write, which matters if fact_revenue_snapshot
 // itself was corrected after a first (bad) run.
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import { factRevenueSnapshot, revenueComparison } from '../../db/schema/index.js';
 import type { DB } from '../../config/database.js';
 import { COMPARISON_INSERT_CHUNK_SIZE, type ReportType } from './config.js';
@@ -192,6 +192,7 @@ function classifyLifecycleEvent(input: {
   priorPipelineAmt: number; currentPipelineAmt: number; pipelineChange: number;
   priorOpenSoAmt: number; currentOpenSoAmt: number; soChange: number;
   priorInvoiceAmt: number; currentInvoiceAmt: number; invoiceChange: number;
+  hasHistoricalSo: boolean;
 }): string {
   const priorPipeline = sign(input.priorPipelineAmt);
   const currentPipeline = sign(input.currentPipelineAmt);
@@ -212,6 +213,11 @@ function classifyLifecycleEvent(input: {
   if (priorInvoice === 0 && currentInvoice > 0) {
     if (currentOpenSo > 0 && soChange < 0) return 'SO_PARTIALLY_INVOICED';
     if (currentOpenSo === 0 && soChange < 0) return 'SO_FULLY_INVOICED';
+    // The SO's own amount didn't move in THIS window, but a real SO existed
+    // for this anchor at some point before it — the SO likely closed/was
+    // invoiced in an earlier window than this invoice record's own sync, so
+    // it's still a transition, not a genuinely unlinked invoice.
+    if (input.hasHistoricalSo) return currentOpenSo > 0 ? 'SO_PARTIALLY_INVOICED' : 'SO_FULLY_INVOICED';
     return 'INVOICED_NO_LINKED_SO';
   }
 
@@ -262,6 +268,7 @@ function buildOneComparisonRow(
   currentSnapshotDate: string,
   priorRaw: AnchorStages,
   currentRaw: AnchorStages,
+  hasHistoricalSo: boolean,
 ): ComparisonRow {
   const prior = { PIPELINE: aggregateStage(priorRaw.PIPELINE), SO: aggregateStage(priorRaw.SO), INVOICE: aggregateStage(priorRaw.INVOICE) };
   const current = { PIPELINE: aggregateStage(currentRaw.PIPELINE), SO: aggregateStage(currentRaw.SO), INVOICE: aggregateStage(currentRaw.INVOICE) };
@@ -307,6 +314,7 @@ function buildOneComparisonRow(
     priorPipelineAmt, currentPipelineAmt, pipelineChange: pipelineAmountChange,
     priorOpenSoAmt, currentOpenSoAmt, soChange: openSoAmountChange,
     priorInvoiceAmt, currentInvoiceAmt, invoiceChange: invoiceAmountChange,
+    hasHistoricalSo,
   });
 
   const attrs = pickReportingAttrs(current, prior);
@@ -458,6 +466,19 @@ export async function runComparison(
     const currentByAnchor = groupByAnchorAndStage(currentRows);
     const anchorIds = new Set<string>([...priorByAnchor.keys(), ...currentByAnchor.keys()]);
 
+    // Anchors that had an SO row at ANY point before this pair's current date
+    // (not just the immediate prior date) — lets a late-syncing invoice still
+    // be recognized as an SO->Invoice transition when the SO itself closed in
+    // an earlier comparison window than the invoice record's own sync.
+    const historicalSoRows = anchorIds.size > 0
+      ? await tx.selectDistinct({ anchorId: factRevenueSnapshot.anchorId }).from(factRevenueSnapshot).where(and(
+        eq(factRevenueSnapshot.sourceType, 'SO'),
+        lt(factRevenueSnapshot.snapshotDate, currentDate),
+        inArray(factRevenueSnapshot.anchorId, [...anchorIds]),
+      ))
+      : [];
+    const anchorsWithHistoricalSo = new Set(historicalSoRows.map(r => r.anchorId));
+
     const comparisonRows: ComparisonRow[] = [];
     for (const anchorId of anchorIds) {
       comparisonRows.push(buildOneComparisonRow(
@@ -467,6 +488,7 @@ export async function runComparison(
         currentDate,
         priorByAnchor.get(anchorId) ?? {},
         currentByAnchor.get(anchorId) ?? {},
+        anchorsWithHistoricalSo.has(anchorId),
       ));
     }
 
