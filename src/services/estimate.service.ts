@@ -8,7 +8,7 @@ import {
   projectTypes, currencies, salesChannels, esStatus,
 } from '../db/schema/index.js';
 import { cacheDel, CacheKeys } from '../utils/cache.js';
-import { NotFoundError, ConflictError } from '../utils/errors.js';
+import { NotFoundError, ConflictError, AppError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { syncEstimateToNetsuite, deactivateLinesInNetsuite, isEstimateSyncInFlight } from './netsuiteSync.service.js';
 import {
@@ -1382,6 +1382,42 @@ async function resolveTargetQuote(
   return row;
 }
 
+/**
+ * Read back what NetSuite actually did and turn it into the caller's result.
+ *
+ * The convert is awaited (not fire-and-forget) so the user is told the truth: previously the
+ * route returned HTTP 200 the instant the NetSuite call was queued, so a NetSuite failure was
+ * recorded in the database but the frontend had already reported success.
+ *
+ * syncEstimateToNetsuite never throws — it records the outcome on the quote row — so the
+ * verdict is read from that row rather than from a caught exception:
+ *   'synced'  → the quote exists in NetSuite; report success with its id + number
+ *   'failed'  → surface NetSuite's own error text to the user (502)
+ *   'pending' → the sync was skipped, not run: NS_SUITELET_URL unset (local/dev) or another
+ *               sync was already in flight for this estimate. Reported honestly as pending
+ *               rather than dressed up as success.
+ */
+async function quoteSyncOutcome(quoteId: number) {
+  const db = getDb();
+  const [quote] = await db
+    .select()
+    .from(estimateQuotes)
+    .where(eq(estimateQuotes.id, quoteId))
+    .limit(1);
+
+  if (!quote) throw new NotFoundError('Quote', String(quoteId));
+
+  if (quote.syncStatus === 'failed') {
+    throw new AppError(
+      `Quote creation failed in NetSuite: ${quote.syncError ?? 'unknown error'}`,
+      502,
+      'NS_CONVERT_FAILED',
+    );
+  }
+
+  return quote;
+}
+
 export async function convertEstimateToOtb(
   id     : number,
   opts?  : { target?: 'new' | 'existing'; quoteId?: number; quoteDocumentNumber?: string },
@@ -1397,6 +1433,17 @@ export async function convertEstimateToOtb(
   if (!est) throw new NotFoundError('Estimate', String(id));
   if (!est.netsuiteInternalId) {
     throw new Error('Estimate has not been synced to NetSuite yet. Save the estimate first before converting to OTB.');
+  }
+
+  // Fail fast while another sync holds this estimate. syncEstimateToNetsuite silently skips a
+  // duplicate, which would leave the new quote row stranded at 'pending' with no NetSuite call
+  // ever made — and the user with no idea why. Better to say so and let them retry.
+  if (isEstimateSyncInFlight(id)) {
+    throw new AppError(
+      'Another NetSuite sync is already running for this estimate. Please wait a moment and try again.',
+      409,
+      'SYNC_IN_PROGRESS',
+    );
   }
 
   const target = opts?.target ?? 'new';
@@ -1433,7 +1480,8 @@ export async function convertEstimateToOtb(
       .set({ status: 'otb', syncStatus: 'pending', otbConvertedAt: new Date(), updatedAt: new Date() } as any)
       .where(eq(estimates.id, id));
 
-    syncEstimateToNetsuite(id, 'convertToExisting', {
+    // Awaited: the caller must learn whether NetSuite actually accepted the lines.
+    await syncEstimateToNetsuite(id, 'convertToExisting', {
       quoteId            : activeQuote.id,                       // portal quote row to refresh
       quoteNsId          : activeQuote.quoteNetsuiteInternalId,  // NS internal id sent in payload
       // Taken from the RESOLVED row, not the raw request. Previously the NS internal id came
@@ -1441,15 +1489,22 @@ export async function convertEstimateToOtb(
       // non-latest quote sent NetSuite a mismatched (id, number) pair.
       quoteDocumentNumber: activeQuote.quoteDocumentNumber ?? opts?.quoteDocumentNumber,
       lineItemIds        : targetIds,                            // lines to mark converted=true
-    }).catch(() => {/* already logged + recorded */});
+    }).catch(() => {/* outcome is recorded on the quote row; read it back below */});
+
+    // Throws 502 carrying NetSuite's error text if the sync failed.
+    const quote = await quoteSyncOutcome(activeQuote.id);
 
     return {
       id,
-      quoteId        : activeQuote.id,
-      mode           : 'convertToExisting',
-      targetLineItems: targetIds.length,
-      syncStatus     : 'pending',
-      message        : `Adding ${targetIds.length} line item(s) to existing quote ${activeQuote.quoteDocumentNumber ?? activeQuote.quoteNetsuiteInternalId}`,
+      quoteId                : quote.id,
+      quoteDocumentNumber    : quote.quoteDocumentNumber,
+      quoteNetsuiteInternalId: quote.quoteNetsuiteInternalId,
+      mode                   : 'convertToExisting',
+      targetLineItems        : targetIds.length,
+      syncStatus             : quote.syncStatus,
+      message: quote.syncStatus === 'synced'
+        ? `${targetIds.length} line item(s) added to quote ${quote.quoteDocumentNumber ?? quote.quoteNetsuiteInternalId}`
+        : `Quote ${quote.quoteDocumentNumber ?? quote.id} was not sent to NetSuite — the sync did not run. Please try again.`,
     };
   }
 
@@ -1474,16 +1529,26 @@ export async function convertEstimateToOtb(
     .set({ status: 'otb', syncStatus: 'pending', otbConvertedAt: new Date(), updatedAt: new Date() } as any)
     .where(eq(estimates.id, id));
 
-  syncEstimateToNetsuite(id, 'convert', { quoteId: newQuote.id, lineItemIds: targetIds })
-    .catch(() => {/* already logged + recorded */});
+  // Awaited: the caller must learn whether NetSuite actually created the quote. The line
+  // items are flipped to converted = true inside this call, and ONLY on success — a failed
+  // convert leaves them converted = false so the user can simply try again.
+  await syncEstimateToNetsuite(id, 'convert', { quoteId: newQuote.id, lineItemIds: targetIds })
+    .catch(() => {/* outcome is recorded on the quote row; read it back below */});
+
+  // Throws 502 carrying NetSuite's error text if the sync failed.
+  const quote = await quoteSyncOutcome(newQuote.id);
 
   return {
     id,
-    quoteId        : newQuote.id,
-    mode           : 'convert',
-    targetLineItems: targetIds.length,
-    syncStatus     : 'pending',
-    message        : `New quote triggered for ${targetIds.length} line item(s)`,
+    quoteId                : quote.id,
+    quoteDocumentNumber    : quote.quoteDocumentNumber,
+    quoteNetsuiteInternalId: quote.quoteNetsuiteInternalId,
+    mode                   : 'convert',
+    targetLineItems        : targetIds.length,
+    syncStatus             : quote.syncStatus,
+    message: quote.syncStatus === 'synced'
+      ? `Quote ${quote.quoteDocumentNumber ?? quote.quoteNetsuiteInternalId} created with ${targetIds.length} line item(s)`
+      : `The quote was not sent to NetSuite — the sync did not run. Please try again.`,
   };
 }
 

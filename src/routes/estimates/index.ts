@@ -258,6 +258,13 @@ const EstimateHeaderSchema = z.object({
 
   // Edit / Update fields
   statusId: z.number().int().positive().nullable().optional(),
+  // ES Status (quote-conversion state). Previously accepted ONLY by the Pipeline grid, so a
+  // value sent from the estimate edit form was silently dropped by Zod and never saved —
+  // the user's pick vanished, and the next NetSuite sync echoed the unchanged DB value back.
+  // Both sync directions already carry it (esStatusNSId out, esStatusNsId in); only the edit
+  // form was missing. Note applyConvertEsStatus still owns this field after a convert, so a
+  // manual value is replaced the next time the estimate is converted.
+  esStatusId: z.number().int().positive().nullable().optional(),
   closedLostReasonId: z.number().int().positive().nullable().optional(),
   clientPursuitAlternativeId: z.number().int().positive().nullable().optional(),
   projectHoldDate: z.string().optional(),
