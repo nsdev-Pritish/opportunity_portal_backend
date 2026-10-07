@@ -188,6 +188,35 @@ function get(map: Map<number, string | null>, id: Id): string | null {
 
 type SnapshotRow = typeof factRevenueSnapshot.$inferInsert;
 
+type EstimateRow = typeof estimateQuoteSearch.$inferSelect;
+
+function isClosedStatus(status: string | null): boolean {
+  return (status ?? '').toLowerCase().includes('closed');
+}
+
+// Pipeline is ONE row per quote document, at header level, and only while the
+// quote is open. NetSuite sends a header row plus one row per revenue line, all
+// carrying the same body-level Projected Total, and old rows are never deleted
+// — so a document can hold stale rows next to fresh ones. The most recently
+// updated row therefore decides: if it is Closed-Won / Closed-Lost the whole
+// document leaves Pipeline (Pipeline = $0); otherwise that row represents the
+// quote and its projected_total (not the per-line amount) is the Pipeline amount.
+function selectOpenHeaderQuotes(rows: EstimateRow[]): EstimateRow[] {
+  const byDoc = new Map<string, EstimateRow[]>();
+  const result: EstimateRow[] = [];
+  for (const r of rows) {
+    if (r.documentNumber == null) { if (!isClosedStatus(r.status)) result.push(r); continue; }
+    const group = byDoc.get(r.documentNumber);
+    if (group) group.push(r); else byDoc.set(r.documentNumber, [r]);
+  }
+  for (const group of byDoc.values()) {
+    const latest = group.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a));
+    if (isClosedStatus(latest.status)) continue;
+    result.push({ ...latest, foreignAmount: null });
+  }
+  return result;
+}
+
 function buildPipelineRows(
   rows: (typeof estimateQuoteSearch.$inferSelect)[],
   lu: MasterLookups,
@@ -226,15 +255,6 @@ function buildPipelineRows(
   }));
 }
 
-// Closed/Billed SOs are synced so invoices can link to them, but carry no open
-// backlog. The comparison sums foreign_amount, so they are kept as rows (SO
-// history) with a zero amount instead of being counted as open.
-const NON_OPEN_SO_STATUSES = new Set(['closed', 'billed']);
-
-function isNonOpenSalesOrder(status: string | null): boolean {
-  return status != null && NON_OPEN_SO_STATUSES.has(status.trim().toLowerCase());
-}
-
 function buildSalesOrderRows(
   rows: (typeof salesOrderSearch.$inferSelect)[],
   lu: MasterLookups,
@@ -262,9 +282,8 @@ function buildSalesOrderRows(
     revenueDate: toDateOnly(r.endDate), // workbook calls this "End Date" — sales_order_search has a dedicated column for it
     revenuePeriod: toMonthStart(r.endDate), // same field as revenueDate, truncated to month — same pattern Pipeline uses
     expectedCloseDate: toDateOnly(r.tranDate), // sales_order_search has no so_date column — tranDate ("Date") used instead
-    // Prefers the real foreign_amount column; falls back to the raw
-    // transaction amount (projectedTotal) if that's empty; NULL if neither is set.
-    foreignAmount: isNonOpenSalesOrder(r.status) ? '0' : (r.foreignAmount ?? r.projectedTotal ?? null),
+    // SO amount is the open amount (back-ordered qty x unit price), per the client — not the order total.
+    foreignAmount: r.openAmount, // open qty x unit price (NetSuite-computed); Closed/Billed SOs are 0, so they add nothing to Open SO
     currency: get(lu.currencyCodes, r.currencyId),
     exchangeRate: r.exchangeRate,
     usdAmount: r.openAmount, // sales_order_search."Open Amount" — the still-unfulfilled/unbilled value NetSuite actually populates on SO (projected_total arrives empty)
@@ -445,7 +464,7 @@ export async function buildRevenueSnapshotSequential(db: DB, snapshotDate: strin
     let inserted = 0;
 
     const pipelineSource = await tx.select().from(estimateQuoteSearch).where(eq(estimateQuoteSearch.isActive, true));
-    const pipelineRows = buildPipelineRows(pipelineSource, lu, snapshotDate, snapshotTs);
+    const pipelineRows = buildPipelineRows(selectOpenHeaderQuotes(pipelineSource), lu, snapshotDate, snapshotTs);
     await insertInChunks(tx, pipelineRows);
     bySource.PIPELINE = pipelineRows.length;
     inserted += pipelineRows.length;
