@@ -235,7 +235,7 @@ async function otbBuildCreatePayload(estimateId: number) {
     deptNsId, channelNsId, bizVerticalNsId, businessTypeNsId,
     acctMgrNsId, hkPartnerNsId, ops1NsId, ops2NsId, complianceNsId,
     shipTermsNsId, shipMethodNsId, shipAddrNsId, billAddrNsId,
-    estimateStatusNsId, closedLostReasonNsId, clientPursuitAltNsId,
+    estimateStatusNsId, esStatusNsId, closedLostReasonNsId, clientPursuitAltNsId,
   ] = await Promise.all([
     otbGetNsId(subsidiaries,                est.subsidiaryId),
     otbGetNsId(customers,                   est.customerId),
@@ -258,6 +258,7 @@ async function otbBuildCreatePayload(estimateId: number) {
     otbGetNsId(addresses,                   est.shippingAddressId),
     otbGetNsId(addresses,                   est.billingAddressId),
     otbGetNsId(estimateStatuses,            est.statusId),
+    otbGetNsId(esStatus,                    est.esStatusId),
     otbGetNsId(closedLostReasons,           est.closedLostReasonId),
     otbGetNsId(clientPursuitAlternatives,   est.clientPursuitAlternativeId),
   ]);
@@ -308,6 +309,11 @@ async function otbBuildCreatePayload(estimateId: number) {
     bibleLinkNS                  : est.bibleLink ?? '',
     memoNS                       : est.memo ?? '',
     statusNSId                   : estimateStatusNsId,
+    // ES Status — the status the portal now drives for estimates and their quotes. Sent here
+    // too so the create+convert path matches the normal create/update sync, which has always
+    // carried it (netsuiteSync.service.ts). Usually empty on a brand-new estimate; the convert
+    // step that follows sets it via otbApplyConvertEsStatus.
+    esStatusNSId                 : esStatusNsId,
     closedLostReasonNSId         : closedLostReasonNsId,
     clientPursuitAlternativeNSId : clientPursuitAltNsId,
     projectHoldDateNS            : otbFormatNsDate(est.projectHoldDate),
