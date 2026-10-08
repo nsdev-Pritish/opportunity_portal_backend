@@ -692,9 +692,12 @@ async function markEstimateChildrenSync(
         eq(estimateFreightGroups.estimateId, estimateId),
         eq(estimateFreightGroups.isActive, true),
       )),
+    // Only the unlocked rows — the ones this payload actually carried. A locked row
+    // finished in an earlier sync (synced, or failed with its own NetSuite/Wrike error)
+    // and must keep that outcome rather than inherit this estimate sync's result.
     db.update(creativeRequest)
       .set(crSet as any)
-      .where(eq(creativeRequest.estimateId, estimateId)),
+      .where(and(eq(creativeRequest.estimateId, estimateId), eq(creativeRequest.isLocked, false))),
   ]);
 }
 
@@ -897,9 +900,14 @@ export async function syncEstimateToNetsuite(
       // One entry per creative request, in the same order the `creativeRequests` array
       // was sent (see buildCreativeRequestsPayload). NetSuite creates the custom record
       // and the Wrike task via its legacy suitelet and returns both ids here.
+      // A request can fail on its own (e.g. the Wrike push is blocked) while the estimate
+      // itself saved, so each entry carries its own success / syncStatus / message.
       creativeRequestsNS?: Array<{
         netsuiteRecordId?: string | number | null;
         wrikeTaskId?     : string | null;
+        success?         : boolean;
+        syncStatus?      : string | null;
+        message?         : string | null;
       }>;
     };
 
@@ -1078,11 +1086,14 @@ export async function syncEstimateToNetsuite(
       logger.info({ estimateId, assigned: classAssignments.length }, 'Line class ids stored from NetSuite');
     }
 
-    // ── Store NetSuite record id + Wrike task id back to each creative request ────
+    // ── Store NetSuite record id + Wrike task id + per-request outcome ─────────────
     // Matched positionally against sentCreativeRequestIds, captured above before this
-    // sync could lock any row — same pattern as lineIds/resolvedClassIds above. Every
-    // other column on this row is set from the UI submission; these two ids are the
-    // only ones NetSuite is the source of.
+    // sync could lock any row — same pattern as lineIds/resolvedClassIds above.
+    // markEstimateChildrenSync() above has already marked every request synced + locked
+    // because the estimate saved; an entry NetSuite reports as failed (e.g. the Wrike push
+    // was blocked) is flipped back to failed with its error text. It stays LOCKED: NetSuite
+    // already created its custom record, and buildCreativeRequestsPayload sends no record id,
+    // so resending an unlocked row would create a duplicate record in NetSuite.
     if (!isConvert && Array.isArray(nsResp.creativeRequestsNS) && nsResp.creativeRequestsNS.length > 0) {
       if (sentCreativeRequestIds.length !== nsResp.creativeRequestsNS.length) {
         logger.warn({ estimateId, sent: sentCreativeRequestIds.length, returned: nsResp.creativeRequestsNS.length },
@@ -1097,6 +1108,16 @@ export async function syncEstimateToNetsuite(
               crSet.netsuiteRecordId = String(entry.netsuiteRecordId);
             }
             if (entry.wrikeTaskId) crSet.wrikeTaskId = entry.wrikeTaskId;
+
+            const entryFailed = entry.success === false
+              || String(entry.syncStatus ?? '').toLowerCase() === 'failed';
+            if (entryFailed) {
+              crSet.syncStatus    = 'failed';
+              crSet.lastSyncError = entry.message || 'NetSuite reported the creative request as failed';
+              crSet.updatedAt     = new Date();
+              logger.warn({ estimateId, creativeRequestId: sentCreativeRequestIds[i], error: crSet.lastSyncError },
+                'Creative request failed in NetSuite');
+            }
 
             if (Object.keys(crSet).length > 0) {
               await tx.update(creativeRequest)
