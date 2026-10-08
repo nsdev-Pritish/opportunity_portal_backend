@@ -33,7 +33,11 @@ export async function buildApp(): Promise<FastifyInstance> {
     logger: loggerConfig, 
     trustProxy: true, 
     ajv: { customOptions: { strict: false } },
-    requestTimeout: 60000, // 60 second timeout for large bulk operations
+    // Must stay ABOVE the 60s AbortSignal.timeout on our NetSuite calls. Routes that wait on
+    // NetSuite (convert-to-quote, create-and-convert) need the suitelet's own timeout to fire
+    // first — otherwise Fastify kills the request at the same moment and the caller gets a
+    // generic timeout instead of NetSuite's actual error message.
+    requestTimeout: 90000, // 90s: 60s NetSuite ceiling + headroom (also covers large bulk ops)
     bodyLimit: 5 * 1024 * 1024, // 5MB max payload size for bulk line items
   });
 
