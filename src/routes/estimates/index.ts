@@ -655,6 +655,7 @@ export default async function estimateRoutes(app: FastifyInstance) {
     likelyToCloseId?: string; likelyToCloseName?: string;
     esStatusId?: string;
     expectedCloseDateFrom?: string; expectedCloseDateTo?: string;
+    promiseDateFrom?: string; promiseDateTo?: string;
     dateOfEntryFrom?: string; dateOfEntryTo?: string;
   };
   app.get<{ Querystring: DocNumQuery }>('/document-numbers', async (req) => {
@@ -682,6 +683,8 @@ export default async function estimateRoutes(app: FastifyInstance) {
       esStatusId:            csvInt(q.esStatusId),
       expectedCloseDateFrom: q.expectedCloseDateFrom || undefined,
       expectedCloseDateTo:   q.expectedCloseDateTo   || undefined,
+      promiseDateFrom:       q.promiseDateFrom       || undefined,
+      promiseDateTo:         q.promiseDateTo         || undefined,
       dateOfEntryFrom:       q.dateOfEntryFrom       || undefined,
       dateOfEntryTo:         q.dateOfEntryTo         || undefined,
     });
@@ -732,6 +735,8 @@ export default async function estimateRoutes(app: FastifyInstance) {
       esStatusId:            csvInt(q.esStatusId),
       expectedCloseDateFrom: q.expectedCloseDateFrom || undefined,
       expectedCloseDateTo:   q.expectedCloseDateTo   || undefined,
+      promiseDateFrom:       q.promiseDateFrom       || undefined,
+      promiseDateTo:         q.promiseDateTo         || undefined,
       dateOfEntryFrom:       q.dateOfEntryFrom       || undefined,
       dateOfEntryTo:         q.dateOfEntryTo         || undefined,
     });

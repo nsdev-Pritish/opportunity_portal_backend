@@ -60,6 +60,8 @@ type EstimateFilterOpts = {
   esStatusId?: number[];
   expectedCloseDateFrom?: string;
   expectedCloseDateTo?: string;
+  promiseDateFrom?: string;
+  promiseDateTo?: string;
   dateOfEntryFrom?: string;
   dateOfEntryTo?: string;
 };
@@ -146,6 +148,8 @@ async function buildConditions(
   if (opts.esStatusId?.length)  conds.push(oneOrMany(estimates.esStatusId, opts.esStatusId));
   if (opts.expectedCloseDateFrom) conds.push(gte(estimates.expectedCloseDate, opts.expectedCloseDateFrom));
   if (opts.expectedCloseDateTo)   conds.push(lte(estimates.expectedCloseDate, opts.expectedCloseDateTo));
+  if (opts.promiseDateFrom)       conds.push(gte(estimates.promiseDate, opts.promiseDateFrom));
+  if (opts.promiseDateTo)         conds.push(lte(estimates.promiseDate, opts.promiseDateTo));
   if (opts.dateOfEntryFrom)     conds.push(gte(estimates.createdAt, new Date(opts.dateOfEntryFrom)));
   if (opts.dateOfEntryTo)       conds.push(lte(estimates.createdAt, new Date(opts.dateOfEntryTo)));
 
