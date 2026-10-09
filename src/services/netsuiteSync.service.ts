@@ -32,6 +32,7 @@ import {
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { getNsStatusForEsStatus, applyNsResponseEsStatus } from './esStatusMap.js';
 
 // ── OAuth 1.0a TBA header builder ─────────────────────────────────────────────
 
@@ -317,6 +318,8 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
   // 1. Fetch estimate header
   const [est] = await db.select().from(estimates).where(eq(estimates.id, estimateId)).limit(1);
   if (!est) throw new Error(`Estimate ${estimateId} not found`);
+  // NS status derived from the portal ES Status by name through es_status / estimate_statuses (see esStatusMap.ts).
+  const esNs = await getNsStatusForEsStatus(est.esStatusId);
 
   // 2. Resolve all header-level FK → NS internal IDs in one parallel batch
   const [
@@ -430,8 +433,9 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
     divisionalBudgetNS           : divisionalBudgetName || (est.divisionalBudget ?? ''),
     // Order Classification → custbody_order_classification.
     orderClassificationNSId      : orderClassificationNsId,
-    statusNSId                   : estimateStatusNsId,
-    esStatusNSId                 : esStatusNsId,
+    // Derived from the portal ES Status; Partially Converted yields undefined (omitted → NS left as-is).
+    statusNSId                   : esNs.nsStatusId,
+    esStatusNSId                 : esNs.isPartial ? undefined : esStatusNsId,
     closedLostReasonNSId         : closedLostReasonNsId,
     clientPursuitAlternativeNSId : clientPursuitAltNsId,
     projectHoldDateNS            : formatNsDate(est.projectHoldDate),
@@ -894,6 +898,11 @@ export async function syncEstimateToNetsuite(
       // internal id). Mapped back to the portal es_status master by netsuite_internal_id.
       esStatusNSId?  : string | number;
       esStatus?      : string | number;
+      // Status as NetSuite holds it after the save (RESTlet getPortalStatusInfo):
+      // esStatusNsId is the derived portal value (1–5), partiallyConverted the checkbox.
+      esStatusNsId?  : string | number;
+      nsStatusId?    : string | number;
+      partiallyConverted?: boolean | string;
       // Per-line unified Class id NetSuite resolved for each line, keyed by the same
       // 1-based line number used in the outbound `lines` payload (or a positional array).
       resolvedClassIds?: (string | number | null)[] | Record<string, string | number | null>;
@@ -1001,8 +1010,12 @@ export async function syncEstimateToNetsuite(
       // Mirror the ES Status from NetSuite now that the conversion is confirmed. Uses the
       // es_status NetSuite returns (esStatusNSId), falling back to a computed status if absent.
       // (runs after the converted=true update above so the partial/full fallback is accurate.)
-      await applyConvertEsStatus(estimateId, nsResp.esStatusNSId ?? nsResp.esStatus);
+      await applyConvertEsStatus(estimateId, nsResp.esStatusNsId ?? nsResp.esStatusNSId ?? nsResp.esStatus);
     }
+
+    // ES Status as NetSuite holds it after a create/update save (partiallyConverted = true
+    // sets Partially Converted). Convert modes are handled by applyConvertEsStatus above.
+    if (!isConvert) await applyNsResponseEsStatus(estimateId, nsResp);
 
     // ── Store NS line IDs back to each line item ──────────────────────────────
     // Skip for convert modes — those lineIds belong to the Quote, not the estimate

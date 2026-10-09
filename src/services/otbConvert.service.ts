@@ -33,6 +33,7 @@ import {
 } from '../db/schema/index.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { getNsStatusForEsStatus } from './esStatusMap.js';
 import { AppError } from '../utils/errors.js';
 
 type RawLineItem = Record<string, unknown> & { components?: Record<string, unknown>[] };
@@ -228,6 +229,8 @@ async function otbBuildCreatePayload(estimateId: number) {
 
   const [est] = await db.select().from(estimates).where(eq(estimates.id, estimateId)).limit(1);
   if (!est) throw new Error(`Estimate ${estimateId} not found`);
+  // NS status derived from the portal ES Status by name through es_status / estimate_statuses (see esStatusMap.ts).
+  const esNs = await getNsStatusForEsStatus(est.esStatusId);
 
   const [
     subsidiaryNsId, customerNsId, contactNsId, projectNameNsId, projectTypeNsId,
@@ -308,12 +311,13 @@ async function otbBuildCreatePayload(estimateId: number) {
     pkgArtSetupRequestNS: est.pkgArtSetupRequest ?? false,
     bibleLinkNS                  : est.bibleLink ?? '',
     memoNS                       : est.memo ?? '',
-    statusNSId                   : estimateStatusNsId,
+    // Derived from the portal ES Status; Partially Converted yields undefined (omitted → NS left as-is).
+    statusNSId                   : esNs.nsStatusId,
     // ES Status — the status the portal now drives for estimates and their quotes. Sent here
     // too so the create+convert path matches the normal create/update sync, which has always
     // carried it (netsuiteSync.service.ts). Usually empty on a brand-new estimate; the convert
     // step that follows sets it via otbApplyConvertEsStatus.
-    esStatusNSId                 : esStatusNsId,
+    esStatusNSId                 : esNs.isPartial ? undefined : esStatusNsId,
     closedLostReasonNSId         : closedLostReasonNsId,
     clientPursuitAlternativeNSId : clientPursuitAltNsId,
     projectHoldDateNS            : otbFormatNsDate(est.projectHoldDate),
@@ -713,7 +717,7 @@ async function otbSyncConvert(estimateId: number, quoteId: number, lineItemIds: 
     const nsResp = await res.json() as {
       id?: string; internalId?: string; documentNumber?: string;
       quoteId?: string; quoteTranId?: string;
-      esStatusNSId?: string | number; esStatus?: string | number;
+      esStatusNsId?: string | number; esStatusNSId?: string | number; esStatus?: string | number;
     };
 
     const quoteNsId   = nsResp.internalId     ?? nsResp.quoteId;
@@ -745,7 +749,7 @@ async function otbSyncConvert(estimateId: number, quoteId: number, lineItemIds: 
     // Mirror the ES Status from NetSuite now that the conversion is confirmed. Uses the
     // es_status NetSuite returns (esStatusNSId), falling back to a computed status if absent.
     // (runs after the converted=true update above so the partial/full fallback is accurate.)
-    await otbApplyConvertEsStatus(estimateId, nsResp.esStatusNSId ?? nsResp.esStatus);
+    await otbApplyConvertEsStatus(estimateId, nsResp.esStatusNsId ?? nsResp.esStatusNSId ?? nsResp.esStatus);
 
     logger.info({ estimateId, quoteId, quoteNsId, quoteDocNum }, 'OTB: convert synced to NetSuite');
 

@@ -31,6 +31,7 @@ import {
 } from '../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
+import { resolveEsStatusIdFromNs } from '../../services/esStatusMap.js';
 
 // ─── Helper: resolve portal FK from NS internalId ─────────────────
 // NS sends its own internalIds. We look them up to get our portal ids.
@@ -133,7 +134,9 @@ const CreateEstimateSchema = z.object({
 
   // Edit / Update fields (status, win/loss, close-lost)
   statusNsId                  : z.string().optional().nullable(),
-  esStatusNsId                : z.string().optional().nullable(),  // NS internalId of es_status (2=Converted To Quote, 4=Partially Converted, …)
+  esStatusNsId                : z.string().optional().nullable(),  // legacy: only used when statusNsId is absent
+  // Body-level "partially converted" checkbox (true/false or T/F). With NS status 12/13 it derives Partially Converted.
+  partiallyConverted          : z.union([z.boolean(), z.string()]).optional().nullable(),
   closedLostReasonNsId        : z.string().optional().nullable(),
   clientPursuitAlternativeNsId: z.string().optional().nullable(),
   notesClosedLostReason       : z.string().optional().nullable(),
@@ -771,7 +774,11 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     shipTo               : body.shipTo,
     billTo               : body.billTo,
     statusId                   : await resolveNsId(estimateStatuses,           body.statusNsId),
-    esStatusId                 : await resolveNsId(esStatus,                    body.esStatusNsId),
+    // ES Status is derived from NS's native status + the partiallyConverted checkbox
+    // (see esStatusMap.ts); the legacy esStatusNsId is only honoured when no status is sent.
+    esStatusId                 : body.statusNsId
+      ? await resolveEsStatusIdFromNs(body.statusNsId, body.partiallyConverted)
+      : await resolveNsId(esStatus, body.esStatusNsId),
     closedLostReasonId         : await resolveNsId(closedLostReasons,          body.closedLostReasonNsId),
     clientPursuitAlternativeId : await resolveNsId(clientPursuitAlternatives,  body.clientPursuitAlternativeNsId),
     notesClosedLostReason      : body.notesClosedLostReason,
@@ -855,6 +862,24 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
     if (nsKey in body) {
       const resolved = await resolveNsId(table, body[nsKey] as string);
       if (resolved) updates[dbKey] = resolved;
+    }
+  }
+
+  // ES Status — derived from NS status + partiallyConverted checkbox, overriding the legacy
+  // esStatusNsId lookup above. NS may send only the checkbox on an edit; then the status comes
+  // from the NS status we already hold for this estimate (estimate_statuses via statusId).
+  if (body.statusNsId || 'partiallyConverted' in body) {
+    let nsStatusId = body.statusNsId as string | undefined;
+    if (!nsStatusId) {
+      const [cur] = await db.select({ nsId: estimateStatuses.netsuiteInternalId })
+        .from(estimates)
+        .leftJoin(estimateStatuses, eq(estimates.statusId, estimateStatuses.id))
+        .where(eq(estimates.id, portalId)).limit(1);
+      nsStatusId = cur?.nsId ?? undefined;
+    }
+    if (nsStatusId) {
+      const esStatusId = await resolveEsStatusIdFromNs(nsStatusId, body.partiallyConverted);
+      if (esStatusId) updates.esStatusId = esStatusId;
     }
   }
 
