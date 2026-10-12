@@ -354,13 +354,13 @@ const CreativeRequestsSchema = z.object({
 // ── Header + line items + freight groups ─────────────────────────────────────
 const CreateEstimateSchema = EstimateHeaderSchema.extend({
   lineItems: z.array(LineItemSchema).max(400).optional(),
-  freightGroups: z.array(FreightGroupSchema).max(50).optional(),
+  freightGroups: z.array(FreightGroupSchema).max(100).optional(),
   creativeRequests: CreativeRequestsSchema.nullish(),
   submittedByUserId: z.number().int().positive().optional(),
 });
 const UpdateEstimateSchema = EstimateHeaderSchema.partial().extend({
   lineItems: z.array(LineItemSchema).max(400).optional(),
-  freightGroups: z.array(FreightGroupSchema).max(50).optional(),
+  freightGroups: z.array(FreightGroupSchema).max(100).optional(),
   creativeRequests: CreativeRequestsSchema.nullish(),
   submittedByUserId: z.number().int().positive().optional(),
 });

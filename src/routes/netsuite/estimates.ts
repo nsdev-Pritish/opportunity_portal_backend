@@ -378,7 +378,7 @@ const SyncFreightGroupSchema = z.object({
 const SyncEstimateSchema = z.object({
   estimate  : CreateEstimateSchema,
   lineItems : z.array(SyncLineItemWithComponentsSchema).max(400).optional(),
-  freightGroups: z.array(SyncFreightGroupSchema).max(50).optional(),
+  freightGroups: z.array(SyncFreightGroupSchema).max(100).optional(),
 });
 
 // ─── Route handlers ───────────────────────────────────────────────
