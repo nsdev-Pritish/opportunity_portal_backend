@@ -774,11 +774,12 @@ async function buildEstimateValues(body: z.infer<typeof CreateEstimateSchema>, c
     shipTo               : body.shipTo,
     billTo               : body.billTo,
     statusId                   : await resolveNsId(estimateStatuses,           body.statusNsId),
-    // ES Status is derived from NS's native status + the partiallyConverted checkbox
-    // (see esStatusMap.ts); the legacy esStatusNsId is only honoured when no status is sent.
-    esStatusId                 : body.statusNsId
-      ? await resolveEsStatusIdFromNs(body.statusNsId, body.partiallyConverted)
-      : await resolveNsId(esStatus, body.esStatusNsId),
+    // ES Status: NS's explicit esStatusNsId wins; otherwise derived from NS's native status +
+    // the partiallyConverted checkbox (see esStatusMap.ts).
+    esStatusId                 : (await resolveNsId(esStatus, body.esStatusNsId))
+      ?? (body.statusNsId
+        ? await resolveEsStatusIdFromNs(body.statusNsId, body.partiallyConverted)
+        : null),
     closedLostReasonId         : await resolveNsId(closedLostReasons,          body.closedLostReasonNsId),
     clientPursuitAlternativeId : await resolveNsId(clientPursuitAlternatives,  body.clientPursuitAlternativeNsId),
     notesClosedLostReason      : body.notesClosedLostReason,
@@ -865,10 +866,9 @@ async function applyEstimateUpdate(portalId: number, body: Record<string, unknow
     }
   }
 
-  // ES Status — derived from NS status + partiallyConverted checkbox, overriding the legacy
-  // esStatusNsId lookup above. NS may send only the checkbox on an edit; then the status comes
+  // ES Status — if esStatusNsId did not resolve above, derive from NS status + partiallyConverted. NS may send only the checkbox on an edit; then the status comes
   // from the NS status we already hold for this estimate (estimate_statuses via statusId).
-  if (body.statusNsId || 'partiallyConverted' in body) {
+  if (!updates.esStatusId && (body.statusNsId || 'partiallyConverted' in body)) {
     let nsStatusId = body.statusNsId as string | undefined;
     if (!nsStatusId) {
       const [cur] = await db.select({ nsId: estimateStatuses.netsuiteInternalId })
