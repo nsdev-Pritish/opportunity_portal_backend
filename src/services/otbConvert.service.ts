@@ -778,6 +778,19 @@ export async function createEstimateAndConvertToOtb(
   const startTime = Date.now();
   logger.info('OTB: creating estimate + converting to quote');
 
+  // Refuse up front when no line is selected for the quote. Checked BEFORE anything is
+  // written: by the time the quote step runs, the estimate already exists here and in
+  // NetSuite, so failing later would leave a created estimate behind a "convert" that
+  // never happened. A line counts as selected unless it explicitly sends selected=false
+  // (the column defaults to true). Components are checked too — they are quoted lines.
+  const anySelected = lineItems.some(item =>
+    item.selected !== false
+    || (item.components ?? []).some(c => c.selected !== false),
+  );
+  if (!anySelected) {
+    throw new AppError('No selected line items to quote — select at least one line item.', 400, 'NO_LINES_SELECTED');
+  }
+
   // 1. Insert estimate + line items (+ freight groups) atomically
   const { estimate, lineItems: lines } = await db.transaction(async (tx) => {
     // trandate = the portal creation date in date-only form (YYYY-MM-DD);
@@ -822,7 +835,9 @@ export async function createEstimateAndConvertToOtb(
   }
 
   // 4. Create the quote row, flip the estimate to 'otb', and run the convert-sync (await)
-  const targetIds = lines.map(l => l.id);
+  // Only the lines the user selected (line item checkbox). `lines` are the inserted rows,
+  // so each carries its stored value — true unless the payload sent false.
+  const targetIds = lines.filter(l => l.selected !== false).map(l => l.id);
 
   const [newQuote] = await db.insert(estimateQuotes)
     .values({ estimateId: estimate.id, syncStatus: 'pending' } as any)

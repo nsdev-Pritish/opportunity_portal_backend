@@ -1401,6 +1401,36 @@ async function resolveTargetQuote(
  *               sync was already in flight for this estimate. Reported honestly as pending
  *               rather than dressed up as success.
  */
+/**
+ * The line items a convert puts on a quote:
+ *   converted = false — not already on a quote
+ *   selected  = true  — ticked by the user (line item checkbox; defaults to true)
+ *   is_active = true  — not soft-deleted
+ *
+ * `selected` defaults to true and every existing line carries true, so an estimate where
+ * nobody has unticked a line selects exactly what the convert always did.
+ *
+ * is_active was previously missing: a soft-deleted, unconverted line was swept into the
+ * convert and marked converted. It's excluded now, matching applyConvertEsStatus, which
+ * already counts active lines only.
+ *
+ * NetSuite builds the quote from its OWN copy of these flags (sent as selectedNS on every
+ * estimate sync), so the estimate must be saved and synced before converting, or NetSuite
+ * quotes from stale selections.
+ */
+async function selectQuotableLineIds(estimateId: number): Promise<number[]> {
+  const rows = await getDb()
+    .select({ id: estimateLineItems.id })
+    .from(estimateLineItems)
+    .where(and(
+      eq(estimateLineItems.estimateId, estimateId),
+      eq(estimateLineItems.converted, false),
+      eq(estimateLineItems.selected, true),
+      eq(estimateLineItems.isActive, true),
+    ));
+  return rows.map(r => r.id);
+}
+
 async function quoteSyncOutcome(quoteId: number) {
   const db = getDb();
   const [quote] = await db
@@ -1454,14 +1484,9 @@ export async function convertEstimateToOtb(
 
   // ── Option B: add newly-added lines to the EXISTING quote ───────────────────
   if (target === 'existing') {
-    // Only the unconverted (newly added) line items go to the existing quote
-    const unconverted = await db
-      .select({ id: estimateLineItems.id })
-      .from(estimateLineItems)
-      .where(and(eq(estimateLineItems.estimateId, id), eq(estimateLineItems.converted, false)));
-    const targetIds = unconverted.map(r => r.id);
+    const targetIds = await selectQuotableLineIds(id);
     if (targetIds.length === 0) {
-      return { id, message: 'No new line items to add to the existing quote' };
+      return { id, message: 'No selected line items to add to the existing quote' };
     }
 
     // Pick the quote row that receives these lines. An estimate can hold SEVERAL active
@@ -1513,15 +1538,11 @@ export async function convertEstimateToOtb(
   }
 
   // ── Option A: create a SEPARATE new quote for the newly-added lines ──────────
-  // Only unconverted (newly added) lines are quoted. Previous quotes stay active,
+  // Only unconverted, selected lines are quoted. Previous quotes stay active,
   // so an estimate can hold multiple active quotes (one per batch of lines).
-  const unconverted = await db
-    .select({ id: estimateLineItems.id })
-    .from(estimateLineItems)
-    .where(and(eq(estimateLineItems.estimateId, id), eq(estimateLineItems.converted, false)));
-  const targetIds = unconverted.map(r => r.id);
+  const targetIds = await selectQuotableLineIds(id);
   if (targetIds.length === 0) {
-    return { id, message: 'No new line items to quote' };
+    return { id, message: 'No selected line items to quote' };
   }
 
   // New quote row for this conversion (previous quotes are left active)
