@@ -47,7 +47,7 @@
 // first attempt happened to write, which matters if fact_revenue_snapshot
 // itself was corrected after a first (bad) run.
 
-import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import { factRevenueSnapshot, revenueComparison } from '../../db/schema/index.js';
 import type { DB } from '../../config/database.js';
 import { COMPARISON_INSERT_CHUNK_SIZE, type ReportType } from './config.js';
@@ -466,14 +466,15 @@ export async function runComparison(
     const currentByAnchor = groupByAnchorAndStage(currentRows);
     const anchorIds = new Set<string>([...priorByAnchor.keys(), ...currentByAnchor.keys()]);
 
-    // Anchors that had an SO row at ANY point before this pair's current date
-    // (not just the immediate prior date) — lets a late-syncing invoice still
-    // be recognized as an SO->Invoice transition when the SO itself closed in
-    // an earlier comparison window than the invoice record's own sync.
+    // Anchors that had an SO row on or before this pair's current date — lets
+    // a late-syncing invoice still be recognized as an SO->Invoice transition
+    // when the SO closed in an earlier window. The current date is included
+    // because a Billed/Closed SO is stored with a 0 open amount, so an SO first
+    // seen in the current snapshot is only detectable by its row existing.
     const historicalSoRows = anchorIds.size > 0
       ? await tx.selectDistinct({ anchorId: factRevenueSnapshot.anchorId }).from(factRevenueSnapshot).where(and(
         eq(factRevenueSnapshot.sourceType, 'SO'),
-        lt(factRevenueSnapshot.snapshotDate, currentDate),
+        lte(factRevenueSnapshot.snapshotDate, currentDate),
         inArray(factRevenueSnapshot.anchorId, [...anchorIds]),
       ))
       : [];
