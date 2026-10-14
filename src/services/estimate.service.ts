@@ -1114,8 +1114,12 @@ export async function listFailedSyncs() {
 // a /list endpoint. All four share the same "open" definition and the same
 // viewer-scoped access control as the rest of the estimates API.
 
-// Anything not yet closed is still "open" pipeline — draft/submitted/approved/otb.
-const OPEN_ESTIMATE_STATUSES = ['draft', 'submitted', 'approved', 'otb'] as const;
+// Closing This Week counts estimates still being worked: ES Status "In Progress" or
+// "Partially Converted" (agreed with the client). It used to filter on the estimates.status
+// workflow enum, but nothing ever sets that to closed_won / closed_lost, so the filter
+// excluded nothing and Closed Won / Closed Lost estimates showed up here. Matched by name,
+// like the other tiles, since es_status ids are environment-specific seed data.
+const CLOSING_THIS_WEEK_ES_STATUSES = ['In Progress', 'Partially Converted'];
 
 type PipelineTileOpts = {
   viewerUserId?: number;
@@ -1124,8 +1128,14 @@ type PipelineTileOpts = {
 
 type PipelineTileListOpts = PipelineTileOpts & { page: number; limit: number };
 
-async function openPipelineConditions(db: ReturnType<typeof getDb>, opts: PipelineTileOpts): Promise<any[]> {
-  const conds: any[] = [eq(estimates.isActive, true), inArray(estimates.status, OPEN_ESTIMATE_STATUSES)];
+// Active, ES Status In Progress / Partially Converted, expected to close within the next
+// 7 days (today through today + 7 — a rolling window, not the Mon–Sun calendar week).
+async function closingThisWeekConditions(db: ReturnType<typeof getDb>, opts: PipelineTileOpts): Promise<any[]> {
+  const conds: any[] = [
+    eq(estimates.isActive, true),
+    inArray(esStatus.name, CLOSING_THIS_WEEK_ES_STATUSES),
+    sql`${estimates.expectedCloseDate} BETWEEN CURRENT_DATE AND (CURRENT_DATE + 7)`,
+  ];
   const accessCondition = await buildEstimateAccessCondition(db, opts);
   if (accessCondition) conds.push(accessCondition);
   return conds;
@@ -1211,19 +1221,13 @@ export async function listNeedsAttention(opts: PipelineTileListOpts) {
 
 export async function getClosingThisWeekCount(opts: PipelineTileOpts) {
   const db = getDb();
-  const conds = [
-    ...(await openPipelineConditions(db, opts)),
-    sql`${estimates.expectedCloseDate} BETWEEN CURRENT_DATE AND (CURRENT_DATE + 7)`,
-  ];
+  const conds = await closingThisWeekConditions(db, opts);
   return { count: await tileCount(db, conds) };
 }
 
 export async function listClosingThisWeek(opts: PipelineTileListOpts) {
   const db = getDb();
-  const conds = [
-    ...(await openPipelineConditions(db, opts)),
-    sql`${estimates.expectedCloseDate} BETWEEN CURRENT_DATE AND (CURRENT_DATE + 7)`,
-  ];
+  const conds = await closingThisWeekConditions(db, opts);
   return paginateTile(db, conds, opts, asc(estimates.expectedCloseDate));
 }
 
