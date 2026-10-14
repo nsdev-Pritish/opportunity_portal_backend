@@ -290,6 +290,10 @@ const EstimateHeaderSchema = z.object({
 
   // Order Classification — syncs to NetSuite custbody_order_classification.
   orderClassificationId: z.number().int().positive().nullable().optional(),  // FK → order_classifications.id
+  // Freight Mode Lock (portal-only, not synced to NetSuite). Optional: omitted on create →
+  // DB default false; omitted on update → left unchanged. Deliberately NOT in
+  // CLEARABLE_FIELDS — the column is NOT NULL, so a null must mean "not provided", never "clear".
+  freightModeLock: z.boolean().optional(),
 
   attachments: z.array(z.object({                     // File upload metadata
     name: z.string(),

@@ -250,6 +250,7 @@ export async function listDocumentNumbers(opts: EstimateFilterOpts) {
     projectName: estimates.projectName,
     customerName: customers.name,
     status: estimates.status,
+    freightModeLock: estimates.freightModeLock,
   })
     .from(estimates)
     .leftJoin(customers,         eq(estimates.customerId,        customers.id))
@@ -388,6 +389,7 @@ export async function listEstimates(opts: {
       syncStatus: estimates.syncStatus,
       syncError: estimates.syncError,
       syncedAt: estimates.syncedAt,
+      freightModeLock: estimates.freightModeLock,
       createdAt: estimates.createdAt,
       updatedAt: estimates.updatedAt,
       customerName: customers.name,
@@ -1098,6 +1100,7 @@ export async function listFailedSyncs() {
       syncStatus     : estimates.syncStatus,
       syncError      : estimates.syncError,
       syncedAt       : estimates.syncedAt,
+      freightModeLock: estimates.freightModeLock,
       updatedAt      : estimates.updatedAt,
     })
     .from(estimates)

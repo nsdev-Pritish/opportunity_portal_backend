@@ -935,6 +935,11 @@ export const estimates = pgTable('estimates', {
   // goes out as orderClassificationNSId and the label as orderClassificationNS.
   orderClassificationId: integer('order_classification_id').references(() => orderClassifications.id),
 
+  // Freight Mode Lock — PORTAL-ONLY body-level flag. Never sent to NetSuite and never written
+  // by the NetSuite inbound sync (both directions name their fields explicitly), so a sync
+  // from NetSuite leaves the portal's value as it is. Defaults to false (unlocked).
+  freightModeLock: boolean('freight_mode_lock').default(false).notNull(),
+
   // Status & Sync
   status: estimateStatusEnum('status').default('draft').notNull(),
   isActive: boolean('is_active').default(true).notNull(),
