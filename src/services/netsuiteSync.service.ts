@@ -794,6 +794,18 @@ async function applyConvertEsStatus(estimateId: number, nsEsStatusId?: string | 
 // in between), so it's race-free within one process.
 const inFlightSyncs = new Set<number>();
 
+// How long we wait for the Suitelet. A timeout only stops US waiting — NetSuite keeps
+// processing and usually completes, so a timeout that fires too early reports a save that
+// actually succeeded as failed, and its response (new line ids, creative request ids) is
+// lost. Large estimates, plus the Wrike push the Suitelet runs inline, can exceed 60s.
+//
+//   SAVE (create / update / delete) — runs in the background after the HTTP response is
+//   sent, so nothing is held open and it can wait long.
+//   CONVERT — awaited INSIDE the HTTP request, which the server cuts off at requestTimeout
+//   (90s, app.ts) and proxies typically near 100s. Must stay well under both.
+const NS_SAVE_TIMEOUT_MS    = 180_000;
+const NS_CONVERT_TIMEOUT_MS = 60_000;
+
 export function isEstimateSyncInFlight(estimateId: number): boolean {
   return inFlightSyncs.has(estimateId);
 }
@@ -870,7 +882,8 @@ export async function syncEstimateToNetsuite(
       method : 'POST',
       headers,
       body   : JSON.stringify(payload),
-      signal : AbortSignal.timeout(60_000),
+      // Convert is awaited inside an HTTP request; create/update run in the background.
+      signal : AbortSignal.timeout(isConvert ? NS_CONVERT_TIMEOUT_MS : NS_SAVE_TIMEOUT_MS),
     });
 
     if (!res.ok) {
@@ -1254,7 +1267,8 @@ export async function deactivateLinesInNetsuite(
       method : 'POST',
       headers,
       body   : JSON.stringify(payload),
-      signal : AbortSignal.timeout(60_000),
+      // Delete mode runs in the background (after the update sync), like a save.
+      signal : AbortSignal.timeout(NS_SAVE_TIMEOUT_MS),
     });
 
     if (!res.ok) {
