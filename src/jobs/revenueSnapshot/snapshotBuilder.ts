@@ -16,7 +16,9 @@
 //     is always NULL here — no native-currency concept applies to it per
 //     the workbook.
 //   - anchor_id: resolves to the originating Estimate's document number —
-//     sales_order_search.created_from for SO, invoice_search.est_number
+//     sales_order_search.created_from for SO (falling back to
+//     created_from_direct when the SO was made straight from an Opportunity
+//     or from a Quote with no Opportunity), invoice_search.est_number
 //     (chained through the linked SO's own already-resolved anchor when
 //     est_number is empty) for Invoice — so the same anchor_id threads a deal
 //     across Pipeline→SO→Invoice, matching the schema comments on those two
@@ -136,6 +138,17 @@ function parseReferenceNumber(ref: string | null | undefined): string | null {
   const hashIndex = ref.lastIndexOf('#');
   const stripped = hashIndex >= 0 ? ref.slice(hashIndex + 1).trim() : ref.trim();
   return stripped.length > 0 ? stripped : null;
+}
+
+/**
+ * The original Estimate/Opportunity an SO belongs to. created_from is the
+ * source one step back (the Opportunity behind the Quote); created_from_direct
+ * is what the SO was created from directly. An SO made straight from an
+ * Opportunity, or from a Quote with no Opportunity, has an empty created_from,
+ * so the direct source is the original record in those cases.
+ */
+function resolveSoAnchor(createdFrom: string | null | undefined, createdFromDirect: string | null | undefined): string | null {
+  return parseReferenceNumber(createdFrom) ?? parseReferenceNumber(createdFromDirect);
 }
 
 interface MasterLookups {
@@ -267,7 +280,7 @@ function buildSalesOrderRows(
     sourceType: 'SO',
     sourceName: SOURCE_NAMES.SO,
     internalId: r.netsuiteInternalId ?? '',
-    anchorId: parseReferenceNumber(r.createdFrom) ?? r.documentNumber, // linked Estimate when one exists, else this SO's own number
+    anchorId: resolveSoAnchor(r.createdFrom, r.createdFromDirect) ?? r.documentNumber, // original Estimate/Opportunity when one exists, else this SO's own number
     documentNumber: r.documentNumber,
     consolidatedCustomer: r.consolidatedCustomer, // already free text on this source
     topLevelParent: get(lu.customerNames, r.topLevelParentId),
@@ -483,13 +496,19 @@ export async function buildRevenueSnapshotSequential(db: DB, snapshotDate: strin
     // otherwise the invoice falls back to its own document number and looks
     // like a brand-new, unlinked deal instead of an SO->Invoice transition.
     const soAnchorSource = await tx
-      .select({ documentNumber: salesOrderSearch.documentNumber, createdFrom: salesOrderSearch.createdFrom })
+      .select({ documentNumber: salesOrderSearch.documentNumber, createdFrom: salesOrderSearch.createdFrom, createdFromDirect: salesOrderSearch.createdFromDirect })
       .from(salesOrderSearch);
-    const soAnchorByDocNumber = new Map(
-      soAnchorSource
-        .map(r => [r.documentNumber, parseReferenceNumber(r.createdFrom) ?? r.documentNumber] as const)
-        .filter((pair): pair is [string, string] => pair[0] != null && pair[1] != null),
-    );
+    // One SO number has many rows (one per line, plus legacy header rows from
+    // the old header-level sync whose created_from is NULL). A row that links
+    // to an Estimate always wins; a row without one only fills a gap, so a
+    // stale NULL row can never override the real anchor, whatever the row order.
+    const soAnchorByDocNumber = new Map<string, string>();
+    for (const r of soAnchorSource) {
+      if (r.documentNumber == null) continue;
+      const linked = resolveSoAnchor(r.createdFrom, r.createdFromDirect);
+      if (linked) soAnchorByDocNumber.set(r.documentNumber, linked);
+      else if (!soAnchorByDocNumber.has(r.documentNumber)) soAnchorByDocNumber.set(r.documentNumber, r.documentNumber);
+    }
 
     const invoiceSource = await tx.select().from(invoiceSearch).where(eq(invoiceSearch.isActive, true));
     const invoiceRows = buildInvoiceRows(invoiceSource, lu, snapshotDate, snapshotTs, soAnchorByDocNumber);
