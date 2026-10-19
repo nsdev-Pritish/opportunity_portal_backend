@@ -18,6 +18,13 @@ const envSchema = z.object({
 
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.string().default('7d'),
+  // Refresh tokens (src/services/refreshToken.service.ts). Rolling: each refresh issues a new
+  // token valid for this many days, so a user is only signed out after this much INACTIVITY.
+  // Once the frontend refreshes automatically, JWT_EXPIRES_IN can be shortened (e.g. 15m).
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().default(7),
+  // A just-rotated refresh token stays usable this long, so two tabs refreshing at the same
+  // moment (or a retry after a dropped response) don't sign the user out.
+  REFRESH_TOKEN_GRACE_SECONDS: z.coerce.number().default(30),
 
   // ── API Key that NetSuite uses to authenticate with our APIs ──
   // Run: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"

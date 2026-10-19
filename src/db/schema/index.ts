@@ -56,6 +56,10 @@ export const users = pgTable('users', {
   // syncUserForEmployee(). Login requires both isActive and portalUser to be true.
   portalUser: boolean('portal_user').default(false).notNull(),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  // Last time the user's session was refreshed — i.e. last real use of the portal. With
+  // rolling refresh tokens a user can stay signed in for weeks, so lastLoginAt alone would
+  // go stale; this keeps login activity visible. Also set on login.
+  lastActiveAt: timestamp('last_active_at', { withTimezone: true }),
   // NetSuite Employee internal id this login is mapped to. Null for accounts that
   // aren't NetSuite-synced (e.g. manually created admin accounts).
   netsuiteInternalId: varchar('netsuite_internal_id', { length: 50 }),
@@ -77,6 +81,22 @@ export const users = pgTable('users', {
   activeEmailIdx: uniqueIndex('users_active_email_idx')
     .on(sql`lower(${t.email})`)
     .where(sql`${t.email} is not null and ${t.isActive} = true`),
+}));
+
+// Refresh tokens — see migration 0105 and src/services/refreshToken.service.ts.
+// Only the SHA-256 hash of each token is stored. A token is rotated on every use:
+// revokedAt is set and replacedById points at its successor.
+export const refreshTokens = pgTable('refresh_tokens', {
+  id          : serial('id').primaryKey(),
+  userId      : integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  tokenHash   : varchar('token_hash', { length: 64 }).notNull(),
+  expiresAt   : timestamp('expires_at', { withTimezone: true }).notNull(),
+  revokedAt   : timestamp('revoked_at', { withTimezone: true }),
+  replacedById: integer('replaced_by_id'),
+  createdAt   : timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  tokenHashIdx: uniqueIndex('rt_token_hash_idx').on(t.tokenHash),
+  userIdx     : index('rt_user_idx').on(t.userId),
 }));
 
 // ══════════════════════════════════════════════════════════════════
