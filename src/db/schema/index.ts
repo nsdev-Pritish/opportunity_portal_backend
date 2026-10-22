@@ -1021,7 +1021,8 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   vendorId: integer('vendor_id').references(() => vendors.id),
   quantity: numeric('quantity', { precision: 12, scale: 4 }).default('0'),
   sellPricePerUnit: numeric('sell_price_per_unit', { precision: 15, scale: 4 }).default('0'),
-  skuMarginPct: numeric('sku_margin_pct', { precision: 10, scale: 3 }).default('0'),
+  
+  skuMarginPct: numeric('sku_margin_pct', { precision: 20, scale: 3 }).default('0'),
   salesAmount: numeric('sales_amount', { precision: 15, scale: 2 }),
   pickupExwFob: numeric('pickup_exw_fob', { precision: 15, scale: 2 }),
   oceanDdp: numeric('ocean_ddp', { precision: 15, scale: 2 }),

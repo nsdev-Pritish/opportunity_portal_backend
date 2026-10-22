@@ -30,6 +30,8 @@ import {
   projectNames, estimateFreightGroups, drayage,
 } from '../../db/schema/index.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
+import { rethrowFriendlyDbError } from '../../utils/dbErrors.js';
+import { assertEstimateValuesFit } from '../../utils/columnLimits.js';
 import { logger } from '../../utils/logger.js';
 import { resolveEsStatusIdFromNs } from '../../services/esStatusMap.js';
 
@@ -489,6 +491,8 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
   app.post<{ Body: unknown }>('/with-items', async (req, reply) => {
     logger.info({ rawBody: req.body }, '→ NetSuite estimate /with-items raw payload');
     const { estimate: estimateData, lineItems } = CreateEstimateWithItemsSchema.parse(req.body);
+    // Name any value that won't fit its column, so NetSuite sees which field and line.
+    assertEstimateValuesFit({ header: estimateData, lineItems });
     const db = getDb();
     const startTime = Date.now();
 
@@ -552,7 +556,7 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
         }
 
         return { estimate: createdEstimate, lineItemsInserted: insertedLineItems };
-      });
+      }).catch(rethrowFriendlyDbError);
 
       const duration = Date.now() - startTime;
       logger.info({ 
@@ -617,6 +621,15 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
     // exact field names NetSuite sends and confirm every value is captured.
     logger.info({ rawBody: req.body }, '→ NetSuite estimate /sync raw payload');
     const { estimate: estData, lineItems, freightGroups } = SyncEstimateSchema.parse(req.body);
+    // Name any value that won't fit its column, so NetSuite sees which field and line.
+    // freightModeSelected is left out: NetSuite sends a label that persistNsFreightGroups
+    // converts to a short code (mapFreightMode) before saving, so the raw value's length is
+    // irrelevant — checking it would reject syncs that save fine.
+    assertEstimateValuesFit({
+      header: estData,
+      lineItems,
+      freightGroups: (freightGroups ?? []).map(({ freightModeSelected: _mapped, ...group }) => group),
+    });
     const db = getDb();
     const startTime = Date.now();
 
@@ -662,7 +675,7 @@ export default async function estimateNsRoutes(app: FastifyInstance) {
       );
 
       return { estimateId, action, ...lineResult, freightGroupCount };
-    });
+    }).catch(rethrowFriendlyDbError);
 
     logger.info({
       netsuiteId: estData.netsuiteInternalId,

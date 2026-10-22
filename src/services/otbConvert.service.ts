@@ -35,6 +35,8 @@ import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { getNsStatusForEsStatus } from './esStatusMap.js';
 import { AppError } from '../utils/errors.js';
+import { rethrowFriendlyDbError } from '../utils/dbErrors.js';
+import { assertEstimateValuesFit } from '../utils/columnLimits.js';
 
 type RawLineItem = Record<string, unknown> & { components?: Record<string, unknown>[] };
 
@@ -791,6 +793,9 @@ export async function createEstimateAndConvertToOtb(
     throw new AppError('No selected line items to quote — select at least one line item.', 400, 'NO_LINES_SELECTED');
   }
 
+  // Reject values that won't fit their columns before anything is written (here or in NetSuite).
+  assertEstimateValuesFit({ header: headerData, lineItems, freightGroups });
+
   // 1. Insert estimate + line items (+ freight groups) atomically
   const { estimate, lineItems: lines } = await db.transaction(async (tx) => {
     // trandate = the portal creation date in date-only form (YYYY-MM-DD);
@@ -807,7 +812,7 @@ export async function createEstimateAndConvertToOtb(
     const { parents, components } = await otbInsertLineItems(tx, estimate.id, lineItems);
     await otbInsertFreightGroups(tx, estimate.id, freightGroups, parents);
     return { estimate, lineItems: [...parents, ...components] };
-  });
+  }).catch(rethrowFriendlyDbError);
   logger.info({ estimateId: estimate.id, lineItemCount: lines.length, durationMs: Date.now() - startTime }, 'OTB: estimate created locally');
 
   // 2. Create the estimate in NetSuite (await — populates netsuiteInternalId + documentNumber)
