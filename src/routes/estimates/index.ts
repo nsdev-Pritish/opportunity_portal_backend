@@ -45,7 +45,7 @@ const CLEARABLE_FIELDS = new Set([
   // Line items / components (ComponentSchema — shared by top-level items and nested components)
   'itemTypeId', 'vendorId', 'factoryId', 'vendorCurrencyId', 'productClassId', 'productClassEuId',
   'classId', 'sustainabilityId', 'componentKitItemId', 'vendorIncotermsId', 'shipToVendorId',
-  'shipToVendorAddrId', 'previousLineId',
+  'shipToVendorAddrId', 'previousLineId', 'freightGroupIndex',
   // Freight groups
   'drayageId',
   // Pipeline grid bulk-edit fields not already covered above
@@ -201,12 +201,19 @@ const ComponentSchema = z.object({
   freightNotes:         z.string().optional(),
   selected:             z.boolean().optional(),
   excludeFromPrint:     z.boolean().optional(),
+  // Freight Planning (portal-only, not synced to NetSuite): which freight group this
+  // component belongs to, as its 0-based position in the request's freightGroups array.
+  // Null = not assigned; clearable, so sending null clears it.
+  freightGroupIndex:    z.number().int().nonnegative().nullable().optional(),
 });
 
 // ── Line item schema — top-level item + optional nested components ──────────
 // When itemType is "Quote Kit Item", components[] holds the Component Kit Items.
 // Each component carries its own purchase/landed/packing detail fields.
 const LineItemSchema = ComponentSchema.extend({
+  // Freight Planning (portal-only): on a kit, whether its components are split across
+  // freight groups. Defaults to false when not sent.
+  freightSplit: z.boolean().optional(),
   components: z.array(ComponentSchema).max(50).optional(),
 });
 

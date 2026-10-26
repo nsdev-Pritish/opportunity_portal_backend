@@ -1118,6 +1118,12 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   // line → one group). All active freight logic now lives on estimate_freight_groups; the
   // legacy freight_* columns above are retained for backward compatibility but no longer used.
   freightGroupId: integer('freight_group_id').references((): AnyPgColumn => estimateFreightGroups.id, { onDelete: 'set null' }),
+  // Freight Planning (portal-only, never synced to NetSuite — see migration 0108):
+  // freightSplit on a kit = its components are split across freight groups;
+  // freightGroupIndex on a component = 0-based position of its group in freightGroups, or null.
+  // Kept separate from freightGroupId, which the NetSuite sync rebuilds and would wipe.
+  freightSplit: boolean('freight_split').default(false).notNull(),
+  freightGroupIndex: integer('freight_group_index'),
 
   // Soft delete: false = "deleted" (hidden from reads, row retained for NetSuite deactivation)
   isActive:             boolean('is_active').default(true).notNull(),
