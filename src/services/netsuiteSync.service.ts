@@ -804,7 +804,7 @@ const inFlightSyncs = new Set<number>();
 //   CONVERT — awaited INSIDE the HTTP request, which the server cuts off at requestTimeout
 //   (90s, app.ts) and proxies typically near 100s. Must stay well under both.
 const NS_SAVE_TIMEOUT_MS    = 180_000;
-const NS_CONVERT_TIMEOUT_MS = 60_000;
+const NS_CONVERT_TIMEOUT_MS = 180_000;
 
 export function isEstimateSyncInFlight(estimateId: number): boolean {
   return inFlightSyncs.has(estimateId);

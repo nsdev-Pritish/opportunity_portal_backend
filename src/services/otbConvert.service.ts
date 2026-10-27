@@ -708,7 +708,7 @@ async function otbSyncConvert(estimateId: number, quoteId: number, lineItemIds: 
       method : 'POST',
       headers,
       body   : JSON.stringify(payload),
-      signal : AbortSignal.timeout(60_000),
+      signal : AbortSignal.timeout(180_000),
     });
 
     if (!res.ok) {
