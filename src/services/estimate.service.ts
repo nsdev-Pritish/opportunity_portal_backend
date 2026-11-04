@@ -11,6 +11,7 @@ import { cacheDel, CacheKeys } from '../utils/cache.js';
 import { NotFoundError, ConflictError, AppError } from '../utils/errors.js';
 import { rethrowFriendlyDbError } from '../utils/dbErrors.js';
 import { assertEstimateValuesFit } from '../utils/columnLimits.js';
+import { assertActiveProductDevelopers } from '../utils/productDevelopers.js';
 import { logger } from '../utils/logger.js';
 import { syncEstimateToNetsuite, deactivateLinesInNetsuite, isEstimateSyncInFlight } from './netsuiteSync.service.js';
 import {
@@ -915,6 +916,8 @@ export async function createEstimateWithItems(
 
   // Reject values that won't fit their columns up front, naming the field and line.
   assertEstimateValuesFit({ header: headerData, lineItems, freightGroups });
+  // Reject an inactive Product Developer (e.g. carried over by a copy) before anything is written.
+  await assertActiveProductDevelopers(headerData.productDeveloperIds);
 
   // Default es_status → "In Progress" when the caller didn't specify one.
   if (headerData.esStatusId === undefined || headerData.esStatusId === null) {
@@ -981,6 +984,8 @@ export async function updateEstimateWithItems(
 
   // Reject values that won't fit their columns up front, naming the field and line.
   assertEstimateValuesFit({ header: headerData, lineItems: newLineItems, freightGroups: newFreightGroups });
+  // Reject an inactive Product Developer before anything is written.
+  await assertActiveProductDevelopers(headerData.productDeveloperIds);
 
   // Ids of lines the diff soft-deleted this update — deactivated in NetSuite after commit.
   let deletedLineIds: number[] = [];

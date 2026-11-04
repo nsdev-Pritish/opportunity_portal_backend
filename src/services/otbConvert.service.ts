@@ -37,6 +37,7 @@ import { getNsStatusForEsStatus } from './esStatusMap.js';
 import { AppError } from '../utils/errors.js';
 import { rethrowFriendlyDbError } from '../utils/dbErrors.js';
 import { assertEstimateValuesFit } from '../utils/columnLimits.js';
+import { assertActiveProductDevelopers } from '../utils/productDevelopers.js';
 
 type RawLineItem = Record<string, unknown> & { components?: Record<string, unknown>[] };
 
@@ -795,6 +796,8 @@ export async function createEstimateAndConvertToOtb(
 
   // Reject values that won't fit their columns before anything is written (here or in NetSuite).
   assertEstimateValuesFit({ header: headerData, lineItems, freightGroups });
+  // Reject an inactive Product Developer before anything is written (here or in NetSuite).
+  await assertActiveProductDevelopers(headerData.productDeveloperIds);
 
   // 1. Insert estimate + line items (+ freight groups) atomically
   const { estimate, lineItems: lines } = await db.transaction(async (tx) => {
