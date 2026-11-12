@@ -388,6 +388,7 @@ async function otbBuildCreatePayload(estimateId: number) {
         vendorIdNSId           : otbToNsNum(vendorNsId),
         quantityNS             : otbToNum(li.quantity),
         sellPricePerUnitNS     : otbToNum(li.sellPricePerUnit),
+        fobTargetPriceNS       : otbToNum(li.fobTargetPrice),
         skuMarginPctNS         : otbToNum(li.skuMarginPct),
         salesAmountNS          : otbToNum(li.salesAmount),
         excludeNS              : li.exclude ?? false,

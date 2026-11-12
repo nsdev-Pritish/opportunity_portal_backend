@@ -177,6 +177,10 @@ const LineItemSchema = z.object({
   vendorId            : z.number().int().optional().nullable(),
   quantity            : z.string().optional().nullable(),
   sellPricePerUnit    : z.string().optional().nullable(),
+  fobTargetPrice      : z.preprocess(
+    (v) => (v === '' ? null : typeof v === 'string' ? Number(v) : v),
+    z.number().nullable(),
+  ).optional(),
   description         : z.string().optional().nullable(),
   factoryId           : z.number().int().optional().nullable(),
   vendorCurrencyId    : z.number().int().optional().nullable(),
@@ -244,6 +248,11 @@ const SyncLineItemSchema = z.object({
   vendorNsId           : z.string().optional().nullable(), // → vendors
   quantity             : z.string().optional().nullable(),
   sellPricePerUnit     : z.string().optional().nullable(),
+  // custcoltwelve_fob_target_price. Accepts a number or numeric string; blank → null.
+  fobTargetPrice       : z.preprocess(
+    (v) => (v === '' ? null : typeof v === 'string' ? Number(v) : v),
+    z.number().nullable(),
+  ).optional(),
   skuMarginPct         : z.string().optional().nullable(),
   salesAmount          : z.string().optional().nullable(),
   pickupExwFob         : z.string().optional().nullable(),
@@ -960,6 +969,9 @@ async function resolveLineItemValues(item: z.infer<typeof SyncLineItemSchema>) {
     description        : item.description ?? null,
     quantity           : item.quantity ?? null,
     sellPricePerUnit   : item.sellPricePerUnit ?? null,
+    // No `?? null`: left out (undefined) when NetSuite doesn't send the key, so an
+    // older suitelet build never wipes a value set in the portal.
+    fobTargetPrice     : item.fobTargetPrice,
     skuMarginPct       : item.skuMarginPct ?? null,
     salesAmount        : item.salesAmount ?? null,
     pickupExwFob       : item.pickupExwFob ?? null,

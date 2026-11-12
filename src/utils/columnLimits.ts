@@ -22,6 +22,7 @@ const LABELS: Record<string, string> = {
   // Line items
   quantity: 'Quantity',
   sellPricePerUnit: 'Sell Price',
+  fobTargetPrice: 'FOB Target Price',
   skuMarginPct: 'Margin %',
   salesAmount: 'Sales Amount',
   factoryCostPerUnit: 'Factory Cost',

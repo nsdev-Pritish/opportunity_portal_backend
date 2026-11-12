@@ -45,7 +45,7 @@ const CLEARABLE_FIELDS = new Set([
   // Line items / components (ComponentSchema — shared by top-level items and nested components)
   'itemTypeId', 'vendorId', 'factoryId', 'vendorCurrencyId', 'productClassId', 'productClassEuId',
   'classId', 'sustainabilityId', 'componentKitItemId', 'vendorIncotermsId', 'shipToVendorId',
-  'shipToVendorAddrId', 'previousLineId', 'freightGroupIndex',
+  'shipToVendorAddrId', 'previousLineId', 'freightGroupIndex', 'fobTargetPrice',
   // Freight groups
   'drayageId',
   // Pipeline grid bulk-edit fields not already covered above
@@ -120,6 +120,8 @@ const ComponentSchema = z.object({
   vendorId: z.number().int().positive().nullable().optional(),
   quantity: z.string().optional(),
   sellPricePerUnit: z.string().optional(),
+  // Float column — accepts a number or numeric string.
+  fobTargetPrice: z.preprocess((v) => (typeof v === 'string' ? Number(v) : v), z.number().nullable()).optional(),
   skuMarginPct: z.string().optional(),
   salesAmount: z.string().optional(),
   pickupExwFob: z.string().optional(),

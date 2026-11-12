@@ -519,6 +519,7 @@ async function buildNsPayload(estimateId: number, mode: 'create' | 'update' | 'c
       vendorIdNSId           : toNsNum(vendorNsId),
       quantityNS             : toNum(li.quantity),
       sellPricePerUnitNS     : toNum(li.sellPricePerUnit),
+      fobTargetPriceNS       : toNum(li.fobTargetPrice),
       skuMarginPctNS         : toNum(li.skuMarginPct),
       salesAmountNS          : toNum(li.salesAmount),
       excludeNS              : li.exclude ?? false,

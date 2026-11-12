@@ -1,7 +1,7 @@
 import {
   pgTable, serial, varchar, boolean, timestamp, integer,
   numeric, text, jsonb, date, index, uniqueIndex, unique, pgEnum, AnyPgColumn, uuid,
-  bigserial, bigint,
+  bigserial, bigint, doublePrecision,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
@@ -1021,7 +1021,8 @@ export const estimateLineItems = pgTable('estimate_line_items', {
   vendorId: integer('vendor_id').references(() => vendors.id),
   quantity: numeric('quantity', { precision: 12, scale: 4 }).default('0'),
   sellPricePerUnit: numeric('sell_price_per_unit', { precision: 15, scale: 4 }).default('0'),
-  
+  fobTargetPrice: doublePrecision('fob_target_price'),  // NS custcoltwelve_fob_target_price (float, per client)
+
   skuMarginPct: numeric('sku_margin_pct', { precision: 14, scale: 3 }).default('0'),
   salesAmount: numeric('sales_amount', { precision: 15, scale: 2 }),
   pickupExwFob: numeric('pickup_exw_fob', { precision: 15, scale: 2 }),

@@ -8,6 +8,7 @@ const LineItemSchema = z.object({
   color: z.string().max(20).optional(),
   vendorId: z.number().int().optional(), quantity: z.string().optional(),
   sellPricePerUnit: z.string().optional(), description: z.string().optional(),
+  fobTargetPrice: z.preprocess((v) => (typeof v === 'string' ? Number(v) : v), z.number()).optional(),
   factoryId: z.number().int().optional(), vendorCurrencyId: z.number().int().optional(),
   factoryCostPerUnit: z.string().optional(), packingCostPerUnit: z.string().optional(),
   sampleFees: z.string().optional(), otherPerUnit: z.string().optional(),

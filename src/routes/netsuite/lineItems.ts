@@ -24,6 +24,10 @@ const LineItemSchema = z.object({
   vendorId            : z.number().int().optional().nullable(),
   quantity            : z.string().optional().nullable(),
   sellPricePerUnit    : z.string().optional().nullable(),
+  fobTargetPrice      : z.preprocess(
+    (v) => (v === '' ? null : typeof v === 'string' ? Number(v) : v),
+    z.number().nullable(),
+  ).optional(),
   description         : z.string().optional().nullable(),
   factoryId           : z.number().int().optional().nullable(),
   vendorCurrencyId    : z.number().int().optional().nullable(),
