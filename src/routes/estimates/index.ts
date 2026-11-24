@@ -46,6 +46,7 @@ const CLEARABLE_FIELDS = new Set([
   'itemTypeId', 'vendorId', 'factoryId', 'vendorCurrencyId', 'productClassId', 'productClassEuId',
   'classId', 'sustainabilityId', 'componentKitItemId', 'vendorIncotermsId', 'shipToVendorId',
   'shipToVendorAddrId', 'previousLineId', 'freightGroupIndex', 'fobTargetPrice',
+  'image',  // line item image object — null / "" removes it
   // Freight groups
   'drayageId',
   // Pipeline grid bulk-edit fields not already covered above
@@ -130,7 +131,7 @@ const ComponentSchema = z.object({
   exclude: z.boolean().optional(),
 
   // ── Purchase Information ───────────────────────────────────────────────────
-  image: z.object({ name: z.string(), url: z.string().url(), size: z.number(), type: z.string() }).optional(),
+  image: z.object({ name: z.string(), url: z.string().url(), size: z.number(), type: z.string() }).nullable().optional(),
   description: z.string().optional(),
   factoryId: z.number().int().positive().nullable().optional(),
   vendorCurrencyId: z.number().int().positive().nullable().optional(),
