@@ -46,26 +46,34 @@ const CLEARABLE_FIELDS = new Set([
   'itemTypeId', 'vendorId', 'factoryId', 'vendorCurrencyId', 'productClassId', 'productClassEuId',
   'classId', 'sustainabilityId', 'componentKitItemId', 'vendorIncotermsId', 'shipToVendorId',
   'shipToVendorAddrId', 'previousLineId', 'freightGroupIndex', 'fobTargetPrice',
-  'image',  // line item image object — null / "" removes it
   // Freight groups
   'drayageId',
   // Pipeline grid bulk-edit fields not already covered above
   'esStatusId',
 ]);
 
+// Clearable ONLY inside lineItems[] / components[] — names generic enough to also appear in
+// other parts of the request (e.g. free-form creative request forms), where clearing must not
+// spread. "" / null removes the value (text fields stored as NULL, image removed).
+const LINE_ITEM_CLEARABLE_FIELDS = new Set(['image', 'shortDescription', 'description']);
+
 // Recursive variant of stripEmpty that preserves null/"" as an explicit null on any
 // CLEARABLE_FIELDS key, at any depth (estimate header, lineItems[], components[],
 // freightGroups[], Pipeline grid items) — so it reaches its Zod schema and then Drizzle's
-// .set() as a real null instead of being swept into undefined. Every other field keeps the old
-// behavior: "" and null both collapse to undefined ("not provided").
-function stripEmptyPreserveClearable(val: unknown): unknown {
+// .set() as a real null instead of being swept into undefined. LINE_ITEM_CLEARABLE_FIELDS get
+// the same treatment, but only beneath a lineItems / components key. Every other field keeps the
+// old behavior: "" and null both collapse to undefined ("not provided").
+function stripEmptyPreserveClearable(val: unknown, inLineItems = false): unknown {
   if (val === '' || val === null) return undefined;
-  if (Array.isArray(val)) return val.map(stripEmptyPreserveClearable);
+  if (Array.isArray(val)) return val.map(v => stripEmptyPreserveClearable(v, inLineItems));
   if (val && typeof val === 'object') {
     return Object.fromEntries(
       Object.entries(val as Record<string, unknown>).map(([k, v]) => {
-        if (v === '' || v === null) return [k, CLEARABLE_FIELDS.has(k) ? null : undefined];
-        return [k, stripEmptyPreserveClearable(v)];
+        if (v === '' || v === null) {
+          const clearable = CLEARABLE_FIELDS.has(k) || (inLineItems && LINE_ITEM_CLEARABLE_FIELDS.has(k));
+          return [k, clearable ? null : undefined];
+        }
+        return [k, stripEmptyPreserveClearable(v, inLineItems || k === 'lineItems' || k === 'components')];
       })
     );
   }
@@ -116,7 +124,7 @@ const ComponentSchema = z.object({
   // ── Line header ────────────────────────────────────────────────────────────
   id: z.number().int().positive().optional(),
   itemTypeId: z.number().int().positive().nullable().optional(),
-  shortDescription: z.string().max(500).optional(),
+  shortDescription: z.string().max(500).nullable().optional(),
   color: z.string().max(20).optional(),
   vendorId: z.number().int().positive().nullable().optional(),
   quantity: z.string().optional(),
@@ -132,7 +140,7 @@ const ComponentSchema = z.object({
 
   // ── Purchase Information ───────────────────────────────────────────────────
   image: z.object({ name: z.string(), url: z.string().url(), size: z.number(), type: z.string() }).nullable().optional(),
-  description: z.string().optional(),
+  description: z.string().nullable().optional(),
   factoryId: z.number().int().positive().nullable().optional(),
   vendorCurrencyId: z.number().int().positive().nullable().optional(),
   factoryCostPerUnit: z.string().optional(),
